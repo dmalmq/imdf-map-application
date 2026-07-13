@@ -306,7 +306,7 @@ function assertFeatureCollection(
   return { type: "FeatureCollection", features: features as GeoJSON.Feature[] };
 }
 
-async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
+export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
   if (!file.name.toLowerCase().endsWith(".zip")) {
     fail("unsupported_file");
   }
@@ -533,25 +533,32 @@ function serializeFailure(error: unknown): ImdfWorkerResponse {
   };
 }
 
-self.onmessage = (event: MessageEvent<ImdfWorkerRequest>): void => {
-  const data = event.data;
-  if (data === null || typeof data !== "object" || data.type !== "load") {
-    const response: ImdfWorkerResponse = {
-      type: "failed",
-      error: {
-        code: "worker_failed",
-        message: archiveErrorCopy.worker_failed,
-      },
-    };
-    self.postMessage(response);
-    return;
-  }
-
-  void loadArchive(data.file)
-    .then((response) => {
+// Register the worker message handler only inside a real worker scope.
+// Importing this module under vitest/jsdom must not throw or register.
+// `WorkerGlobalScope` is defined in every worker scope (including module
+// workers) and undefined in window/jsdom.
+declare const WorkerGlobalScope: (new () => unknown) | undefined;
+if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope) {
+  self.onmessage = (event: MessageEvent<ImdfWorkerRequest>): void => {
+    const data = event.data;
+    if (data === null || typeof data !== "object" || data.type !== "load") {
+      const response: ImdfWorkerResponse = {
+        type: "failed",
+        error: {
+          code: "worker_failed",
+          message: archiveErrorCopy.worker_failed,
+        },
+      };
       self.postMessage(response);
-    })
-    .catch((error: unknown) => {
-      self.postMessage(serializeFailure(error));
-    });
-};
+      return;
+    }
+
+    void loadArchive(data.file)
+      .then((response) => {
+        self.postMessage(response);
+      })
+      .catch((error: unknown) => {
+        self.postMessage(serializeFailure(error));
+      });
+  };
+}

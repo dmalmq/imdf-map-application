@@ -784,7 +784,18 @@ button {
 
 /* ── MapLibre DOM markers ──────────────────────────────── */
 
+.indoor-marker-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
 .indoor-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
   display: inline-flex;
   align-items: center;
   max-width: 160px;
@@ -795,12 +806,15 @@ button {
   color: var(--color-text);
   font-size: 11px;
   font-weight: 600;
-  line-height: 1.2;
+  /* Integral, font-independent metrics keep the pill height stable
+     regardless of which face renders the label. */
+  line-height: 16px;
+  height: 24px;
+  box-sizing: border-box;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  transform: translate(-50%, -100%);
 }
 
 .indoor-marker--selected {
@@ -808,6 +822,14 @@ button {
   background: var(--color-selected);
   color: #ffffff;
   z-index: 2;
+}
+
+/* Product typography everywhere: MapLibre's own stack ("Helvetica Neue",
+   Arial, …) resolves CJK glyphs through fontconfig generic fallback, which
+   is not stable across browser processes. Inheriting the plan font stack
+   names "Noto Sans CJK JP" explicitly. */
+.maplibregl-map {
+  font-family: inherit;
 }
 
 /* Soften MapLibre chrome to match the panel system */

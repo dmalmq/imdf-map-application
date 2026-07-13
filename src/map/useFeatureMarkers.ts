@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
-import type { Map as MapLibreMap, Marker } from "maplibre-gl";
-import maplibregl from "maplibre-gl";
+import { useEffect } from "react";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import { localizedLabel } from "../imdf/localize";
 import type { FeatureType, LoadedVenue, LocaleCode, ViewerFeature } from "../imdf/types";
+
+/** Overlay container class hosting all feature markers. */
+export const MARKER_OVERLAY_CLASS = "indoor-marker-overlay";
 
 /** Base class for DOM feature markers (styled by App CSS). */
 export const MARKER_CLASS = "indoor-marker";
@@ -82,6 +84,13 @@ function collectMarkerFeatures(
  * Cap 200; always includes the selected feature when it has a center and is
  * on the current level. Locale changes update marker text without touching
  * the GeoJSON source. Raw anchors are never rendered.
+ *
+ * Markers are absolutely-positioned children of a plain overlay div, placed
+ * with an integral 2D translate from `map.project`. MapLibre's own Marker
+ * applies a 3D transform (`rotateX/rotateZ`) that promotes each label into a
+ * 3D rendering context, whose composited text rasterization is not stable
+ * across browser processes; integral 2D positioning is, and it avoids
+ * per-frame reflow during camera moves.
  */
 export function useFeatureMarkers({
   map,
@@ -90,61 +99,87 @@ export function useFeatureMarkers({
   locale,
   selectedFeatureId,
 }: UseFeatureMarkersArgs): void {
-  const markersRef = useRef<Marker[]>([]);
-
   useEffect(() => {
     if (map == null) {
       return;
     }
+    let cancelled = false;
+    const overlay = document.createElement("div");
+    overlay.className = MARKER_OVERLAY_CLASS;
+    map.getContainer().appendChild(overlay);
 
-    for (const marker of markersRef.current) {
-      marker.remove();
+    interface PositionedMarker {
+      el: HTMLDivElement;
+      lngLat: [number, number];
+      width: number;
+      height: number;
     }
-    markersRef.current = [];
+    const positioned: PositionedMarker[] = [];
 
-    const features = collectMarkerFeatures(venue, levelId, selectedFeatureId);
-    const manifestLanguage = venue.manifest.language;
-    const nextMarkers: Marker[] = [];
+    const reposition = (): void => {
+      for (const item of positioned) {
+        const point = map.project(item.lngLat);
+        // Pill bottom-center sits on the feature point, on whole pixels.
+        const x = Math.round(point.x - item.width / 2);
+        const y = Math.round(point.y - item.height);
+        item.el.style.transform = `translate(${x}px, ${y}px)`;
+      }
+    };
 
-    for (const feature of features) {
-      const center = feature.center;
-      if (center == null) {
-        continue;
+    // Create markers only after fonts settle so measured pill metrics are
+    // final. Fonts are local-only, so this resolves immediately after first
+    // load. jsdom has no document.fonts.
+    const fontsReady: Promise<unknown> =
+      typeof document.fonts === "object" ? document.fonts.ready : Promise.resolve();
+
+    void fontsReady.then(() => {
+      if (cancelled) {
+        return;
       }
 
-      const label = localizedLabel(
-        feature.labels,
-        locale,
-        feature.id,
-        manifestLanguage,
-      );
+      const features = collectMarkerFeatures(venue, levelId, selectedFeatureId);
+      const manifestLanguage = venue.manifest.language;
+      for (const feature of features) {
+        const center = feature.center;
+        if (center == null) {
+          continue;
+        }
 
-      const el = document.createElement("div");
-      el.className =
-        feature.id === selectedFeatureId
-          ? `${MARKER_CLASS} ${MARKER_SELECTED_CLASS}`
-          : MARKER_CLASS;
-      el.textContent = label;
-      el.setAttribute("role", "img");
-      el.setAttribute("aria-label", label);
+        const label = localizedLabel(
+          feature.labels,
+          locale,
+          feature.id,
+          manifestLanguage,
+        );
 
-      const marker = new maplibregl.Marker({
-        element: el,
-        anchor: "bottom",
-      })
-        .setLngLat(center)
-        .addTo(map);
+        const el = document.createElement("div");
+        el.className =
+          feature.id === selectedFeatureId
+            ? `${MARKER_CLASS} ${MARKER_SELECTED_CLASS}`
+            : MARKER_CLASS;
+        el.textContent = label;
+        el.setAttribute("role", "img");
+        el.setAttribute("aria-label", label);
 
-      nextMarkers.push(marker);
-    }
+        overlay.appendChild(el);
 
-    markersRef.current = nextMarkers;
+        const rect = el.getBoundingClientRect();
+        positioned.push({ el, lngLat: center, width: rect.width, height: rect.height });
+      }
+
+      reposition();
+    });
+
+    map.on("move", reposition);
+    map.on("moveend", reposition);
+    map.on("resize", reposition);
 
     return () => {
-      for (const marker of markersRef.current) {
-        marker.remove();
-      }
-      markersRef.current = [];
+      cancelled = true;
+      map.off("move", reposition);
+      map.off("moveend", reposition);
+      map.off("resize", reposition);
+      overlay.remove();
     };
   }, [map, venue, levelId, locale, selectedFeatureId]);
 }

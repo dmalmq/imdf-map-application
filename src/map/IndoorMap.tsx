@@ -311,6 +311,17 @@ export function IndoorMap({
     map.on("mousemove", onMouseMove);
     map.on("mouseout", onMouseLeave);
 
+    const markIdle = (): void => {
+      container.dataset.mapIdle = "true";
+    };
+    const clearIdle = (): void => {
+      delete container.dataset.mapIdle;
+    };
+    map.on("idle", markIdle);
+    map.on("dataloading", clearIdle);
+    map.on("movestart", clearIdle);
+    map.on("move", clearIdle);
+
     return () => {
       cancelReadyRef.current?.();
       cancelReadyRef.current = null;
@@ -318,6 +329,10 @@ export function IndoorMap({
       map.off("click", onClick);
       map.off("mousemove", onMouseMove);
       map.off("mouseout", onMouseLeave);
+      map.off("idle", markIdle);
+      map.off("dataloading", clearIdle);
+      map.off("movestart", clearIdle);
+      map.off("move", clearIdle);
       map.remove();
       mapRef.current = null;
       setMapInstance(null);
