@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a1000002-0000-4000-8000-000000000002",
+      "type": "Feature",
+      "feature_type": "address",
+      "geometry": null,
+      "properties": {
+        "address": "1 Marunouchi",
+        "unit": null,
+        "locality": "Chiyoda",
+        "province": "Tokyo",
+        "country": "JP",
+        "postal_code": "100-0005",
+        "postal_code_ext": null,
+        "postal_name": null
+      }
+    }
+  ]
+}

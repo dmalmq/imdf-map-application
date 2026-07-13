@@ -1,0 +1,18 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a1000007-0000-4000-8000-0000000000a1",
+      "type": "Feature",
+      "feature_type": "anchor",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [139.7666, 35.6816]
+      },
+      "properties": {
+        "address_id": "a1000002-0000-4000-8000-000000000002",
+        "unit_id": "c1000012-0000-4000-8000-00000000012f"
+      }
+    }
+  ]
+}

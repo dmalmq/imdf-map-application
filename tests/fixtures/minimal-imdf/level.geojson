@@ -1,0 +1,116 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "b1000001-0000-4000-8000-0000000000b1",
+      "type": "Feature",
+      "feature_type": "level",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7660, 35.6800],
+            [139.7680, 35.6800],
+            [139.7680, 35.6820],
+            [139.7660, 35.6820],
+            [139.7660, 35.6800]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "unspecified",
+        "restriction": null,
+        "outdoor": false,
+        "ordinal": -1,
+        "name": {
+          "ja-JP": "地下1階",
+          "en": "B1"
+        },
+        "short_name": {
+          "ja-JP": "B1",
+          "en": "B1"
+        },
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "address_id": "a1000002-0000-4000-8000-000000000002",
+        "building_ids": ["a1000003-0000-4000-8000-000000000003"]
+      }
+    },
+    {
+      "id": "b1000002-0000-4000-8000-00000000001f",
+      "type": "Feature",
+      "feature_type": "level",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7660, 35.6800],
+            [139.7680, 35.6800],
+            [139.7680, 35.6820],
+            [139.7660, 35.6820],
+            [139.7660, 35.6800]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "unspecified",
+        "restriction": null,
+        "outdoor": false,
+        "ordinal": 0,
+        "name": {
+          "ja-JP": "1階",
+          "en": "1F"
+        },
+        "short_name": {
+          "ja-JP": "1F",
+          "en": "1F"
+        },
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "address_id": "a1000002-0000-4000-8000-000000000002",
+        "building_ids": ["a1000003-0000-4000-8000-000000000003"]
+      }
+    },
+    {
+      "id": "b1000003-0000-4000-8000-00000000002f",
+      "type": "Feature",
+      "feature_type": "level",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7660, 35.6800],
+            [139.7680, 35.6800],
+            [139.7680, 35.6820],
+            [139.7660, 35.6820],
+            [139.7660, 35.6800]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "unspecified",
+        "restriction": null,
+        "outdoor": false,
+        "ordinal": 1,
+        "name": {
+          "ja-JP": "2階",
+          "en": "2F"
+        },
+        "short_name": {
+          "ja-JP": "2F",
+          "en": "2F"
+        },
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "address_id": "a1000002-0000-4000-8000-000000000002",
+        "building_ids": ["a1000003-0000-4000-8000-000000000003"]
+      }
+    }
+  ]
+}

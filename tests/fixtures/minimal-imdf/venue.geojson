@@ -1,0 +1,39 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a1000001-0000-4000-8000-000000000001",
+      "type": "Feature",
+      "feature_type": "venue",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7660, 35.6800],
+            [139.7680, 35.6800],
+            [139.7680, 35.6820],
+            [139.7660, 35.6820],
+            [139.7660, 35.6800]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "transit",
+        "restriction": null,
+        "name": {
+          "ja-JP": "東京駅テスト会場",
+          "en": "Tokyo Station Test Venue"
+        },
+        "alt_name": null,
+        "hours": null,
+        "phone": null,
+        "website": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "address_id": "a1000002-0000-4000-8000-000000000002"
+      }
+    }
+  ]
+}

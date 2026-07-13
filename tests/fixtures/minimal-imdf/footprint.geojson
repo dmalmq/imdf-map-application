@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a1000004-0000-4000-8000-000000000004",
+      "type": "Feature",
+      "feature_type": "footprint",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7660, 35.6800],
+            [139.7680, 35.6800],
+            [139.7680, 35.6820],
+            [139.7660, 35.6820],
+            [139.7660, 35.6800]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "ground",
+        "name": null,
+        "building_ids": ["a1000003-0000-4000-8000-000000000003"]
+      }
+    }
+  ]
+}

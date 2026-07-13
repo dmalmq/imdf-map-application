@@ -1,0 +1,35 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "f1000001-0000-4000-8000-0000000000f1",
+      "type": "Feature",
+      "feature_type": "kiosk",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7673, 35.6808],
+            [139.7675, 35.6808],
+            [139.7675, 35.6810],
+            [139.7673, 35.6810],
+            [139.7673, 35.6808]
+          ]
+        ]
+      },
+      "properties": {
+        "name": {
+          "ja-JP": "案内キオスク",
+          "en": "Info Kiosk"
+        },
+        "alt_name": null,
+        "anchor_id": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7674, 35.6809]
+        },
+        "level_id": "b1000002-0000-4000-8000-00000000001f"
+      }
+    }
+  ]
+}

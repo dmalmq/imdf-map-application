@@ -1,0 +1,25 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a1000003-0000-4000-8000-000000000003",
+      "type": "Feature",
+      "feature_type": "building",
+      "geometry": null,
+      "properties": {
+        "category": "transit",
+        "restriction": null,
+        "name": {
+          "ja-JP": "テスト駅ビル",
+          "en": "Test Station Building"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "address_id": "a1000002-0000-4000-8000-000000000002"
+      }
+    }
+  ]
+}

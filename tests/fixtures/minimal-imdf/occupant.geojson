@@ -1,0 +1,48 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a1000008-0000-4000-8000-0000000000c1",
+      "type": "Feature",
+      "feature_type": "occupant",
+      "geometry": null,
+      "properties": {
+        "category": "shopping",
+        "name": {
+          "ja-JP": "駅ナカショップ",
+          "en": "Station Shop"
+        },
+        "alt_name": {
+          "ja-JP": "テストストア",
+          "en": "Test Store"
+        },
+        "hours": "Mo-Fr 10:00-20:00",
+        "phone": null,
+        "website": null,
+        "validity": null,
+        "correlation_id": null,
+        "anchor_id": "a1000007-0000-4000-8000-0000000000a1"
+      }
+    },
+    {
+      "id": "a1000009-0000-4000-8000-0000000000c2",
+      "type": "Feature",
+      "feature_type": "occupant",
+      "geometry": null,
+      "properties": {
+        "category": "shopping",
+        "name": {
+          "ja-JP": "未解決ショップ",
+          "en": "Unresolved Shop"
+        },
+        "alt_name": null,
+        "hours": null,
+        "phone": null,
+        "website": null,
+        "validity": null,
+        "correlation_id": null,
+        "anchor_id": "deadbeef-0000-4000-8000-00000000dead"
+      }
+    }
+  ]
+}

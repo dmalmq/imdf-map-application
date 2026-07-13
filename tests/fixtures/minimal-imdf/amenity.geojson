@@ -1,0 +1,32 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "e1000001-0000-4000-8000-0000000000a1",
+      "type": "Feature",
+      "feature_type": "amenity",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [139.7674, 35.6811]
+      },
+      "properties": {
+        "category": "toilet",
+        "accessibility": ["wheelchair"],
+        "name": {
+          "ja-JP": "トイレ",
+          "en": "Restroom"
+        },
+        "alt_name": {
+          "ja-JP": "お手洗い",
+          "en": "WC"
+        },
+        "hours": null,
+        "phone": null,
+        "website": null,
+        "unit_ids": ["c1000011-0000-4000-8000-00000000011f"],
+        "address_id": null,
+        "correlation_id": null
+      }
+    }
+  ]
+}

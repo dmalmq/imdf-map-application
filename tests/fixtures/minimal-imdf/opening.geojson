@@ -1,0 +1,96 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "d1000001-0000-4000-8000-0000000000d1",
+      "type": "Feature",
+      "feature_type": "opening",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [139.7662, 35.6810],
+          [139.7662, 35.6812]
+        ]
+      },
+      "properties": {
+        "category": "pedestrian.transit",
+        "accessibility": ["wheelchair"],
+        "access_control": null,
+        "door": null,
+        "name": {
+          "ja-JP": "中央改札",
+          "en": "Central Gate"
+        },
+        "alt_name": {
+          "ja-JP": "メインゲート",
+          "en": "Main Gate"
+        },
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7662, 35.6811]
+        },
+        "level_id": "b1000002-0000-4000-8000-00000000001f"
+      }
+    },
+    {
+      "id": "d1000002-0000-4000-8000-0000000000d2",
+      "type": "Feature",
+      "feature_type": "opening",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [139.7670, 35.6806],
+          [139.7672, 35.6806]
+        ]
+      },
+      "properties": {
+        "category": "pedestrian",
+        "accessibility": null,
+        "access_control": null,
+        "door": null,
+        "name": {
+          "ja-JP": "地下入口",
+          "en": "B1 Entrance"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7671, 35.6806]
+        },
+        "level_id": "b1000001-0000-4000-8000-0000000000b1"
+      }
+    },
+    {
+      "id": "d1000003-0000-4000-8000-0000000000d3",
+      "type": "Feature",
+      "feature_type": "opening",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [139.7670, 35.6814],
+          [139.7672, 35.6814]
+        ]
+      },
+      "properties": {
+        "category": "pedestrian",
+        "accessibility": null,
+        "access_control": null,
+        "door": {
+          "type": "movablepartition",
+          "automatic": false,
+          "material": "wood"
+        },
+        "name": {
+          "ja-JP": "2階出入口",
+          "en": "2F Doorway"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7671, 35.6814]
+        },
+        "level_id": "b1000003-0000-4000-8000-00000000002f"
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "a100000a-0000-4000-8000-0000000000f1",
+      "type": "Feature",
+      "feature_type": "fixture",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7664, 35.6807],
+            [139.7666, 35.6807],
+            [139.7666, 35.6809],
+            [139.7664, 35.6809],
+            [139.7664, 35.6807]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "furniture",
+        "name": {
+          "ja-JP": "ベンチ",
+          "en": "Bench"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7665, 35.6808]
+        },
+        "level_id": "b1000002-0000-4000-8000-00000000001f",
+        "anchor_id": null
+      }
+    }
+  ]
+}

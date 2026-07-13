@@ -1,0 +1,260 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "c1000001-0000-4000-8000-0000000000b1",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7662, 35.6806],
+            [139.7678, 35.6806],
+            [139.7678, 35.6814],
+            [139.7662, 35.6814],
+            [139.7662, 35.6806]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "walkway",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "地下通路",
+          "en": "B1 Corridor"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "level_id": "b1000001-0000-4000-8000-0000000000b1"
+      }
+    },
+    {
+      "id": "c1000002-0000-4000-8000-0000000000b2",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7662, 35.6814],
+            [139.7668, 35.6814],
+            [139.7668, 35.6818],
+            [139.7662, 35.6818],
+            [139.7662, 35.6814]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "room",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "機械室"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7665, 35.6816]
+        },
+        "level_id": "b1000001-0000-4000-8000-0000000000b1"
+      }
+    },
+    {
+      "id": "c1000003-0000-4000-8000-0000000000b3",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7672, 35.6802],
+            [139.7678, 35.6802],
+            [139.7678, 35.6806],
+            [139.7672, 35.6806],
+            [139.7672, 35.6802]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "room",
+        "restriction": "employeesonly",
+        "accessibility": null,
+        "name": {
+          "ja-JP": "従業員専用室",
+          "en": "Staff Only Room"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.76765, 35.68055]
+        },
+        "level_id": "b1000001-0000-4000-8000-0000000000b1"
+      }
+    },
+    {
+      "id": "c1000011-0000-4000-8000-00000000011f",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7662, 35.6806],
+            [139.7678, 35.6806],
+            [139.7678, 35.6814],
+            [139.7662, 35.6814],
+            [139.7662, 35.6806]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "walkway",
+        "restriction": null,
+        "accessibility": ["wheelchair"],
+        "name": {
+          "ja-JP": "1階通路",
+          "en": "1F Corridor"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "level_id": "b1000002-0000-4000-8000-00000000001f"
+      }
+    },
+    {
+      "id": "c1000012-0000-4000-8000-00000000012f",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7662, 35.6814],
+            [139.7670, 35.6814],
+            [139.7670, 35.6818],
+            [139.7662, 35.6818],
+            [139.7662, 35.6814]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "room",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "ショップ区画",
+          "en": "Shop Unit"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7666, 35.6816]
+        },
+        "level_id": "b1000002-0000-4000-8000-00000000001f"
+      }
+    },
+    {
+      "id": "c1000013-0000-4000-8000-00000000013f",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7672, 35.6814],
+            [139.7678, 35.6814],
+            [139.7678, 35.6818],
+            [139.7672, 35.6818],
+            [139.7672, 35.6814]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "room",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "待合室",
+          "en": "Waiting Room"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7675, 35.6816]
+        },
+        "level_id": "b1000002-0000-4000-8000-00000000001f"
+      }
+    },
+    {
+      "id": "c1000021-0000-4000-8000-00000000021f",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7662, 35.6806],
+            [139.7678, 35.6806],
+            [139.7678, 35.6814],
+            [139.7662, 35.6814],
+            [139.7662, 35.6806]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "walkway",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "2階通路",
+          "en": "2F Corridor"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6810]
+        },
+        "level_id": "b1000003-0000-4000-8000-00000000002f"
+      }
+    },
+    {
+      "id": "c1000022-0000-4000-8000-00000000022f",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7662, 35.6814],
+            [139.7670, 35.6814],
+            [139.7670, 35.6818],
+            [139.7662, 35.6818],
+            [139.7662, 35.6814]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "room",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "会議室",
+          "en": "Meeting Room"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7666, 35.6816]
+        },
+        "level_id": "b1000003-0000-4000-8000-00000000002f"
+      }
+    }
+  ]
+}
