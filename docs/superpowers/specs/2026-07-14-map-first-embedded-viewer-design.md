@@ -49,7 +49,7 @@ The hamburger opens a nonmodal anchored menu containing:
 - Open/replace IMDF archive in standalone mode
 - Optional host-provided venue attribution
 
-Embedded mode keeps the venue, floor, language, and theme controls but omits file-opening controls unless the host explicitly enables them. Closing the menu restores focus to the hamburger trigger. The menu must not clear search, filtering, or feature selection.
+Embedded mode keeps the venue, floor, language, and theme controls. It omits file-opening controls by default and includes them only when the host URL sets `allowOpen=1`; standalone mode always includes them. Closing the menu restores focus to the hamburger trigger. The menu must not clear search, filtering, or feature selection.
 
 ## Search and filter interaction
 
