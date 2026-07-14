@@ -6,6 +6,7 @@ import {
   CLICKABLE_LAYER_IDS,
   LAYER_NONPUBLIC_FILL,
   LAYER_NONPUBLIC_OUTLINE,
+  LAYER_OPENING_LINE,
   LAYER_RESTROOM_FILL,
   LAYER_RESTROOM_OUTLINE,
   LAYER_ROOM_FILL,
@@ -97,6 +98,15 @@ describe("buildFeatureLayers category coloring", () => {
     expect(CLICKABLE_LAYER_IDS).toContain(LAYER_TRANSIT_FILL);
     expect(CLICKABLE_LAYER_IDS).toContain(LAYER_RESTROOM_FILL);
     expect(CLICKABLE_LAYER_IDS).toContain(LAYER_NONPUBLIC_FILL);
+  });
+
+  it("renders openings as a single clickable line layer, no endpoint circles", () => {
+    const openingLayers = buildFeatureLayers(theme).filter(
+      (layer) => JSON.stringify(layer.filter ?? null).includes('"opening"'),
+    );
+    expect(openingLayers.map((layer) => layer.type)).toEqual(["line"]);
+    expect(openingLayers[0]!.id).toBe(LAYER_OPENING_LINE);
+    expect(CLICKABLE_LAYER_IDS).toContain(LAYER_OPENING_LINE);
   });
 });
 

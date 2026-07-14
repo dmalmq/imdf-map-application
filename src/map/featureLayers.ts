@@ -36,7 +36,6 @@ export const LAYER_KIOSK_FILL = "indoor-kiosk-fill";
 export const LAYER_KIOSK_OUTLINE = "indoor-kiosk-outline";
 export const LAYER_DETAIL_LINE = "indoor-detail-line";
 export const LAYER_OPENING_LINE = "indoor-opening-line";
-export const LAYER_OPENING_CIRCLE = "indoor-opening-circle";
 export const LAYER_AMENITY_CIRCLE = "indoor-amenity-circle";
 export const LAYER_OCCUPANT_CIRCLE = "indoor-occupant-circle";
 export const LAYER_HOVER_OUTLINE = "indoor-hover-outline";
@@ -57,7 +56,6 @@ export const CLICKABLE_LAYER_IDS: readonly string[] = [
   LAYER_KIOSK_FILL,
   LAYER_DETAIL_LINE,
   LAYER_OPENING_LINE,
-  LAYER_OPENING_CIRCLE,
   LAYER_AMENITY_CIRCLE,
   LAYER_OCCUPANT_CIRCLE,
 ];
@@ -431,18 +429,6 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
         "line-width": 2.5,
       },
     },
-    {
-      id: LAYER_OPENING_CIRCLE,
-      type: "circle",
-      source: INDOOR_SOURCE_ID,
-      filter: matchFeatureType("opening"),
-      paint: {
-        "circle-radius": 3.5,
-        "circle-color": c.opening,
-        "circle-stroke-width": 1,
-        "circle-stroke-color": c.panel,
-      },
-    },
 
     // 5. Amenity + occupant points
     {
@@ -542,8 +528,6 @@ export function applyThemePaintProperties(
   setPaintProperty(LAYER_DETAIL_LINE, "line-color", c.muted);
 
   setPaintProperty(LAYER_OPENING_LINE, "line-color", c.opening);
-  setPaintProperty(LAYER_OPENING_CIRCLE, "circle-color", c.opening);
-  setPaintProperty(LAYER_OPENING_CIRCLE, "circle-stroke-color", c.panel);
 
   setPaintProperty(LAYER_AMENITY_CIRCLE, "circle-color", c.accent);
   setPaintProperty(LAYER_AMENITY_CIRCLE, "circle-stroke-color", c.panel);
