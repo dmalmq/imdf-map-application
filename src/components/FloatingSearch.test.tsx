@@ -84,6 +84,48 @@ describe("FloatingSearch", () => {
     expect((input as HTMLInputElement).value).toBe("station");
   });
 
+  it("shows a localized no-match state for a nonempty query without results", async () => {
+    const user = userEvent.setup();
+    const props = {
+      value: "zzz",
+      category: "all" as const,
+      results: [],
+      selectedFeatureId: null,
+      currentFloorMatchCount: 0,
+      onValueChange: () => {},
+      onCategoryChange: () => {},
+      onSelectResult: () => {},
+      onOpenChange: () => {},
+    };
+    const { rerender } = render(<FloatingSearch locale="en" {...props} />);
+    const input = screen.getByRole("combobox", { name: "Search" });
+    await user.click(input);
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("No matching places")).toBeTruthy();
+
+    rerender(<FloatingSearch locale="ja" {...props} />);
+    expect(screen.getByText("一致する場所がありません")).toBeTruthy();
+  });
+
+  it("keeps input Escape from reaching document-level surface listeners", async () => {
+    const user = userEvent.setup();
+    const escapes: string[] = [];
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") escapes.push(event.key);
+    };
+    document.addEventListener("keydown", onDocumentKeyDown);
+    try {
+      render(<Harness initialValue="station" />);
+      const input = screen.getByRole("combobox", { name: "Search" });
+      await user.click(input);
+      await user.keyboard("{Escape}");
+      expect(input.getAttribute("aria-expanded")).toBe("false");
+      expect(escapes).toEqual([]);
+    } finally {
+      document.removeEventListener("keydown", onDocumentKeyDown);
+    }
+  });
+
   it("keeps empty All closed but opens empty focused-category results", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<Harness />);

@@ -12,6 +12,7 @@ const labels = {
   categories: { ja: "カテゴリ", en: "Categories" },
   clearFilter: { ja: "絞り込みを解除", en: "Clear filter" },
   noFloor: { ja: "このフロアにありません", en: "on this floor" },
+  noMatches: { ja: "一致する場所がありません", en: "No matching places" },
   category: {
     all: { ja: "すべて", en: "All" },
     gates: { ja: "改札・出入口", en: "Gates" },
@@ -111,6 +112,9 @@ export function FloatingSearch({
           >
             {resultsOpen ? (
               <div id={listboxId} role="listbox" aria-label={labels.results[locale]}>
+                {visibleResults.length === 0 && value.trim() !== "" ? (
+                  <p className="floating-search__no-matches">{labels.noMatches[locale]}</p>
+                ) : null}
                 {visibleResults.map((result, index) => (
                   <button
                     key={result.featureId}
@@ -187,8 +191,10 @@ export function FloatingSearch({
           }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
-              // Chromium's native type=search Escape clears the field.
+              // Chromium's native type=search Escape clears the field, and the
+              // bubbled keydown would also close the selected-feature surface.
               event.preventDefault();
+              event.stopPropagation();
               closeResults();
               setFiltersOpen(false);
               return;

@@ -63,9 +63,10 @@ export function useSelectedFeaturePopup({
       />,
     );
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        popup.remove();
-      }
+      if (event.key !== "Escape") return;
+      // Topmost-first: an open search dropdown or menu owns this Escape.
+      if (document.querySelector(".floating-search__dropdown, .viewer-menu__panel")) return;
+      popup.remove();
     };
     document.addEventListener("keydown", onKeyDown);
     popup.on("close", dispatchClose);

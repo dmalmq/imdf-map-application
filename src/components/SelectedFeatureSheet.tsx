@@ -32,7 +32,10 @@ export function SelectedFeatureSheet({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeRef.current();
+      if (event.key !== "Escape") return;
+      // Topmost-first: an open search dropdown or menu owns this Escape.
+      if (document.querySelector(".floating-search__dropdown, .viewer-menu__panel")) return;
+      closeRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);

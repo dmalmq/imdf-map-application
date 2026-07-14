@@ -84,4 +84,29 @@ describe("SelectedFeatureSheet", () => {
     );
     expect(document.querySelector(".selected-feature-sheet__scroll")).not.toBeNull();
   });
+
+  it("closes on Escape only when no search dropdown or menu is open", async () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <SelectedFeatureSheet
+        content={content}
+        selectedFeatureId="shop-1"
+        locale="en"
+        onClose={onClose}
+        onHeightChange={() => {}}
+      />,
+    );
+
+    const transient = document.createElement("div");
+    transient.className = "floating-search__dropdown";
+    document.body.append(transient);
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+
+    transient.remove();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });
