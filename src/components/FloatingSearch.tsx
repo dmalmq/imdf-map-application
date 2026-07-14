@@ -146,7 +146,7 @@ export function FloatingSearch({
               </div>
             ) : null}
           </div>,
-          document.body,
+          controlRef.current?.closest(".app") ?? document.body,
         )
       : null;
 
@@ -187,6 +187,8 @@ export function FloatingSearch({
           }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
+              // Chromium's native type=search Escape clears the field.
+              event.preventDefault();
               closeResults();
               setFiltersOpen(false);
               return;

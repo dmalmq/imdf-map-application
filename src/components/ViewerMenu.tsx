@@ -147,7 +147,7 @@ export function ViewerMenu({
                 </button>
               ) : null}
             </div>,
-            document.body,
+            triggerRef.current?.closest(".app") ?? document.body,
           )
         : null}
     </div>

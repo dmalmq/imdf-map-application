@@ -83,7 +83,7 @@ function revealSelection(
   center: [number, number],
   compact: boolean,
 ): void {
-  const canvas = map.getCanvasContainer();
+  const canvas = map.getCanvas();
   const padding = map.getPadding();
   const offset = selectionRevealOffset(
     compact,
@@ -529,7 +529,7 @@ export function IndoorMap({
     const feature = venue.featuresById.get(selectedFeatureId);
     if (feature?.center == null) return;
     const point = map.project(feature.center);
-    const visibleBottom = map.getCanvasContainer().clientHeight - bottomPadding;
+    const visibleBottom = map.getCanvas().clientHeight - bottomPadding;
     if (point.y > visibleBottom - 16) {
       map.panBy([0, point.y - visibleBottom + 16], {
         duration: prefersReducedMotion() ? 0 : EASE_DURATION_MS,

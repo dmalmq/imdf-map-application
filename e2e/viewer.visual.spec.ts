@@ -60,7 +60,7 @@ test.describe("viewer visual baselines", () => {
     await page.goto("/");
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
     await searchAndSelect(page, "駅ナカ", OCCUPANT_JA);
     await settleForScreenshot(page);
     await expect(page).toHaveScreenshot("desktop-tokyo-ja.png", {
@@ -74,9 +74,9 @@ test.describe("viewer visual baselines", () => {
     await page.goto("/");
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
     await switchLocale(page, "en");
-    await waitForReadyVenue(page, VENUE_NAME_EN);
+    await waitForReadyVenue(page);
     await switchTheme(page, "Customer Blue");
     await searchAndSelect(page, "Station Shop", OCCUPANT_EN);
     await settleForScreenshot(page);

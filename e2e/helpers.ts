@@ -26,14 +26,6 @@ export const AMENITY_JA = "トイレ";
 export const AMENITY_EN = "Restroom";
 export const UNIT_STAIRS_EN = "B1 Stairs";
 
-export const WARNING_CODES = [
-  "missing_display_point",
-  "missing_display_point",
-  "missing_display_point",
-  "unresolved_reference",
-  "missing_locale",
-] as const;
-
 /** Build the deterministic minimal IMDF ZIP as a Buffer for setInputFiles. */
 export async function minimalImdfZipBuffer(): Promise<Buffer> {
   const bytes = await buildMinimalImdfZip();
@@ -77,11 +69,35 @@ export async function waitForMapIdle(page: Page, timeout = 15_000): Promise<void
   });
 }
 
-export async function waitForReadyVenue(page: Page, venueName: string): Promise<void> {
-  await expect(page.locator(".top-bar__venue")).toHaveText(venueName, {
+export async function waitForReadyVenue(page: Page): Promise<void> {
+  await expect(page.locator(".floating-search__control input")).toBeVisible({
     timeout: 15_000,
   });
   await waitForMapIdle(page);
+}
+
+export function menuTrigger(page: Page): Locator {
+  return page.locator(".viewer-menu__trigger");
+}
+
+export function menuPanel(page: Page): Locator {
+  return page.locator(".viewer-menu__panel");
+}
+
+export async function openMenu(page: Page): Promise<Locator> {
+  const panel = menuPanel(page);
+  if (!(await panel.isVisible())) {
+    await menuTrigger(page).click();
+    await expect(panel).toBeVisible();
+  }
+  return panel;
+}
+
+export async function closeMenu(page: Page): Promise<void> {
+  if (await menuPanel(page).isVisible()) {
+    await page.keyboard.press("Escape");
+    await expect(menuPanel(page)).toHaveCount(0);
+  }
 }
 
 export function levelPill(page: Page, label: string): Locator {
@@ -89,9 +105,11 @@ export function levelPill(page: Page, label: string): Locator {
 }
 
 export async function selectLevel(page: Page, label: string): Promise<void> {
+  await openMenu(page);
   const pill = levelPill(page, label);
   await pill.click();
   await expect(pill).toHaveAttribute("aria-pressed", "true");
+  await closeMenu(page);
   await waitForMapIdle(page);
 }
 
@@ -99,72 +117,58 @@ export function markerByLabel(page: Page, label: string): Locator {
   return page.locator(`.indoor-marker[aria-label="${label}"]`);
 }
 
+export function searchInput(page: Page): Locator {
+  return page.locator('.floating-search__control input[type="search"]');
+}
+
 export async function searchAndSelect(
   page: Page,
   query: string,
   resultLabel: string,
 ): Promise<void> {
-  const input = page.locator("#viewer-search-input");
+  const input = searchInput(page);
   await input.fill(query);
-  const result = page.locator(".explorer-sidebar__result", { hasText: resultLabel });
-  await expect(result).toBeVisible({ timeout: 5_000 });
-  await result.click();
+  const result = page.locator(".floating-search__option", { hasText: resultLabel });
+  await expect(result.first()).toBeVisible({ timeout: 5_000 });
+  await result.first().click();
   await waitForMapIdle(page);
 }
 
-export function detailsSection(page: Page): Locator {
-  return page.locator(".feature-details");
+/** Selected-place content host: desktop MapLibre popup or compact sheet. */
+export function selectedContent(page: Page): Locator {
+  return page.locator(".selected-feature");
 }
 
-export async function expectDetailsContain(
+export async function expectSelectedContent(
   page: Page,
   parts: string[],
 ): Promise<void> {
-  const details = detailsSection(page);
-  await expect(details).toBeVisible();
+  const content = selectedContent(page);
+  await expect(content).toBeVisible();
   for (const part of parts) {
-    await expect(details).toContainText(part);
+    await expect(content).toContainText(part);
   }
 }
 
 export async function switchLocale(page: Page, locale: "ja" | "en"): Promise<void> {
   const label = locale === "ja" ? "日本語" : "English";
-  const button = page.locator(".locale-switcher__btn", { hasText: label });
+  const panel = await openMenu(page);
+  const button = panel.locator(".viewer-menu__locale button", { hasText: label });
   await button.click();
   await expect(button).toHaveAttribute("aria-pressed", "true");
+  await closeMenu(page);
 }
 
 export async function switchTheme(
   page: Page,
   themeLabel: "Tokyo Green" | "Customer Blue",
 ): Promise<void> {
-  const button = page.locator(".theme-switcher__btn", { hasText: themeLabel });
+  const panel = await openMenu(page);
+  const button = panel.locator(".theme-switcher__btn", { hasText: themeLabel });
   await button.click();
   await expect(button).toHaveAttribute("aria-pressed", "true");
+  await closeMenu(page);
   await waitForMapIdle(page);
-}
-
-export async function openWarnings(page: Page): Promise<Locator> {
-  const details = page.locator("details.viewer-warnings");
-  await expect(details).toBeVisible();
-  // Force-open for consistent inspection even if already open.
-  await details.evaluate((el: HTMLDetailsElement) => {
-    el.open = true;
-  });
-  return details;
-}
-
-export async function expectWarningCodes(
-  page: Page,
-  expected: readonly string[],
-): Promise<void> {
-  const warnings = await openWarnings(page);
-  const codes = warnings.locator(".viewer-warnings__code");
-  await expect(codes).toHaveCount(expected.length);
-  const actual = await codes.allTextContents();
-  const sortedActual = [...actual].sort();
-  const sortedExpected = [...expected].sort();
-  expect(sortedActual).toEqual(sortedExpected);
 }
 
 /** Click slightly below a marker so the hit lands on the polygon under it. */

@@ -8,7 +8,6 @@ import {
   minimalImdfZipBuffer,
   OCCUPANT_JA,
   uploadZip,
-  VENUE_NAME_JA,
   waitForMapIdle,
   waitForReadyVenue,
 } from "./helpers";
@@ -33,7 +32,7 @@ async function measureUploadToIdle(page: Page, zipBuffer: Buffer): Promise<numbe
   });
 
   await uploadZip(page, zipBuffer);
-  await waitForReadyVenue(page, VENUE_NAME_JA);
+  await waitForReadyVenue(page);
   await expect(levelPill(page, LEVEL_1F_JA)).toBeVisible();
   await waitForMapIdle(page);
 
@@ -159,7 +158,7 @@ test.describe("viewer performance", () => {
     await page.goto("/");
     await page.waitForLoadState("load");
     await uploadZip(page, zipBuffer);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
     await waitForMapIdle(page);
     await zeroMapLibreTransitions(page);
     const labels = [LEVEL_B1_JA, LEVEL_1F_JA, LEVEL_2F_JA, LEVEL_1F_JA];
@@ -227,7 +226,7 @@ test.describe("viewer performance", () => {
     await page.goto("/");
     await page.waitForLoadState("load");
     await uploadZip(page, zipBuffer);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
     await waitForMapIdle(page);
 
     // Seed search results so detail selection is meaningful during the drag.

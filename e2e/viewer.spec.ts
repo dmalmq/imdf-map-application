@@ -1,27 +1,30 @@
-import { expect, test, type Request } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import {
   AMENITY_JA,
   canvasElementIdentity,
   clickBelowMarker,
+  closeMenu,
   corruptZipBuffer,
-  expectDetailsContain,
-  expectWarningCodes,
-  KIOSK_ID,
-  KIOSK_MARKER_JA,
+  expectSelectedContent,
+  KIOSK_MARKER_EN,
   LEVEL_1F_JA,
   LEVEL_2F_JA,
-  LEVEL_B1_JA,
   LEVEL_B1_EN,
+  LEVEL_B1_JA,
   levelPill,
+  KIOSK_MARKER_JA,
   mapCanvas,
   mapContainer,
   markerByLabel,
-  OCCUPANT_ALT_JA,
+  menuTrigger,
   OCCUPANT_EN,
   OCCUPANT_HOURS,
   OCCUPANT_ID,
   OCCUPANT_JA,
+  openMenu,
   searchAndSelect,
+  searchInput,
+  selectedContent,
   selectLevel,
   switchLocale,
   switchTheme,
@@ -31,11 +34,18 @@ import {
   VENUE_NAME_JA,
   waitForMapIdle,
   waitForReadyVenue,
-  WARNING_CODES,
 } from "./helpers";
 
+async function closeSelectedContent(page: Page): Promise<void> {
+  await page
+    .getByRole("button", { name: /Close details|詳細を閉じる/ })
+    .first()
+    .click();
+  await expect(selectedContent(page)).toHaveCount(0);
+}
+
 test.describe("IMDF viewer journey", () => {
-  test("upload → map → level → search → selection → details → theme → compact → recovery", async ({
+  test("upload → map-first shell → levels → search → selection → theme → compact → recovery", async ({
     page,
   }) => {
     // Zero post-load network: start counting after the static app load event.
@@ -51,116 +61,94 @@ test.describe("IMDF viewer journey", () => {
     await page.waitForLoadState("load");
     page.on("request", onRequest);
 
-    // Upload synthetic IMDF ZIP.
     await uploadMinimalImdf(page);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
 
-    // Map canvas + idle + top-bar venue/level.
+    // Map-first shell: the map owns the viewport; no legacy chrome.
     await expect(mapCanvas(page)).toBeVisible();
-    await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
-    await expect(page.locator(".top-bar__venue")).toHaveText(VENUE_NAME_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_1F_JA);
+    await expect(page.locator(".top-bar")).toHaveCount(0);
+    await expect(page.locator(".explorer-sidebar")).toHaveCount(0);
+    await expect(searchInput(page)).toBeVisible();
+    await expect(menuTrigger(page)).toBeVisible();
+    await expect(page.getByText("警告")).toHaveCount(0);
+
+    // Venue name and current floor live in the hamburger menu.
+    const panel = await openMenu(page);
+    await expect(panel).toContainText(VENUE_NAME_JA);
+    await expect(panel).toContainText(LEVEL_1F_JA);
+    await closeMenu(page);
 
     // Initial level has amenity + kiosk + occupant markers.
     await expect(markerByLabel(page, AMENITY_JA)).toBeVisible();
     await expect(markerByLabel(page, KIOSK_MARKER_JA)).toBeVisible();
     await expect(markerByLabel(page, OCCUPANT_JA)).toBeVisible();
-    await expect(levelPill(page, LEVEL_1F_JA)).toHaveAttribute("aria-pressed", "true");
 
-    // Switch to B1 then 2F; assert pressed state + idle + markers when present.
+    // Level switching through the menu.
     await selectLevel(page, LEVEL_B1_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_B1_JA);
-    // B1: stairs + restroom bubbles, machine-room + staff-room pills.
-    await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
     await expect(page.locator(".indoor-marker")).toHaveCount(4);
-
     await selectLevel(page, LEVEL_2F_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_2F_JA);
-    await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
     await expect(page.locator(".indoor-marker")).toHaveCount(1);
-
-    // Return to 1F for search/selection.
     await selectLevel(page, LEVEL_1F_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_1F_JA);
 
-    // Japanese search → select occupant → details.
+    // Japanese search → occupant → visitor popup without diagnostics.
     await searchAndSelect(page, "駅ナカ", OCCUPANT_JA);
-    await expectDetailsContain(page, [
-      OCCUPANT_JA,
-      OCCUPANT_ALT_JA,
-      OCCUPANT_HOURS,
-      OCCUPANT_ID,
-      "occupant",
-    ]);
-    await expect(page.locator(".feature-details")).toContainText("別名");
-    await expect(page.locator(".feature-details")).toContainText("営業時間");
+    await expectSelectedContent(page, [OCCUPANT_JA, OCCUPANT_HOURS]);
+    await expect(selectedContent(page)).not.toContainText(OCCUPANT_ID);
+    await expect(selectedContent(page)).not.toContainText("種別");
+    await closeSelectedContent(page);
 
-    // English search: switch locale → search "Station Shop" → same feature.
+    // English search selects the same feature.
     await switchLocale(page, "en");
     await searchAndSelect(page, "Station Shop", OCCUPANT_EN);
-    await expectDetailsContain(page, [OCCUPANT_EN, "Test Store", OCCUPANT_ID, OCCUPANT_HOURS]);
-    await expect(page.locator(".feature-details")).toContainText("Also known as");
-    await expect(page.locator(".feature-details")).toContainText("Hours");
-
-    // Back to Japanese for remaining assertions with known labels.
-    await switchLocale(page, "ja");
-    await waitForMapIdle(page);
+    await expectSelectedContent(page, [OCCUPANT_EN, OCCUPANT_HOURS]);
+    await closeSelectedContent(page);
 
     // Polygonal kiosk click-selection: click slightly below the kiosk marker.
-    // Ensure 1F is selected and markers are present.
-    await selectLevel(page, LEVEL_1F_JA);
-    await expect(markerByLabel(page, KIOSK_MARKER_JA)).toBeVisible();
-    await clickBelowMarker(page, KIOSK_MARKER_JA);
-    await expectDetailsContain(page, ["kiosk", KIOSK_ID, KIOSK_MARKER_JA]);
+    await expect(markerByLabel(page, KIOSK_MARKER_EN)).toBeVisible();
+    await clickBelowMarker(page, KIOSK_MARKER_EN);
+    await expectSelectedContent(page, [KIOSK_MARKER_EN]);
+    await closeSelectedContent(page);
 
     // Theme switch updates map without recreating the canvas.
     const canvasIdBefore = await canvasElementIdentity(page);
     expect(canvasIdBefore.length).toBeGreaterThan(0);
     await switchTheme(page, "Customer Blue");
-    await expect(page.locator(".theme-switcher__btn", { hasText: "Customer Blue" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
     const canvasIdAfter = await canvasElementIdentity(page);
     expect(canvasIdAfter).toBe(canvasIdBefore);
-    // Switch back so later steps keep the default theme look.
     await switchTheme(page, "Tokyo Green");
 
-    // Warnings: exactly 5 entries with the known codes.
-    await expectWarningCodes(page, WARNING_CODES);
-
-    // Compact layout at 390×844 (while still ready so level switches work).
+    // Compact layout: floating controls stay usable, selection uses the sheet.
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.locator(".app")).toHaveClass(/app--compact/);
-    // Top bar: product name + open button only (no venue/level/locale/theme in header).
-    await expect(page.locator(".top-bar__product")).toBeVisible();
-    await expect(page.locator(".top-bar__open")).toBeVisible();
-    await expect(page.locator(".top-bar .top-bar__venue")).toHaveCount(0);
-    await expect(page.locator(".top-bar .locale-switcher")).toHaveCount(0);
-    await expect(page.locator(".top-bar .theme-switcher")).toHaveCount(0);
-    // Venue/level + locale/theme live in the sheet compact header.
-    await expect(page.locator(".explorer-sidebar__compact-row--meta .top-bar__venue")).toHaveText(
-      VENUE_NAME_JA,
+    await expect(searchInput(page)).toBeVisible();
+    await expect(menuTrigger(page)).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
-    await expect(page.locator(".explorer-sidebar__compact-row--controls .locale-switcher")).toBeVisible();
-    await expect(page.locator(".explorer-sidebar__compact-row--controls .theme-switcher")).toBeVisible();
-    // Level pills remain visible and clickable.
-    await expect(levelPill(page, LEVEL_1F_JA)).toBeVisible();
-    await selectLevel(page, LEVEL_B1_JA);
-    await expect(levelPill(page, LEVEL_B1_JA)).toHaveAttribute("aria-pressed", "true");
+    expect(overflow).toBeLessThanOrEqual(0);
 
-    // Restore desktop for replacement-error assertions that use the top bar.
+    await searchInput(page).fill("Waiting");
+    await page.keyboard.press("Escape");
+    await markerByLabel(page, "Waiting Room").click();
+    await expect(page.locator(".selected-feature-sheet")).toBeVisible();
+    await expect(page.locator(".maplibregl-popup")).toHaveCount(0);
+    await closeSelectedContent(page);
+    await expect(page.locator(".selected-feature-sheet")).toHaveCount(0);
+    await expect(searchInput(page)).toHaveValue("Waiting");
+    await searchInput(page).fill("");
+
+    // Restore desktop before replacement-error assertions.
     await page.setViewportSize({ width: 1280, height: 720 });
-    await expect(page.locator(".app")).not.toHaveClass(/app--compact/);
 
     // Invalid replacement: corrupt zip keeps the venue + canvas, shows alert.
     await uploadZip(page, corruptZipBuffer(), "corrupt.zip");
     const alert = page.locator('[role="alert"]');
     await expect(alert).toBeVisible({ timeout: 10_000 });
     await expect(alert).toContainText("Choose an Apple IMDF .zip archive.");
-    await expect(page.locator(".top-bar__venue")).toHaveText(VENUE_NAME_JA);
     await expect(mapCanvas(page)).toBeVisible();
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
+    const retainedPanel = await openMenu(page);
+    await expect(retainedPanel).toContainText("Tokyo Station Test Venue");
+    await closeMenu(page);
 
     // Zero post-load HTTP(S) requests for the whole journey.
     page.off("request", onRequest);
@@ -170,17 +158,20 @@ test.describe("IMDF viewer journey", () => {
     ).toEqual([]);
   });
 
-  test("search-selecting the B1 stairs unit switches level and shows details", async ({
+  test("search-selecting the B1 stairs unit switches level and shows its place card", async ({
     page,
   }) => {
     await page.goto("/");
     await uploadMinimalImdf(page);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
 
     await switchLocale(page, "en");
     await searchAndSelect(page, "B1 Stairs", UNIT_STAIRS_EN);
-    await expectDetailsContain(page, [UNIT_STAIRS_EN]);
+    await expectSelectedContent(page, [UNIT_STAIRS_EN]);
+    const panel = await openMenu(page);
     await expect(levelPill(page, LEVEL_B1_EN)).toHaveAttribute("aria-pressed", "true");
+    await expect(panel).toBeVisible();
+    await closeMenu(page);
   });
 
   test("clicking room pills and transit bubbles selects the feature", async ({
@@ -188,27 +179,29 @@ test.describe("IMDF viewer journey", () => {
   }) => {
     await page.goto("/");
     await uploadMinimalImdf(page);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
     await switchLocale(page, "en");
 
     // Room pill on 1F selects the room.
     await markerByLabel(page, "Waiting Room").click();
-    await expectDetailsContain(page, ["Waiting Room", "room"]);
+    await expectSelectedContent(page, ["Waiting Room"]);
+
     // Stairs icon bubble on B1 selects the stairs unit.
     await selectLevel(page, LEVEL_B1_EN);
     await markerByLabel(page, UNIT_STAIRS_EN).click();
-    await expectDetailsContain(page, [UNIT_STAIRS_EN, "stairs"]);
+    await expectSelectedContent(page, [UNIT_STAIRS_EN]);
 
     // Restroom icon bubble selects the restroom unit.
     await markerByLabel(page, "B1 Restroom").click();
-    await expectDetailsContain(page, ["B1 Restroom", "restroom.female"]);
+    await expectSelectedContent(page, ["B1 Restroom"]);
   });
+
   test("wheel zoom over a compact marker expands labels and keeps dots selectable", async ({
     page,
   }) => {
     await page.goto("/");
     await uploadMinimalImdf(page);
-    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page);
     await switchLocale(page, "en");
 
     const overlay = page.locator(".indoor-marker-overlay");
@@ -236,25 +229,22 @@ test.describe("IMDF viewer journey", () => {
     await expect(overlay).not.toHaveClass(/indoor-marker-overlay--expanded/);
     await expect(marker).toHaveCSS("width", "10px");
     await marker.click();
-    await expectDetailsContain(page, ["Waiting Room"]);
+    await expectSelectedContent(page, ["Waiting Room"]);
     expect(await marker.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(10);
     await expect(overlay).not.toHaveClass(/indoor-marker-overlay--expanded/);
   });
-
 });
 
 test.describe("marker keyboard focus", () => {
-  async function readyEnglishViewer(page: import("@playwright/test").Page): Promise<void> {
+  async function readyEnglishViewer(page: Page): Promise<void> {
     await page.goto("/");
     await uploadMinimalImdf(page);
     await waitForMapIdle(page);
-    await page.getByRole("button", { name: "メニュー" }).click();
-    await page.getByRole("button", { name: "English" }).click();
-    await page.keyboard.press("Escape");
+    await switchLocale(page, "en");
     await expect(markerByLabel(page, "Waiting Room")).toBeVisible();
   }
 
-  async function tabToWaitingRoom(page: import("@playwright/test").Page): Promise<void> {
+  async function tabToWaitingRoom(page: Page): Promise<void> {
     for (let presses = 0; presses < 80; presses += 1) {
       const label = await page.evaluate(
         () => document.activeElement?.getAttribute("aria-label") ?? "",
@@ -268,7 +258,7 @@ test.describe("marker keyboard focus", () => {
   }
 
   async function activeMarkerState(
-    page: import("@playwright/test").Page,
+    page: Page,
   ): Promise<{ label: string; selected: boolean }> {
     return page.evaluate(() => {
       const active = document.activeElement;
