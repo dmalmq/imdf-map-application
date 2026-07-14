@@ -169,10 +169,10 @@ function mapZipJsError(error: unknown): never {
   fail("invalid_archive");
 }
 
-async function extractEntryText(
+async function extractEntryBytes(
   entry: FileEntry,
   totalTracker: { bytes: number },
-): Promise<string> {
+): Promise<Uint8Array> {
   const writer = new BoundedByteWriter(totalTracker);
   try {
     await entry.getData(writer.writable, {
@@ -189,7 +189,14 @@ async function extractEntryText(
     }
     mapZipJsError(error);
   }
-  const bytes = writer.getBytes();
+  return writer.getBytes();
+}
+
+async function extractEntryText(
+  entry: FileEntry,
+  totalTracker: { bytes: number },
+): Promise<string> {
+  const bytes = await extractEntryBytes(entry, totalTracker);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
@@ -426,30 +433,42 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
     } else if (enrichmentMatches.length === 1) {
       const enrichmentEntry = enrichmentMatches[0]!;
       try {
-        const text = await extractEntryText(enrichmentEntry, totalTracker);
-        let parsed: unknown;
+        const bytes = await extractEntryBytes(enrichmentEntry, totalTracker);
+        let text: string | undefined;
         try {
-          parsed = JSON.parse(text) as unknown;
+          text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
         } catch {
           warnings.push({
             code: "invalid_viewer_enrichment",
-            message: `Malformed viewer enrichment JSON in ${enrichmentEntry.filename}.`,
+            message: `Malformed viewer enrichment encoding in ${enrichmentEntry.filename}.`,
             archiveEntry: enrichmentEntry.filename,
           });
-          parsed = undefined;
         }
-        if (parsed !== undefined) {
-          const parsedEnrichment = parseViewerEnrichment(parsed);
-          if (parsedEnrichment.warnings.length > 0) {
-            warnings.push(
-              ...parsedEnrichment.warnings.map((warning) => ({
-                ...warning,
-                archiveEntry: warning.archiveEntry ?? enrichmentEntry.filename,
-              })),
-            );
+        if (text !== undefined) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(text) as unknown;
+          } catch {
+            warnings.push({
+              code: "invalid_viewer_enrichment",
+              message: `Malformed viewer enrichment JSON in ${enrichmentEntry.filename}.`,
+              archiveEntry: enrichmentEntry.filename,
+            });
+            parsed = undefined;
           }
-          if (Object.keys(parsedEnrichment.entries).length > 0) {
-            enrichment = parsedEnrichment.entries;
+          if (parsed !== undefined) {
+            const parsedEnrichment = parseViewerEnrichment(parsed);
+            if (parsedEnrichment.warnings.length > 0) {
+              warnings.push(
+                ...parsedEnrichment.warnings.map((warning) => ({
+                  ...warning,
+                  archiveEntry: warning.archiveEntry ?? enrichmentEntry.filename,
+                })),
+              );
+            }
+            if (Object.keys(parsedEnrichment.entries).length > 0) {
+              enrichment = parsedEnrichment.entries;
+            }
           }
         }
       } catch (error) {
@@ -567,7 +586,10 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
       }
     }
 
-    const archive: ParsedImdfArchive = { manifest, collections, enrichment };
+    const archive: ParsedImdfArchive =
+      enrichment !== undefined
+        ? { manifest, collections, enrichment }
+        : { manifest, collections };
     const venue = normalizeVenue(archive);
     if (warnings.length > 0) {
       venue.warnings = [...warnings, ...venue.warnings];

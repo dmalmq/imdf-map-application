@@ -601,4 +601,27 @@ describe("IMDF archive boundary (loadArchive)", () => {
       result.venue.warnings.some((warning) => warning.code === "unknown_archive_entry"),
     ).toBe(false);
   });
+
+  it("loads nonfatally when viewer-enrichment.json is invalid UTF-8", async () => {
+    const bytes = await buildMinimalImdfZip({
+      extraEntries: {
+        // Lone continuation / overlong-style invalid UTF-8 sequence.
+        "viewer-enrichment.json": new Uint8Array([0xff, 0xfe, 0xfd, 0xfc]),
+      },
+    });
+    const result = await tryLoadArchive(asFile(bytes));
+    expect(result.type).toBe("loaded");
+    if (result.type !== "loaded") {
+      return;
+    }
+    expect(result.venue.enrichmentByFeatureId.size).toBe(0);
+    const invalid = result.venue.warnings.filter(
+      (warning) => warning.code === "invalid_viewer_enrichment",
+    );
+    expect(invalid).toHaveLength(1);
+    expect(
+      result.venue.warnings.some((warning) => warning.code === "unknown_archive_entry"),
+    ).toBe(false);
+    expect(result.venue.venue.labels["en"]).toBe(VENUE_EN);
+  });
 });
