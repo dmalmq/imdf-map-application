@@ -9,6 +9,7 @@ import {
   type DragEvent,
 } from "react";
 import { ExplorerSidebar } from "../components/ExplorerSidebar";
+import { FloatingSearch } from "../components/FloatingSearch";
 import { resolveSelectedFeature } from "../components/FeatureDetails";
 import { ImdfDropzone } from "../components/ImdfDropzone";
 import { LevelSwitcher } from "../components/LevelSwitcher";
@@ -20,6 +21,7 @@ import { loadImdfArchive } from "../imdf/loadImdfArchive";
 import { localizedLabel } from "../imdf/localize";
 import type { SearchResult } from "../imdf/types";
 import { IndoorMap } from "../map/IndoorMap";
+import { collectMarkerFeatures } from "../map/useFeatureMarkers";
 import { searchVenue } from "../search/searchVenue";
 import {
   initialViewerState,
@@ -173,6 +175,16 @@ export function App() {
       levelId: venueState.selectedLevelId,
     });
   }, [venueState, locale]);
+
+  const currentFloorMatchCount = useMemo(() => {
+    if (!venueState) return 0;
+    return collectMarkerFeatures(
+      venueState.loadedVenue,
+      venueState.selectedLevelId,
+      venueState.selectedFeatureId,
+      venueState.searchCategory,
+    ).length;
+  }, [venueState]);
 
   const selectedFeature = useMemo(() => {
     if (!venueState) {
@@ -450,6 +462,22 @@ export function App() {
         >
           {showMap ? (
             <>
+              <FloatingSearch
+                locale={locale}
+                value={venueState.searchText}
+                category={venueState.searchCategory}
+                results={searchResults}
+                selectedFeatureId={venueState.selectedFeatureId}
+                currentFloorMatchCount={currentFloorMatchCount}
+                onValueChange={(text) => {
+                  dispatch({ type: "set_search_text", text });
+                }}
+                onCategoryChange={(category) => {
+                  dispatch({ type: "set_search_category", category });
+                }}
+                onSelectResult={onSelectResult}
+                onOpenChange={() => {}}
+              />
               <IndoorMap
                 venue={venueState.loadedVenue}
                 levelId={venueState.selectedLevelId}

@@ -311,11 +311,13 @@ describe("App", () => {
     // Switch to English so search result labels match English queries.
     await user.click(screen.getByRole("button", { name: "English" }));
 
-    const search = screen.getByLabelText("Search");
+    const search = screen.getByRole("combobox", { name: "Search" });
     await user.clear(search);
     await user.type(search, "Restroom");
 
-    const restroomOption = await screen.findByRole("option", { name: /Restroom/i });
+    const floatingResults = document.querySelector<HTMLElement>(".floating-search__dropdown");
+    expect(floatingResults).not.toBeNull();
+    const restroomOption = within(floatingResults!).getByRole("option", { name: /Restroom/i });
     await user.click(restroomOption);
 
     // Null levelId retains current level (2F).
@@ -329,7 +331,9 @@ describe("App", () => {
     // Null-center feature still shows details without crash.
     await user.clear(search);
     await user.type(search, "Dangling");
-    const dangling = await screen.findByRole("option", { name: /Dangling Shop/i });
+    const nextFloatingResults = document.querySelector<HTMLElement>(".floating-search__dropdown");
+    expect(nextFloatingResults).not.toBeNull();
+    const dangling = within(nextFloatingResults!).getByRole("option", { name: /Dangling Shop/i });
     await user.click(dangling);
 
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-selected-feature-id")).toBe(
