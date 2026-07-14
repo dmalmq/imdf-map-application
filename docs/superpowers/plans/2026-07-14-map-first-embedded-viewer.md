@@ -726,6 +726,7 @@ git commit -m "feat: replace viewer chrome with map controls"
 - Create: `src/components/SelectedFeatureSheet.tsx`
 - Create: `src/components/SelectedFeatureSheet.test.tsx`
 - Modify: `src/map/IndoorMap.tsx`
+- Create: `src/map/IndoorMap.test.tsx`
 - Modify: `src/app/App.tsx`
 - Modify: `src/app/App.test.tsx`
 
@@ -756,13 +757,15 @@ Mock MapLibre `Popup` at the module boundary and assert:
 - Popup close invokes `onClose` once.
 - Cleanup unmounts the React root and removes the popup.
 
+Add `src/map/IndoorMap.test.tsx` around the selection-camera contract. With a selected display point already inside the current padded viewport, assert neither `easeTo`, `jumpTo`, nor `panBy` runs. With a point outside the desktop viewport, assert `panBy` receives only the overflow delta needed to place it 16px inside the relevant edge. In compact mode, assert the selection effect does not pan; sheet-padding logic owns compact adjustment.
+
 - [ ] **Step 2: Run popup tests and confirm RED**
 
 ```powershell
-corepack pnpm exec vitest run src/map/useSelectedFeaturePopup.test.tsx
+corepack pnpm exec vitest run src/map/useSelectedFeaturePopup.test.tsx src/map/IndoorMap.test.tsx
 ```
 
-Expected: missing hook.
+Expected: missing popup hook and failure because current selection handling unconditionally calls `easeTo` or `jumpTo` even for an already-visible point.
 
 - [ ] **Step 3: Implement the desktop popup hook**
 
@@ -780,6 +783,8 @@ new Popup({
 
 Render `SelectedFeatureContent` into the popup container. Let MapLibre choose/flip anchors. Stop popup clicks from becoming map-background selections. On explicit content close call `popup.remove()` and `onClose()` without duplicate dispatch.
 
+Replace the unconditional selection `jumpTo`/`easeTo` block in `IndoorMap` with a pure `revealOffset(point, viewport, padding, margin)` helper. It returns `null` when the projected display point is already inside all padded bounds. Otherwise it returns `[dx, dy]`, where each component is only the signed overflow past the nearest bound; call `map.panBy(offset, { duration: prefersReducedMotion() ? 0 : EASE_DURATION_MS })`. Skip this desktop adjustment when `compact` is true because the sheet-padding effect below owns compact visibility.
+
 - [ ] **Step 4: Write failing compact-sheet tests**
 
 Test the sheet renders the same resolved content, reports its height through `ResizeObserver`, closes selection, and limits its scroll region. Mock `ResizeObserver` deterministically.
@@ -793,7 +798,7 @@ Pass the sheet’s measured height to `IndoorMap`. In an effect, call `map.setPa
 - [ ] **Step 6: Run popup, sheet, map, and App tests**
 
 ```powershell
-corepack pnpm exec vitest run src/map/useSelectedFeaturePopup.test.tsx src/components/SelectedFeatureSheet.test.tsx src/app/App.test.tsx src/map/useFeatureMarkers.test.ts
+corepack pnpm exec vitest run src/map/useSelectedFeaturePopup.test.tsx src/map/IndoorMap.test.tsx src/components/SelectedFeatureSheet.test.tsx src/app/App.test.tsx src/map/useFeatureMarkers.test.ts
 ```
 
 Expected: desktop/compact selection modes are mutually exclusive; marker lifecycle tests remain green.
@@ -801,7 +806,7 @@ Expected: desktop/compact selection modes are mutually exclusive; marker lifecyc
 - [ ] **Step 7: Commit Task 7**
 
 ```powershell
-git add src/map/useSelectedFeaturePopup.tsx src/map/useSelectedFeaturePopup.test.tsx src/components/SelectedFeatureSheet.tsx src/components/SelectedFeatureSheet.test.tsx src/map/IndoorMap.tsx src/app/App.tsx src/app/App.test.tsx
+git add src/map/useSelectedFeaturePopup.tsx src/map/useSelectedFeaturePopup.test.tsx src/map/IndoorMap.tsx src/map/IndoorMap.test.tsx src/components/SelectedFeatureSheet.tsx src/components/SelectedFeatureSheet.test.tsx src/app/App.tsx src/app/App.test.tsx
 git commit -m "feat: show selected places over the map"
 ```
 

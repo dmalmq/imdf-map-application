@@ -114,6 +114,7 @@ The popup:
 - Anchors to the selected feature's `feature.center`, exactly matching the marker/display point; features without a center cannot open a map popup.
 - Flips or offsets at viewport edges using MapLibre popup positioning.
 - Repositions as the camera moves.
+- Does not move the camera when the display point is already inside the padded map viewport. For an off-screen desktop selection, pan only enough to bring the point into the visible viewport; never unconditionally recenter every selection.
 - Is replaced when another feature is selected.
 - Closes on Escape, explicit close, or a map-background click.
 - Does not trap focus.
