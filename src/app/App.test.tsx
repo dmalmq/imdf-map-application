@@ -16,6 +16,7 @@ import { themes } from "../theme/presets";
 
 const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
+  sourceLevelIds: ["b1000003-0000-4000-8000-00000000002f"],
   ordinal: 1,
   label: { ja: "2F", en: "2F" },
   shortName: { ja: "2F", en: "2F" },
@@ -23,6 +24,7 @@ const LEVEL_2F: ViewerLevel = {
 
 const LEVEL_1F: ViewerLevel = {
   id: "b1000002-0000-4000-8000-00000000001f",
+  sourceLevelIds: ["b1000002-0000-4000-8000-00000000001f"],
   ordinal: 0,
   label: { ja: "1F", en: "1F" },
   shortName: { ja: "1F", en: "1F" },

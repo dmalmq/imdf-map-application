@@ -45,6 +45,8 @@ export interface ParsedImdfArchive {
 
 export interface ViewerLevel {
   id: string;
+  /** Original IMDF level feature IDs represented by this ordinal group. */
+  sourceLevelIds: string[];
   ordinal: number;
   label: Record<string, string>;
   shortName: Record<string, string>;

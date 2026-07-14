@@ -19,6 +19,9 @@ const FIXTURE_DIR = path.join(
 const LEVEL_B1 = "b1000001-0000-4000-8000-0000000000b1";
 const LEVEL_1F = "b1000002-0000-4000-8000-00000000001f";
 const LEVEL_2F = "b1000003-0000-4000-8000-00000000002f";
+const LEVEL_GROUP_B1 = "ordinal:-1";
+const LEVEL_GROUP_1F = "ordinal:0";
+const LEVEL_GROUP_2F = "ordinal:1";
 const RESTRICTED_UNIT = "c1000003-0000-4000-8000-0000000000b3";
 const JA_ONLY_ROOM = "c1000002-0000-4000-8000-0000000000b2";
 const ANCHOR_ID = "a1000007-0000-4000-8000-0000000000a1";
@@ -61,11 +64,89 @@ function warningKey(warning: ViewerWarning): string {
 }
 
 describe("normalizeVenue", () => {
-  it("sorts levels by descending ordinal [2F, 1F, B1]", async () => {
+  it("groups levels by ordinal and sorts them [2F, 1F, B1]", async () => {
     const venue = normalizeVenue(await loadMinimalArchive());
-    expect(venue.levels.map((level) => level.id)).toEqual([LEVEL_2F, LEVEL_1F, LEVEL_B1]);
+    expect(venue.levels.map((level) => level.id)).toEqual([
+      LEVEL_GROUP_2F,
+      LEVEL_GROUP_1F,
+      LEVEL_GROUP_B1,
+    ]);
     expect(venue.levels.map((level) => level.ordinal)).toEqual([1, 0, -1]);
     expect(venue.levels.map((level) => level.shortName["en"])).toEqual(["2F", "1F", "B1"]);
+    expect(venue.levels.map((level) => level.label["ja-JP"])).toEqual([
+      "2階",
+      "1階",
+      "地下1階",
+    ]);
+    expect(venue.levels.map((level) => level.sourceLevelIds)).toEqual([
+      [LEVEL_2F],
+      [LEVEL_1F],
+      [LEVEL_B1],
+    ]);
+  });
+
+  it("renders all source levels and features sharing one ordinal together", async () => {
+    const archive = await loadMinimalArchive();
+    const northLevelId = "b1000099-0000-4000-8000-00000000001f";
+    const northUnitId = "c1000099-0000-4000-8000-00000000001f";
+    archive.collections.level!.features.push({
+      type: "Feature",
+      id: northLevelId,
+      feature_type: "level",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [139.768, 35.68],
+            [139.769, 35.68],
+            [139.769, 35.681],
+            [139.768, 35.681],
+            [139.768, 35.68],
+          ],
+        ],
+      },
+      properties: {
+        ordinal: 0,
+        name: { en: "1F North", ja: "1階北" },
+        short_name: { en: "1F", ja: "1F" },
+      },
+    } as GeoJSON.Feature);
+    archive.collections.unit!.features.push({
+      type: "Feature",
+      id: northUnitId,
+      feature_type: "unit",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [139.7681, 35.6801],
+            [139.7689, 35.6801],
+            [139.7689, 35.6809],
+            [139.7681, 35.6809],
+            [139.7681, 35.6801],
+          ],
+        ],
+      },
+      properties: {
+        category: "room",
+        name: { en: "North Room", ja: "北室" },
+        level_id: northLevelId,
+      },
+    } as GeoJSON.Feature);
+
+    const venue = normalizeVenue(archive);
+    const level = venue.levels.find((candidate) => candidate.id === LEVEL_GROUP_1F);
+    expect(level?.sourceLevelIds).toEqual([LEVEL_1F, northLevelId].sort());
+    expect(level?.label).toMatchObject({ en: "1F", ja: "1F" });
+    expect(venue.featuresById.get(northUnitId)?.levelId).toBe(LEVEL_GROUP_1F);
+
+    const renderedIds = venue.renderFeaturesByLevel
+      .get(LEVEL_GROUP_1F)!
+      .features.map((feature) => feature.id);
+    expect(renderedIds).toContain(LEVEL_1F);
+    expect(renderedIds).toContain(northLevelId);
+    expect(renderedIds).toContain(northUnitId);
+    expect(venue.boundsByLevel.get(LEVEL_GROUP_1F)?.[2]).toBeGreaterThan(139.7689);
   });
 
   it("uses the restricted unit display_point rather than its bounds center", async () => {
@@ -83,7 +164,7 @@ describe("normalizeVenue", () => {
     const anchor = venue.featuresById.get(ANCHOR_ID);
     expect(occupant).toBeDefined();
     expect(anchor).toBeDefined();
-    expect(occupant!.levelId).toBe(LEVEL_1F);
+    expect(occupant!.levelId).toBe(LEVEL_GROUP_1F);
     expect(occupant!.center).toEqual(anchor!.geometry && "coordinates" in anchor!.geometry
       ? (anchor!.geometry as GeoJSON.Point).coordinates
       : null);
@@ -94,7 +175,7 @@ describe("normalizeVenue", () => {
     const venue = normalizeVenue(await loadMinimalArchive());
     const amenity = venue.featuresById.get(AMENITY_ID);
     expect(amenity).toBeDefined();
-    expect(amenity!.levelId).toBe(LEVEL_1F);
+    expect(amenity!.levelId).toBe(LEVEL_GROUP_1F);
   });
 
   it("retains complete sourceProperties including hours and nulls", async () => {
@@ -129,7 +210,7 @@ describe("normalizeVenue", () => {
 
   it("adds a derived occupant Point into the 1F render collection", async () => {
     const venue = normalizeVenue(await loadMinimalArchive());
-    const levelFeatures = venue.renderFeaturesByLevel.get(LEVEL_1F);
+    const levelFeatures = venue.renderFeaturesByLevel.get(LEVEL_GROUP_1F);
     expect(levelFeatures).toBeDefined();
     const derived = levelFeatures!.features.find((feature) => {
       const props = feature.properties;
@@ -191,7 +272,7 @@ describe("normalizeVenue", () => {
 
   it("flattens the new B1 unit categories onto render features", async () => {
     const venue = normalizeVenue(await loadMinimalArchive());
-    const levelFeatures = venue.renderFeaturesByLevel.get(LEVEL_B1);
+    const levelFeatures = venue.renderFeaturesByLevel.get(LEVEL_GROUP_B1);
     expect(levelFeatures).toBeDefined();
     const categories = new Set(
       levelFeatures!.features

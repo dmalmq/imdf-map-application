@@ -372,7 +372,7 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
     throw new Error("normalizeVenue requires exactly one venue feature");
   }
 
-  const levels: ViewerLevel[] = [];
+  const sourceLevelsByOrdinal = new Map<number, ViewerFeature[]>();
   for (const feature of featuresById.values()) {
     if (feature.featureType !== "level") {
       continue;
@@ -380,14 +380,55 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
     const ordinalRaw = feature.sourceProperties["ordinal"];
     const ordinal =
       typeof ordinalRaw === "number" && Number.isFinite(ordinalRaw) ? ordinalRaw : 0;
-    levels.push({
-      id: feature.id,
-      ordinal,
-      label: feature.labels,
-      shortName: localizedRecord(feature.sourceProperties["short_name"]),
-    });
+    const grouped = sourceLevelsByOrdinal.get(ordinal);
+    if (grouped === undefined) {
+      sourceLevelsByOrdinal.set(ordinal, [feature]);
+    } else {
+      grouped.push(feature);
+    }
+  }
+
+  const mergeLocalized = (
+    sourceLevels: ViewerFeature[],
+    select: (feature: ViewerFeature) => Record<string, string>,
+  ): Record<string, string> => {
+    const merged: Record<string, string> = {};
+    for (const sourceLevel of sourceLevels) {
+      for (const [locale, value] of Object.entries(select(sourceLevel))) {
+        merged[locale] ??= value;
+      }
+    }
+    return merged;
+  };
+
+  const sourceLevelToGroup = new Map<string, string>();
+  const levels: ViewerLevel[] = [];
+  for (const [ordinal, sourceLevels] of sourceLevelsByOrdinal) {
+    sourceLevels.sort((a, b) => a.id.localeCompare(b.id));
+    const id = `ordinal:${ordinal}`;
+    const sourceLevelIds = sourceLevels.map((feature) => feature.id);
+    const shortName = mergeLocalized(sourceLevels, (feature) =>
+      localizedRecord(feature.sourceProperties["short_name"]),
+    );
+    const sourceLabels = mergeLocalized(sourceLevels, (feature) => feature.labels);
+    const label =
+      sourceLevels.length > 1 && Object.keys(shortName).length > 0 ? shortName : sourceLabels;
+    levels.push({ id, sourceLevelIds, ordinal, label, shortName });
+    for (const sourceLevel of sourceLevels) {
+      sourceLevelToGroup.set(sourceLevel.id, id);
+      sourceLevel.levelId = id;
+    }
   }
   levels.sort((a, b) => b.ordinal - a.ordinal);
+
+  // Viewer-facing relationships use the ordinal group. Original level_id
+  // values remain untouched in sourceProperties for diagnostics/details.
+  for (const feature of featuresById.values()) {
+    if (feature.featureType === "level" || feature.levelId === null) {
+      continue;
+    }
+    feature.levelId = sourceLevelToGroup.get(feature.levelId) ?? feature.levelId;
+  }
 
   const renderFeaturesByLevel = new Map<string, GeoJSON.FeatureCollection>();
   const boundsByLevel = new Map<string, BoundsTuple>();
@@ -395,10 +436,7 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
   for (const level of levels) {
     const rendered: GeoJSON.Feature[] = [];
     for (const feature of featuresById.values()) {
-      if (feature.featureType === "anchor") {
-        continue;
-      }
-      if (feature.id !== level.id && feature.levelId !== level.id) {
+      if (feature.featureType === "anchor" || feature.levelId !== level.id) {
         continue;
       }
 
