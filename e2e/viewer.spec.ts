@@ -70,14 +70,14 @@ test.describe("IMDF viewer journey", () => {
     // Switch to B1 then 2F; assert pressed state + idle + markers when present.
     await selectLevel(page, LEVEL_B1_JA);
     await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_B1_JA);
-    // B1 has no amenity/occupant/kiosk markers — idle is the geometry contract.
+    // B1: stairs + restroom bubbles, machine-room + staff-room pills.
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
-    await expect(page.locator(".indoor-marker")).toHaveCount(0);
+    await expect(page.locator(".indoor-marker")).toHaveCount(4);
 
     await selectLevel(page, LEVEL_2F_JA);
     await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_2F_JA);
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
-    await expect(page.locator(".indoor-marker")).toHaveCount(0);
+    await expect(page.locator(".indoor-marker")).toHaveCount(1);
 
     // Return to 1F for search/selection.
     await selectLevel(page, LEVEL_1F_JA);
@@ -181,5 +181,26 @@ test.describe("IMDF viewer journey", () => {
     await searchAndSelect(page, "B1 Stairs", UNIT_STAIRS_EN);
     await expectDetailsContain(page, [UNIT_STAIRS_EN]);
     await expect(levelPill(page, LEVEL_B1_EN)).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("clicking room pills and transit bubbles selects the feature", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await uploadMinimalImdf(page);
+    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await switchLocale(page, "en");
+
+    // Room pill on 1F selects the room.
+    await markerByLabel(page, "Waiting Room").click();
+    await expectDetailsContain(page, ["Waiting Room", "room"]);
+    // Stairs icon bubble on B1 selects the stairs unit.
+    await selectLevel(page, LEVEL_B1_EN);
+    await markerByLabel(page, UNIT_STAIRS_EN).click();
+    await expectDetailsContain(page, [UNIT_STAIRS_EN, "stairs"]);
+
+    // Restroom icon bubble selects the restroom unit.
+    await markerByLabel(page, "B1 Restroom").click();
+    await expectDetailsContain(page, ["B1 Restroom", "restroom.female"]);
   });
 });

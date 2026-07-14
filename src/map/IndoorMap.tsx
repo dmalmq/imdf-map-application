@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -205,12 +206,17 @@ export function IndoorMap({
   levelIdRef.current = levelId;
   selectedIdRef.current = selectedFeatureId;
 
+  const onMarkerSelect = useCallback((featureId: string) => {
+    onSelectRef.current(featureId);
+  }, []);
+
   useFeatureMarkers({
     map: mapInstance,
     venue,
     levelId,
     locale,
     selectedFeatureId,
+    onSelect: onMarkerSelect,
   });
 
   // Create the map once.
