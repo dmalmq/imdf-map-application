@@ -49,6 +49,13 @@ describe("parseViewerParams", () => {
     expect(parseViewerParams("", BASE).locale).toBeNull();
   });
 
+  it("enables embedded file controls only for allowOpen=1", () => {
+    expect(parseViewerParams("?allowOpen=1", BASE).allowOpen).toBe(true);
+    expect(parseViewerParams("?allowOpen=0", BASE).allowOpen).toBe(false);
+    expect(parseViewerParams("?allowOpen=true", BASE).allowOpen).toBe(false);
+    expect(parseViewerParams("", BASE).allowOpen).toBe(false);
+  });
+
   it("whitelists theme, ignoring prototype keys", () => {
     expect(parseViewerParams("?theme=customer-blue", BASE).themeId).toBe("customer-blue");
     expect(parseViewerParams("?theme=tokyo-green", BASE).themeId).toBe("tokyo-green");

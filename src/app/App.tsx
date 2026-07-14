@@ -8,12 +8,9 @@ import {
   type CSSProperties,
   type DragEvent,
 } from "react";
-import { ExplorerSidebar } from "../components/ExplorerSidebar";
 import { FloatingSearch } from "../components/FloatingSearch";
-import { resolveSelectedFeature } from "../components/FeatureDetails";
 import { ImdfDropzone } from "../components/ImdfDropzone";
-import { LevelSwitcher } from "../components/LevelSwitcher";
-import { ThemeSwitcher } from "../components/ThemeSwitcher";
+import { ViewerMenu } from "../components/ViewerMenu";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { ArchiveError } from "../errors/ArchiveError";
 import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
@@ -159,6 +156,8 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const compact = useCompactLayout();
   const [mapDragActive, setMapDragActive] = useState(false);
+  const [searchKey, setSearchKey] = useState(0);
+  const [menuKey, setMenuKey] = useState(0);
 
   const theme = themes[state.themeId];
   const locale = state.locale;
@@ -186,12 +185,6 @@ export function App() {
     ).length;
   }, [venueState]);
 
-  const selectedFeature = useMemo(() => {
-    if (!venueState) {
-      return null;
-    }
-    return resolveSelectedFeature(venueState.loadedVenue, venueState.selectedFeatureId);
-  }, [venueState]);
 
   const venueName = useMemo(() => {
     if (!venueState) {
@@ -323,65 +316,14 @@ export function App() {
     [handleFile],
   );
 
-  const localeSwitcher = (
-    <div className="locale-switcher" role="group" aria-label={ui.localeGroup[locale]}>
-      <button
-        type="button"
-        className={locale === "ja" ? "locale-switcher__btn locale-switcher__btn--active" : "locale-switcher__btn"}
-        aria-pressed={locale === "ja"}
-        onClick={() => {
-          dispatch({ type: "set_locale", locale: "ja" });
-        }}
-      >
-        {ui.localeJa[locale]}
-      </button>
-      <button
-        type="button"
-        className={locale === "en" ? "locale-switcher__btn locale-switcher__btn--active" : "locale-switcher__btn"}
-        aria-pressed={locale === "en"}
-        onClick={() => {
-          dispatch({ type: "set_locale", locale: "en" });
-        }}
-      >
-        {ui.localeEn[locale]}
-      </button>
-    </div>
-  );
+  const onSearchOpenChange = useCallback((open: boolean) => {
+    if (open) setMenuKey((key) => key + 1);
+  }, []);
 
-  const themeSwitcher = (
-    <ThemeSwitcher
-      themeId={state.themeId}
-      locale={locale}
-      onChange={(themeId) => {
-        dispatch({ type: "set_theme", themeId });
-      }}
-    />
-  );
+  const onMenuOpenChange = useCallback((open: boolean) => {
+    if (open) setSearchKey((key) => key + 1);
+  }, []);
 
-  const openButton = (
-    <button type="button" className="top-bar__open" onClick={openPicker}>
-      {ui.openZip[locale]}
-    </button>
-  );
-
-  const venueMeta =
-    venueName !== null ? (
-      <div className="top-bar__meta">
-        <span className="top-bar__venue">{venueName}</span>
-        {levelName !== null ? <span className="top-bar__level">{levelName}</span> : null}
-      </div>
-    ) : null;
-
-  const compactHeader =
-    compact && venueState ? (
-      <div className="explorer-sidebar__compact-header">
-        <div className="explorer-sidebar__compact-row explorer-sidebar__compact-row--meta">{venueMeta}</div>
-        <div className="explorer-sidebar__compact-row explorer-sidebar__compact-row--controls">
-          {localeSwitcher}
-          {themeSwitcher}
-        </div>
-      </div>
-    ) : null;
 
   const showMap = venueState !== null;
   const dragEnabled = showMap && !embed;
@@ -416,43 +358,8 @@ export function App() {
         }}
       />
 
-      {!embed ? (
-        <header className="top-bar">
-          <div className="top-bar__brand">
-            <span className="top-bar__product">{ui.product[locale]}</span>
-            {!compact ? venueMeta : null}
-          </div>
-          <div className="top-bar__actions">
-            {!compact ? (
-              <>
-                {localeSwitcher}
-                {themeSwitcher}
-              </>
-            ) : null}
-            {openButton}
-          </div>
-        </header>
-      ) : null}
 
       <div className="app__body">
-        {showMap && !embed ? (
-          <ExplorerSidebar
-            locale={locale}
-            searchText={venueState.searchText}
-            searchCategory={venueState.searchCategory}
-            results={searchResults}
-            selectedFeature={selectedFeature}
-            venue={venueState.loadedVenue}
-            onSearchText={(text) => {
-              dispatch({ type: "set_search_text", text });
-            }}
-            onSearchCategory={(category) => {
-              dispatch({ type: "set_search_category", category });
-            }}
-            onSelectResult={onSelectResult}
-            compactHeader={compactHeader}
-          />
-        ) : null}
 
         <main
           className="map-stage"
@@ -463,6 +370,7 @@ export function App() {
           {showMap ? (
             <>
               <FloatingSearch
+                key={`search-${searchKey}`}
                 locale={locale}
                 value={venueState.searchText}
                 category={venueState.searchCategory}
@@ -476,7 +384,29 @@ export function App() {
                   dispatch({ type: "set_search_category", category });
                 }}
                 onSelectResult={onSelectResult}
-                onOpenChange={() => {}}
+                onOpenChange={onSearchOpenChange}
+              />
+              <ViewerMenu
+                key={`menu-${menuKey}`}
+                venueName={venueName ?? venueState.loadedVenue.venue.id}
+                floorName={levelName}
+                levels={venueState.loadedVenue.levels}
+                selectedLevelId={venueState.selectedLevelId}
+                locale={locale}
+                manifestLanguage={venueState.loadedVenue.manifest.language}
+                themeId={state.themeId}
+                showFileControls={!embed || params.allowOpen}
+                onSelectLevel={(levelId) => {
+                  dispatch({ type: "select_level", levelId });
+                }}
+                onLocaleChange={(nextLocale) => {
+                  dispatch({ type: "set_locale", locale: nextLocale });
+                }}
+                onThemeChange={(themeId) => {
+                  dispatch({ type: "set_theme", themeId });
+                }}
+                onOpenFile={openPicker}
+                onOpenChange={onMenuOpenChange}
               />
               <IndoorMap
                 venue={venueState.loadedVenue}
@@ -487,17 +417,6 @@ export function App() {
                 searchCategory={venueState.searchCategory}
                 onSelectFeature={onMapSelectFeature}
               />
-              <div className="map-stage__levels">
-                <LevelSwitcher
-                  levels={venueState.loadedVenue.levels}
-                  selectedLevelId={venueState.selectedLevelId}
-                  locale={locale}
-                  manifestLanguage={venueState.loadedVenue.manifest.language}
-                  onSelect={(levelId) => {
-                    dispatch({ type: "select_level", levelId });
-                  }}
-                />
-              </div>
               {state.status === "loading" && state.previous ? (
                 <div className="map-stage__loading" role="status">
                   <span className="imdf-dropzone__spinner" aria-hidden="true" />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { LocaleCode } from "../imdf/types";
-import type { ResolvedFeatureContent } from "./selectedFeatureContent";
+import type { ResolvedFeatureContent } from "./resolveSelectedFeatureContent";
 
 const ui = {
   category: { ja: "カテゴリ", en: "Category" },

@@ -6,6 +6,7 @@ export interface ViewerParams {
   src: string | null;
   level: string | null;
   embed: boolean;
+  allowOpen: boolean;
   locale: LocaleCode | null;
   themeId: ThemeId | null;
 }
@@ -32,6 +33,7 @@ export function parseViewerParams(search: string, base?: string): ViewerParams {
   const embedRaw = params.get("embed");
   const embed =
     embedRaw !== null && (embedRaw === "" || /^(1|true)$/i.test(embedRaw));
+  const allowOpen = params.get("allowOpen") === "1";
 
   const langRaw = params.get("lang");
   const locale: LocaleCode | null = langRaw === "ja" || langRaw === "en" ? langRaw : null;
@@ -40,5 +42,5 @@ export function parseViewerParams(search: string, base?: string): ViewerParams {
   const themeId: ThemeId | null =
     themeRaw !== null && Object.hasOwn(themes, themeRaw) ? (themeRaw as ThemeId) : null;
 
-  return { src: safeSrc(params.get("src"), base), level, embed, locale, themeId };
+  return { src: safeSrc(params.get("src"), base), level, embed, allowOpen, locale, themeId };
 }

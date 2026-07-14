@@ -234,6 +234,7 @@ describe("App", () => {
 
   it("announces loading then ready via aria-live and shows the venue", async () => {
     const venue = buildMinimalVenue();
+    const user = userEvent.setup();
     let resolveLoad: ((value: LoadedVenue) => void) | undefined;
     loadImdfArchiveMock.mockImplementation(
       () =>
@@ -260,18 +261,25 @@ describe("App", () => {
       expect(live?.textContent).toContain("会場を読み込みました");
       expect(live?.textContent).toContain("demo.zip");
     });
-    expect(screen.getByText("テスト駅")).toBeTruthy();
     expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    expect(document.querySelector(".top-bar")).toBeNull();
+    expect(document.querySelector(".explorer-sidebar")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "検索" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "メニュー" })).toBeTruthy();
+    expect(screen.queryByText("警告")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
+    expect(screen.getByText("テスト駅")).toBeTruthy();
   });
 
   it("shows archiveErrorCopy in role=alert and keeps the previous venue when replacement fails", async () => {
     const venue = buildMinimalVenue();
+    const user = userEvent.setup();
     loadImdfArchiveMock.mockResolvedValueOnce(venue);
 
     render(<App />);
     await uploadViaHiddenInput(zipFile("good.zip"));
     await waitFor(() => {
-      expect(screen.getByText("テスト駅")).toBeTruthy();
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
     });
     const mapBefore = screen.getByTestId("indoor-map-stub");
 
@@ -282,13 +290,14 @@ describe("App", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(archiveErrorCopy.invalid_archive);
-    // Previous venue name remains visible.
+    // Previous venue remains available in the menu.
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
     expect(screen.getByText("テスト駅")).toBeTruthy();
     // Map still present (previous venue retained).
     expect(screen.getByTestId("indoor-map-stub")).toBe(mapBefore);
   });
 
-  it("filters search results, retains level for null levelId, and shows details for null center", async () => {
+  it("filters search results and retains level for null-level selections", async () => {
     const venue = buildMinimalVenue();
     loadImdfArchiveMock.mockResolvedValue(venue);
     const user = userEvent.setup();
@@ -303,6 +312,7 @@ describe("App", () => {
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_1F.id);
 
     // Switch to 2F first so we can assert null-level selection retains it.
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
     await user.click(screen.getByRole("button", { name: "2F" }));
     await waitFor(() => {
       expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
@@ -310,6 +320,7 @@ describe("App", () => {
 
     // Switch to English so search result labels match English queries.
     await user.click(screen.getByRole("button", { name: "English" }));
+    await user.keyboard("{Escape}");
 
     const search = screen.getByRole("combobox", { name: "Search" });
     await user.clear(search);
@@ -326,9 +337,8 @@ describe("App", () => {
       NULL_LEVEL_AMENITY.id,
     );
 
-    const details = screen.getByRole("region", { name: "Details" });
-    expect(within(details).getByText("Restroom")).toBeTruthy();
-    // Null-center feature still shows details without crash.
+    // Popup/sheet visitor content is introduced in Task 7.
+    // Null-center search selection remains valid without crashing.
     await user.clear(search);
     await user.type(search, "Dangling");
     const nextFloatingResults = document.querySelector<HTMLElement>(".floating-search__dropdown");
@@ -339,7 +349,7 @@ describe("App", () => {
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-selected-feature-id")).toBe(
       NULL_CENTER_FEATURE.id,
     );
-    expect(within(screen.getByRole("region", { name: "Details" })).getByText("Dangling Shop")).toBeTruthy();
+    // Popup/sheet visitor content is introduced in Task 7.
     // Level still retained (null levelId).
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
   });
@@ -364,6 +374,7 @@ describe("App", () => {
     const mapEl = screen.getByTestId("indoor-map-stub");
     const identityBefore = mapEl.getAttribute("data-identity");
 
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
     await user.click(screen.getByRole("button", { name: "Customer Blue" }));
 
     expect((appRoot as HTMLElement).style.getPropertyValue("--color-accent")).toBe(
@@ -384,8 +395,10 @@ describe("App", () => {
     render(<App />);
     await uploadViaHiddenInput(zipFile());
     await waitFor(() => {
-      expect(screen.getByText("テスト駅")).toBeTruthy();
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
     });
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
+    expect(screen.getByText("テスト駅")).toBeTruthy();
 
     const jaBtn = screen.getByRole("button", { name: "日本語" });
     const enBtn = screen.getByRole("button", { name: "English" });
@@ -399,26 +412,50 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Open IMDF ZIP" })).toBeTruthy();
   });
 
-  it("exposes sidebar warnings with count and messages", async () => {
-    const venue = buildMinimalVenue();
-    loadImdfArchiveMock.mockResolvedValue(venue);
-    const user = userEvent.setup();
-
+  it("renders the map-first ready shell without visitor warnings", async () => {
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
     render(<App />);
     await uploadViaHiddenInput(zipFile());
     await waitFor(() => {
-      expect(screen.getByText("警告")).toBeTruthy();
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
     });
 
-    expect(screen.getByLabelText("1").textContent).toContain("1");
-    await user.click(screen.getByText("警告"));
-    expect(screen.getByText("missing_locale")).toBeTruthy();
-    expect(screen.getByText("Feature lacks English label")).toBeTruthy();
+    expect(document.querySelector(".top-bar")).toBeNull();
+    expect(document.querySelector(".explorer-sidebar")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "検索" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "メニュー" })).toBeTruthy();
+    expect(screen.queryByText("警告")).toBeNull();
   });
 
-  it("selects a feature from the mocked map and shows details", async () => {
-    const venue = buildMinimalVenue();
-    loadImdfArchiveMock.mockResolvedValue(venue);
+  it("keeps search and menu mutually exclusive without clearing search", async () => {
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+    const user = userEvent.setup();
+    render(<App />);
+    await uploadViaHiddenInput(zipFile());
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+
+    const search = screen.getByRole("combobox", { name: "検索" });
+    await user.type(search, "Shop");
+    expect(document.querySelector(".floating-search__dropdown")).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
+    expect(screen.getByRole("dialog", { name: "ビューアーメニュー" })).toBeTruthy();
+    expect(document.querySelector(".floating-search__dropdown")).toBeNull();
+    const reopenedSearch = screen.getByRole("combobox", { name: "検索" });
+    expect((reopenedSearch as HTMLInputElement).value).toBe("Shop");
+
+    reopenedSearch.focus();
+    await waitFor(() => {
+      expect(document.querySelector(".floating-search__dropdown")).not.toBeNull();
+    });
+    expect(screen.queryByRole("dialog", { name: "ビューアーメニュー" })).toBeNull();
+    expect((reopenedSearch as HTMLInputElement).value).toBe("Shop");
+  });
+
+  it("selects a feature from the mocked map without restoring legacy details", async () => {
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
     const user = userEvent.setup();
 
     render(<App />);
@@ -433,9 +470,7 @@ describe("App", () => {
         SHOP_FEATURE.id,
       );
     });
-    const details = screen.getByRole("region", { name: "詳細" });
-    expect(within(details).getByText("駅ナカショップ")).toBeTruthy();
-    expect(within(details).getByText("Mo-Fr 10:00-20:00")).toBeTruthy();
+    expect(document.querySelector(".feature-details")).toBeNull();
   });
 });
 
@@ -465,11 +500,29 @@ describe("App deep links", () => {
     expect(fetchImdfFileMock).toHaveBeenCalledWith("/venues/minimal.zip", expect.any(AbortSignal));
     // Deep-linked level 2f (short_name 2F) instead of the default ordinal-0 1F.
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
+    await userEvent.setup().click(screen.getByRole("button", { name: "メニュー" }));
     expect(screen.getByRole("button", { name: "2F" }).getAttribute("aria-pressed")).toBe("true");
     expect(container.querySelector(".top-bar")).toBeNull();
     expect(container.querySelector(".explorer-sidebar")).toBeNull();
     expect(container.querySelector('input[type="file"]')).toBeTruthy();
     expect(screen.queryByRole("button", { name: "IMDF ZIP を開く" })).toBeNull();
+  });
+
+  it("allows embedded file controls only with allowOpen=1", async () => {
+    fetchImdfFileMock.mockResolvedValue(zipFile("minimal.zip"));
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+    window.history.replaceState(
+      null,
+      "",
+      "/?src=/venues/minimal.zip&embed=1&allowOpen=1",
+    );
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "メニュー" }));
+    expect(screen.getByRole("button", { name: "IMDF ZIP を開く" })).toBeTruthy();
   });
 
   it("lang and theme params initialize locale and theme", async () => {

@@ -1,13 +1,11 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ViewerLevel, ViewerWarning } from "../imdf/types";
-import { CategoryChips } from "./CategoryChips";
-import { SelectedFeatureContent } from "./SelectedFeatureContent.jsx";
+import type { ViewerLevel } from "../imdf/types";
+import { SelectedFeatureContent } from "./SelectedFeatureContent";
 import { ImdfDropzone } from "./ImdfDropzone";
 import { LevelSwitcher } from "./LevelSwitcher";
 import { ThemeSwitcher } from "./ThemeSwitcher";
-import { ViewerWarnings } from "./ViewerNotice";
 
 const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
@@ -80,41 +78,6 @@ describe("LevelSwitcher", () => {
   });
 });
 
-describe("CategoryChips", () => {
-  it("marks the active category with aria-pressed and toggles on click", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    const { rerender } = render(
-      <CategoryChips category="all" locale="en" onChange={onChange} />,
-    );
-
-    expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Gates" }).getAttribute("aria-pressed")).toBe("false");
-
-    await user.click(screen.getByRole("button", { name: "Shops" }));
-    expect(onChange).toHaveBeenCalledWith("shops");
-
-    rerender(<CategoryChips category="shops" locale="en" onChange={onChange} />);
-    expect(screen.getByRole("button", { name: "Shops" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("localizes chip labels for ja and en", () => {
-    const { rerender } = render(
-      <CategoryChips category="all" locale="en" onChange={() => {}} />,
-    );
-    expect(screen.getByRole("button", { name: "All" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Gates" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Shops" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Facilities" })).toBeTruthy();
-
-    rerender(<CategoryChips category="all" locale="ja" onChange={() => {}} />);
-    expect(screen.getByRole("button", { name: "すべて" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "改札・出入口" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "店舗" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "設備" })).toBeTruthy();
-  });
-});
 
 describe("ThemeSwitcher", () => {
   it("updates aria-pressed when the selected theme changes", async () => {
@@ -232,40 +195,6 @@ describe("SelectedFeatureContent", () => {
   });
 });
 
-describe("ViewerWarnings", () => {
-  it("shows the warning count and messages in a disclosure", async () => {
-    const user = userEvent.setup();
-    const warnings: ViewerWarning[] = [
-      {
-        code: "missing_locale",
-        message: "Feature lacks English label",
-        featureId: "c1000002-0000-4000-8000-0000000000b2",
-      },
-      {
-        code: "unresolved_reference",
-        message: "Anchor not found",
-        featureId: "a1000009-0000-4000-8000-0000000000c2",
-      },
-    ];
-
-    render(<ViewerWarnings warnings={warnings} locale="en" />);
-
-    const summary = screen.getByText("Warnings");
-    expect(screen.getByLabelText("2").textContent).toBe("2");
-
-    // Expand disclosure so list items are visible to users.
-    await user.click(summary);
-    expect(screen.getByText("missing_locale")).toBeTruthy();
-    expect(screen.getByText("Feature lacks English label")).toBeTruthy();
-    expect(screen.getByText("unresolved_reference")).toBeTruthy();
-    expect(screen.getByText("Anchor not found")).toBeTruthy();
-  });
-
-  it("renders nothing when there are no warnings", () => {
-    const { container } = render(<ViewerWarnings warnings={[]} locale="en" />);
-    expect(container.firstChild).toBeNull();
-  });
-});
 
 describe("ImdfDropzone", () => {
   it("opens the file picker when the empty-state button is activated with click, Enter, and Space", async () => {

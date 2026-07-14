@@ -5,7 +5,7 @@ import type {
   ViewerFeature,
   ViewerLevel,
 } from "../imdf/types";
-import { resolveSelectedFeatureContent } from "./selectedFeatureContent";
+import { resolveSelectedFeatureContent } from "./resolveSelectedFeatureContent";
 
 const level: ViewerLevel = {
   id: "level-1",
