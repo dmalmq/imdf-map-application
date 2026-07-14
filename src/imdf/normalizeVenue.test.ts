@@ -65,6 +65,7 @@ describe("normalizeVenue", () => {
     const venue = normalizeVenue(await loadMinimalArchive());
     expect(venue.levels.map((level) => level.id)).toEqual([LEVEL_2F, LEVEL_1F, LEVEL_B1]);
     expect(venue.levels.map((level) => level.ordinal)).toEqual([1, 0, -1]);
+    expect(venue.levels.map((level) => level.shortName["en"])).toEqual(["2F", "1F", "B1"]);
   });
 
   it("uses the restricted unit display_point rather than its bounds center", async () => {
@@ -186,6 +187,20 @@ describe("normalizeVenue", () => {
     expect(dangling).toBeDefined();
     expect(dangling!.levelId).toBeNull();
     expect(dangling!.center).toBeNull();
+  });
+
+  it("flattens the new B1 unit categories onto render features", async () => {
+    const venue = normalizeVenue(await loadMinimalArchive());
+    const levelFeatures = venue.renderFeaturesByLevel.get(LEVEL_B1);
+    expect(levelFeatures).toBeDefined();
+    const categories = new Set(
+      levelFeatures!.features
+        .map((feature) => feature.properties?.["__category"])
+        .filter((category): category is string => typeof category === "string"),
+    );
+    expect(categories.has("stairs")).toBe(true);
+    expect(categories.has("restroom.female")).toBe(true);
+    expect(categories.has("unenclosedarea")).toBe(true);
   });
 });
 

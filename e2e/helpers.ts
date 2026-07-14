@@ -24,6 +24,7 @@ export const OCCUPANT_ALT_JA = "テストストア";
 export const OCCUPANT_HOURS = "Mo-Fr 10:00-20:00";
 export const AMENITY_JA = "トイレ";
 export const AMENITY_EN = "Restroom";
+export const UNIT_STAIRS_EN = "B1 Stairs";
 
 export const WARNING_CODES = [
   "missing_display_point",

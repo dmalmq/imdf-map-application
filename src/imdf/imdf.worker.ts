@@ -419,7 +419,12 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
         if ("language" in parsed) {
           language = parsed.language;
         }
-        if (version !== "1.0.0") {
+        // Real-world exporters stamp dotted or hyphenated pre-release
+        // suffixes on the 1.0.0 data model (e.g. "1.0.0.rc.1", "1.0.0-rc.1").
+        const supportedVersion =
+          typeof version === "string" &&
+          /^1\.0\.0([.-][0-9a-z]+(\.[0-9a-z]+)*)?$/i.test(version);
+        if (!supportedVersion) {
           fail("invalid_manifest_version");
         }
         if (typeof language !== "string" || language === "") {

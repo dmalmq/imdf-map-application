@@ -11,6 +11,7 @@ import {
   LEVEL_1F_JA,
   LEVEL_2F_JA,
   LEVEL_B1_JA,
+  LEVEL_B1_EN,
   levelPill,
   mapCanvas,
   mapContainer,
@@ -25,6 +26,7 @@ import {
   switchLocale,
   switchTheme,
   uploadMinimalImdf,
+  UNIT_STAIRS_EN,
   uploadZip,
   VENUE_NAME_JA,
   waitForMapIdle,
@@ -166,5 +168,18 @@ test.describe("IMDF viewer journey", () => {
       networkRequests,
       `unexpected post-load network requests:\n${networkRequests.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("search-selecting the B1 stairs unit switches level and shows details", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await uploadMinimalImdf(page);
+    await waitForReadyVenue(page, VENUE_NAME_JA);
+
+    await switchLocale(page, "en");
+    await searchAndSelect(page, "B1 Stairs", UNIT_STAIRS_EN);
+    await expectDetailsContain(page, [UNIT_STAIRS_EN]);
+    await expect(levelPill(page, LEVEL_B1_EN)).toHaveAttribute("aria-pressed", "true");
   });
 });

@@ -1,5 +1,6 @@
 import type {
   CircleLayerSpecification,
+  ExpressionSpecification,
   FillLayerSpecification,
   FilterSpecification,
   LineLayerSpecification,
@@ -17,6 +18,14 @@ export const LAYER_WALKWAY_FILL = "indoor-walkway-fill";
 export const LAYER_WALKWAY_OUTLINE = "indoor-walkway-outline";
 export const LAYER_ROOM_FILL = "indoor-room-fill";
 export const LAYER_ROOM_OUTLINE = "indoor-room-outline";
+export const LAYER_UNENCLOSED_FILL = "indoor-unenclosed-fill";
+export const LAYER_UNENCLOSED_OUTLINE = "indoor-unenclosed-outline";
+export const LAYER_TRANSIT_FILL = "indoor-transit-fill";
+export const LAYER_TRANSIT_OUTLINE = "indoor-transit-outline";
+export const LAYER_RESTROOM_FILL = "indoor-restroom-fill";
+export const LAYER_RESTROOM_OUTLINE = "indoor-restroom-outline";
+export const LAYER_NONPUBLIC_FILL = "indoor-nonpublic-fill";
+export const LAYER_NONPUBLIC_OUTLINE = "indoor-nonpublic-outline";
 export const LAYER_STRUCTURE_FILL = "indoor-structure-fill";
 export const LAYER_STRUCTURE_OUTLINE = "indoor-structure-outline";
 export const LAYER_RESTRICTED_FILL = "indoor-restricted-fill";
@@ -38,6 +47,10 @@ export const CLICKABLE_LAYER_IDS: readonly string[] = [
   LAYER_CONTEXT_FILL,
   LAYER_WALKWAY_FILL,
   LAYER_ROOM_FILL,
+  LAYER_UNENCLOSED_FILL,
+  LAYER_TRANSIT_FILL,
+  LAYER_RESTROOM_FILL,
+  LAYER_NONPUBLIC_FILL,
   LAYER_STRUCTURE_FILL,
   LAYER_RESTRICTED_FILL,
   LAYER_FIXTURE_FILL,
@@ -49,16 +62,35 @@ export const CLICKABLE_LAYER_IDS: readonly string[] = [
   LAYER_OCCUPANT_CIRCLE,
 ];
 
-const WALKWAY_CATEGORIES = [
+export const WALKWAY_CATEGORIES = [
   "walkway",
   "corridor",
   "opentowalkway",
   "ramp",
   "sidewalk",
+] as const;
+
+export const ROOM_CATEGORIES = ["room"] as const;
+
+export const TRANSIT_CATEGORIES = [
+  "elevator",
+  "escalator",
+  "stairs",
+  "steps",
   "movingwalkway",
 ] as const;
 
-const ROOM_CATEGORIES = ["room"] as const;
+export const UNENCLOSED_CATEGORIES = ["unenclosedarea", "opentobelow"] as const;
+
+export const NONPUBLIC_CATEGORIES = ["nonpublic"] as const;
+
+/** First 8 chars of `__category`; "restroom" covers all 11 restroom.* enum values. */
+const restroomPrefix: ExpressionSpecification = [
+  "slice",
+  ["to-string", ["get", "__category"]],
+  0,
+  8,
+];
 
 type AnyLayer =
   | FillLayerSpecification
@@ -98,12 +130,44 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
     ["in", ["get", "__category"], ["literal", [...ROOM_CATEGORIES]]],
   ];
 
+  const matchTransitUnit: FilterSpecification = [
+    "all",
+    ["==", ["get", "__feature_type"], "unit"],
+    ["!=", ["get", "__restricted"], true],
+    ["in", ["get", "__category"], ["literal", [...TRANSIT_CATEGORIES]]],
+  ];
+
+  const matchUnenclosedUnit: FilterSpecification = [
+    "all",
+    ["==", ["get", "__feature_type"], "unit"],
+    ["!=", ["get", "__restricted"], true],
+    ["in", ["get", "__category"], ["literal", [...UNENCLOSED_CATEGORIES]]],
+  ];
+
+  const matchRestroomUnit: FilterSpecification = [
+    "all",
+    ["==", ["get", "__feature_type"], "unit"],
+    ["!=", ["get", "__restricted"], true],
+    ["==", restroomPrefix, "restroom"],
+  ];
+
+  const matchNonPublicUnit: FilterSpecification = [
+    "all",
+    ["==", ["get", "__feature_type"], "unit"],
+    ["!=", ["get", "__restricted"], true],
+    ["in", ["get", "__category"], ["literal", [...NONPUBLIC_CATEGORIES]]],
+  ];
+
   const matchStructureUnit: FilterSpecification = [
     "all",
     ["==", ["get", "__feature_type"], "unit"],
     ["!=", ["get", "__restricted"], true],
     ["!", ["in", ["get", "__category"], ["literal", [...WALKWAY_CATEGORIES]]]],
     ["!", ["in", ["get", "__category"], ["literal", [...ROOM_CATEGORIES]]]],
+    ["!", ["in", ["get", "__category"], ["literal", [...TRANSIT_CATEGORIES]]]],
+    ["!", ["in", ["get", "__category"], ["literal", [...UNENCLOSED_CATEGORIES]]]],
+    ["!", ["in", ["get", "__category"], ["literal", [...NONPUBLIC_CATEGORIES]]]],
+    ["!=", restroomPrefix, "restroom"],
   ];
 
   const matchRestrictedUnit: FilterSpecification = [
@@ -177,6 +241,86 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       type: "line",
       source: INDOOR_SOURCE_ID,
       filter: matchRoomUnit,
+      paint: {
+        "line-color": c.unitOutline,
+        "line-width": 1,
+      },
+    },
+    {
+      id: LAYER_UNENCLOSED_FILL,
+      type: "fill",
+      source: INDOOR_SOURCE_ID,
+      filter: matchUnenclosedUnit,
+      paint: {
+        "fill-color": c.unitUnenclosed,
+        "fill-opacity": 1,
+      },
+    },
+    {
+      id: LAYER_UNENCLOSED_OUTLINE,
+      type: "line",
+      source: INDOOR_SOURCE_ID,
+      filter: matchUnenclosedUnit,
+      paint: {
+        "line-color": c.unitOutline,
+        "line-width": 1,
+      },
+    },
+    {
+      id: LAYER_TRANSIT_FILL,
+      type: "fill",
+      source: INDOOR_SOURCE_ID,
+      filter: matchTransitUnit,
+      paint: {
+        "fill-color": c.unitTransit,
+        "fill-opacity": 1,
+      },
+    },
+    {
+      id: LAYER_TRANSIT_OUTLINE,
+      type: "line",
+      source: INDOOR_SOURCE_ID,
+      filter: matchTransitUnit,
+      paint: {
+        "line-color": c.unitOutline,
+        "line-width": 1,
+      },
+    },
+    {
+      id: LAYER_RESTROOM_FILL,
+      type: "fill",
+      source: INDOOR_SOURCE_ID,
+      filter: matchRestroomUnit,
+      paint: {
+        "fill-color": c.unitRestroom,
+        "fill-opacity": 1,
+      },
+    },
+    {
+      id: LAYER_RESTROOM_OUTLINE,
+      type: "line",
+      source: INDOOR_SOURCE_ID,
+      filter: matchRestroomUnit,
+      paint: {
+        "line-color": c.unitOutline,
+        "line-width": 1,
+      },
+    },
+    {
+      id: LAYER_NONPUBLIC_FILL,
+      type: "fill",
+      source: INDOOR_SOURCE_ID,
+      filter: matchNonPublicUnit,
+      paint: {
+        "fill-color": c.unitNonPublic,
+        "fill-opacity": 1,
+      },
+    },
+    {
+      id: LAYER_NONPUBLIC_OUTLINE,
+      type: "line",
+      source: INDOOR_SOURCE_ID,
+      filter: matchNonPublicUnit,
       paint: {
         "line-color": c.unitOutline,
         "line-width": 1,
@@ -378,6 +522,14 @@ export function applyThemePaintProperties(
   setPaintProperty(LAYER_WALKWAY_OUTLINE, "line-color", c.unitOutline);
   setPaintProperty(LAYER_ROOM_FILL, "fill-color", c.unit);
   setPaintProperty(LAYER_ROOM_OUTLINE, "line-color", c.unitOutline);
+  setPaintProperty(LAYER_UNENCLOSED_FILL, "fill-color", c.unitUnenclosed);
+  setPaintProperty(LAYER_UNENCLOSED_OUTLINE, "line-color", c.unitOutline);
+  setPaintProperty(LAYER_TRANSIT_FILL, "fill-color", c.unitTransit);
+  setPaintProperty(LAYER_TRANSIT_OUTLINE, "line-color", c.unitOutline);
+  setPaintProperty(LAYER_RESTROOM_FILL, "fill-color", c.unitRestroom);
+  setPaintProperty(LAYER_RESTROOM_OUTLINE, "line-color", c.unitOutline);
+  setPaintProperty(LAYER_NONPUBLIC_FILL, "fill-color", c.unitNonPublic);
+  setPaintProperty(LAYER_NONPUBLIC_OUTLINE, "line-color", c.unitOutline);
 
   setPaintProperty(LAYER_STRUCTURE_FILL, "fill-color", c.unit);
   setPaintProperty(LAYER_STRUCTURE_OUTLINE, "line-color", c.unitOutline);

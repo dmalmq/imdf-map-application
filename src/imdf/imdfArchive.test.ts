@@ -389,6 +389,37 @@ describe("IMDF archive boundary (loadArchive)", () => {
     });
   });
 
+  it("accepts pre-release manifest versions and normalizes them to 1.0.0", async () => {
+    for (const version of ["1.0.0.rc.1", "1.0.0-rc.1"]) {
+      const bytes = await buildMinimalImdfZip({
+        replaceEntries: {
+          "manifest.json": JSON.stringify({ version, language: "ja-JP" }),
+        },
+      });
+      const result = await tryLoadArchive(asFile(bytes));
+      expect(result.type, version).toBe("loaded");
+      if (result.type !== "loaded") {
+        continue;
+      }
+      expect(result.venue.manifest.version).toBe("1.0.0");
+    }
+  });
+
+  it("rejects malformed 1.0.0-lookalike manifest versions", async () => {
+    for (const version of ["1.0.00", "1.0.0evil", "1.0.0.", "1.0.0-"]) {
+      const bytes = await buildMinimalImdfZip({
+        replaceEntries: {
+          "manifest.json": JSON.stringify({ version, language: "ja-JP" }),
+        },
+      });
+      const result = await tryLoadArchive(asFile(bytes));
+      expect(result, version).toMatchObject({
+        type: "failed",
+        error: { code: "invalid_manifest_version" },
+      });
+    }
+  });
+
   it("rejects duplicate feature IDs across files", async () => {
     const duplicateAddress = {
       type: "FeatureCollection",

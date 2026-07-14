@@ -255,6 +255,102 @@
         },
         "level_id": "b1000003-0000-4000-8000-00000000002f"
       }
+    },
+    {
+      "id": "c1000004-0000-4000-8000-0000000000b4",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7662, 35.6802],
+            [139.7665, 35.6802],
+            [139.7665, 35.6806],
+            [139.7662, 35.6806],
+            [139.7662, 35.6802]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "stairs",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "B1階段",
+          "en": "B1 Stairs"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.76635, 35.6804]
+        },
+        "level_id": "b1000001-0000-4000-8000-0000000000b1"
+      }
+    },
+    {
+      "id": "c1000005-0000-4000-8000-0000000000b5",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7665, 35.6802],
+            [139.7668, 35.6802],
+            [139.7668, 35.6806],
+            [139.7665, 35.6806],
+            [139.7665, 35.6802]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "restroom.female",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "B1女子トイレ",
+          "en": "B1 Restroom"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.76665, 35.6804]
+        },
+        "level_id": "b1000001-0000-4000-8000-0000000000b1"
+      }
+    },
+    {
+      "id": "c1000006-0000-4000-8000-0000000000b6",
+      "type": "Feature",
+      "feature_type": "unit",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.7668, 35.6802],
+            [139.7672, 35.6802],
+            [139.7672, 35.6806],
+            [139.7668, 35.6806],
+            [139.7668, 35.6802]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "unenclosedarea",
+        "restriction": null,
+        "accessibility": null,
+        "name": {
+          "ja-JP": "B1吹き抜け",
+          "en": "B1 Open Area"
+        },
+        "alt_name": null,
+        "display_point": {
+          "type": "Point",
+          "coordinates": [139.7670, 35.6804]
+        },
+        "level_id": "b1000001-0000-4000-8000-0000000000b1"
+      }
     }
   ]
 }

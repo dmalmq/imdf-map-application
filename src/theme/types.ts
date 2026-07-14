@@ -15,6 +15,10 @@ export interface ViewerTheme {
     unitOutline: string;
     walkway: string;
     restricted: string;
+    unitTransit: string;
+    unitRestroom: string;
+    unitUnenclosed: string;
+    unitNonPublic: string;
     opening: string;
     selected: string;
     error: string;

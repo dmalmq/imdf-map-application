@@ -1,0 +1,124 @@
+import { describe, expect, it } from "vitest";
+import { themes } from "../theme/presets";
+import {
+  applyThemePaintProperties,
+  buildFeatureLayers,
+  CLICKABLE_LAYER_IDS,
+  LAYER_NONPUBLIC_FILL,
+  LAYER_NONPUBLIC_OUTLINE,
+  LAYER_RESTROOM_FILL,
+  LAYER_RESTROOM_OUTLINE,
+  LAYER_ROOM_FILL,
+  LAYER_TRANSIT_FILL,
+  LAYER_TRANSIT_OUTLINE,
+  LAYER_UNENCLOSED_FILL,
+  LAYER_UNENCLOSED_OUTLINE,
+  LAYER_WALKWAY_FILL,
+  NONPUBLIC_CATEGORIES,
+  TRANSIT_CATEGORIES,
+  UNENCLOSED_CATEGORIES,
+  WALKWAY_CATEGORIES,
+} from "./featureLayers";
+
+const theme = themes["tokyo-green"];
+
+function findLayer(id: string) {
+  const layer = buildFeatureLayers(theme).find((candidate) => candidate.id === id);
+  expect(layer, `layer ${id} exists`).toBeDefined();
+  return layer!;
+}
+
+function fillColor(id: string): unknown {
+  const layer = findLayer(id);
+  expect(layer.type).toBe("fill");
+  return (layer as import("maplibre-gl").FillLayerSpecification).paint?.["fill-color"];
+}
+
+describe("category sets", () => {
+  it("assigns conveyances to transit, not walkway", () => {
+    expect([...TRANSIT_CATEGORIES]).toEqual([
+      "elevator",
+      "escalator",
+      "stairs",
+      "steps",
+      "movingwalkway",
+    ]);
+    expect(WALKWAY_CATEGORIES).not.toContain("movingwalkway");
+  });
+
+  it("covers both dark-area categories", () => {
+    expect([...UNENCLOSED_CATEGORIES]).toEqual(["unenclosedarea", "opentobelow"]);
+  });
+
+  it("keeps nonpublic in its own beige bucket", () => {
+    expect([...NONPUBLIC_CATEGORIES]).toEqual(["nonpublic"]);
+  });
+});
+
+describe("buildFeatureLayers category coloring", () => {
+  it("paints each bucket with its theme token", () => {
+    const c = theme.colors;
+    expect(fillColor(LAYER_TRANSIT_FILL)).toBe(c.unitTransit);
+    expect(fillColor(LAYER_RESTROOM_FILL)).toBe(c.unitRestroom);
+    expect(fillColor(LAYER_UNENCLOSED_FILL)).toBe(c.unitUnenclosed);
+    expect(fillColor(LAYER_NONPUBLIC_FILL)).toBe(c.unitNonPublic);
+    expect(fillColor(LAYER_ROOM_FILL)).toBe(c.unit);
+    expect(fillColor(LAYER_WALKWAY_FILL)).toBe(c.walkway);
+  });
+
+  it("filters transit units by category and non-restricted state", () => {
+    expect(findLayer(LAYER_TRANSIT_FILL).filter).toEqual([
+      "all",
+      ["==", ["get", "__feature_type"], "unit"],
+      ["!=", ["get", "__restricted"], true],
+      ["in", ["get", "__category"], ["literal", [...TRANSIT_CATEGORIES]]],
+    ]);
+  });
+
+  it("matches restrooms by 8-char category prefix", () => {
+    expect(findLayer(LAYER_RESTROOM_FILL).filter).toEqual([
+      "all",
+      ["==", ["get", "__feature_type"], "unit"],
+      ["!=", ["get", "__restricted"], true],
+      ["==", ["slice", ["to-string", ["get", "__category"]], 0, 8], "restroom"],
+    ]);
+  });
+
+  it("excludes the new buckets from the structure fallback", () => {
+    const filter = JSON.stringify(findLayer("indoor-structure-fill").filter);
+    expect(filter).toContain("movingwalkway");
+    expect(filter).toContain("unenclosedarea");
+    expect(filter).toContain("restroom");
+    expect(filter).toContain("nonpublic");
+  });
+
+  it("registers the new fills as clickable", () => {
+    expect(CLICKABLE_LAYER_IDS).toContain(LAYER_UNENCLOSED_FILL);
+    expect(CLICKABLE_LAYER_IDS).toContain(LAYER_TRANSIT_FILL);
+    expect(CLICKABLE_LAYER_IDS).toContain(LAYER_RESTROOM_FILL);
+    expect(CLICKABLE_LAYER_IDS).toContain(LAYER_NONPUBLIC_FILL);
+  });
+});
+
+describe("applyThemePaintProperties", () => {
+  it("repaints the category layers on theme switch", () => {
+    const c = themes["customer-blue"].colors;
+    const calls: [string, string, unknown][] = [];
+    applyThemePaintProperties((layerId, name, value) => {
+      calls.push([layerId, name, value]);
+    }, themes["customer-blue"]);
+
+    for (const expected of [
+      [LAYER_UNENCLOSED_FILL, "fill-color", c.unitUnenclosed],
+      [LAYER_UNENCLOSED_OUTLINE, "line-color", c.unitOutline],
+      [LAYER_TRANSIT_FILL, "fill-color", c.unitTransit],
+      [LAYER_TRANSIT_OUTLINE, "line-color", c.unitOutline],
+      [LAYER_RESTROOM_FILL, "fill-color", c.unitRestroom],
+      [LAYER_RESTROOM_OUTLINE, "line-color", c.unitOutline],
+      [LAYER_NONPUBLIC_FILL, "fill-color", c.unitNonPublic],
+      [LAYER_NONPUBLIC_OUTLINE, "line-color", c.unitOutline],
+    ]) {
+      expect(calls).toContainEqual(expected);
+    }
+  });
+});
