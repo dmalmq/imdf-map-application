@@ -7,8 +7,11 @@ import {
   useState,
   type CSSProperties,
   type DragEvent,
+  type RefObject,
 } from "react";
 import { FloatingSearch } from "../components/FloatingSearch";
+import { SelectedFeatureSheet } from "../components/SelectedFeatureSheet";
+import { resolveSelectedFeatureContent } from "../components/resolveSelectedFeatureContent";
 import { ImdfDropzone } from "../components/ImdfDropzone";
 import { ViewerMenu } from "../components/ViewerMenu";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
@@ -42,30 +45,20 @@ const ui = {
   empty: { ja: "会場が未読み込みです", en: "No venue loaded" },
 } as const;
 
-const COMPACT_MQ = "(max-width: 899px)";
 
-function useCompactLayout(): boolean {
-  const [compact, setCompact] = useState(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return false;
-    }
-    return window.matchMedia(COMPACT_MQ).matches;
-  });
+function useCompactLayout(rootRef: RefObject<HTMLDivElement | null>): boolean {
+  const [compact, setCompact] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const mql = window.matchMedia(COMPACT_MQ);
-    const onChange = () => {
-      setCompact(mql.matches);
-    };
-    onChange();
-    mql.addEventListener("change", onChange);
-    return () => {
-      mql.removeEventListener("change", onChange);
-    };
-  }, []);
+    const root = rootRef.current;
+    if (root === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width !== undefined) setCompact(width < 900);
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [rootRef]);
 
   return compact;
 }
@@ -154,10 +147,12 @@ export function App() {
   const attemptTokenRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const compact = useCompactLayout();
+  const appRootRef = useRef<HTMLDivElement>(null);
+  const compact = useCompactLayout(appRootRef);
   const [mapDragActive, setMapDragActive] = useState(false);
   const [searchKey, setSearchKey] = useState(0);
   const [menuKey, setMenuKey] = useState(0);
+  const [sheetHeight, setSheetHeight] = useState(0);
 
   const theme = themes[state.themeId];
   const locale = state.locale;
@@ -184,6 +179,14 @@ export function App() {
       venueState.searchCategory,
     ).length;
   }, [venueState]);
+
+  const selectedContent = useMemo(() => {
+    if (!venueState || venueState.selectedFeatureId === null) return null;
+    const feature = venueState.loadedVenue.featuresById.get(venueState.selectedFeatureId);
+    return feature === undefined
+      ? null
+      : resolveSelectedFeatureContent(venueState.loadedVenue, feature, locale);
+  }, [locale, venueState]);
 
 
   const venueName = useMemo(() => {
@@ -338,7 +341,7 @@ export function App() {
   const onRetry = params.src !== null ? loadFromSrc : openPicker;
 
   return (
-    <div className={compact ? "app app--compact" : "app"} style={themeStyle(state.themeId)}>
+    <div ref={appRootRef} className={compact ? "app app--compact" : "app"} style={themeStyle(state.themeId)}>
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {liveMessage(state)}
       </div>
@@ -415,8 +418,20 @@ export function App() {
                 locale={locale}
                 theme={theme}
                 searchCategory={venueState.searchCategory}
+                compact={compact}
+                bottomPadding={compact ? sheetHeight : 0}
                 onSelectFeature={onMapSelectFeature}
               />
+              {compact && selectedContent !== null ? (
+                <SelectedFeatureSheet
+                  content={selectedContent}
+                  locale={locale}
+                  onClose={() => {
+                    dispatch({ type: "select_feature", featureId: null });
+                  }}
+                  onHeightChange={setSheetHeight}
+                />
+              ) : null}
               {state.status === "loading" && state.previous ? (
                 <div className="map-stage__loading" role="status">
                   <span className="imdf-dropzone__spinner" aria-hidden="true" />

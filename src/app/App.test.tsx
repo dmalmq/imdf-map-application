@@ -167,6 +167,8 @@ vi.mock("../map/IndoorMap", () => ({
         data-locale={props.locale}
         data-theme-id={props.theme.id}
         data-search-category={props.searchCategory}
+        data-compact={String(props.compact)}
+        data-bottom-padding={String(props.bottomPadding)}
         data-identity={identityRef.current.n}
       >
         <button
@@ -471,6 +473,53 @@ describe("App", () => {
       );
     });
     expect(document.querySelector(".feature-details")).toBeNull();
+  });
+
+  it("renders the compact sheet for narrow roots and clears selection on close", async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        callback: ResizeObserverCallback;
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback;
+          callbacks.push(callback);
+        }
+        observe(target: Element) {
+          this.callback(
+            [{ target, contentRect: { width: 500, height: 120 } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          );
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+      const user = userEvent.setup();
+      render(<App />);
+      await uploadViaHiddenInput(zipFile());
+      await waitFor(() => {
+        expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+      });
+      expect(screen.getByTestId("indoor-map-stub").getAttribute("data-compact")).toBe("true");
+      expect(document.querySelector(".selected-feature-sheet")).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: "Select shop from map" }));
+      const sheet = await waitFor(() => {
+        const found = document.querySelector(".selected-feature-sheet");
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      expect(within(sheet as HTMLElement).getByText("駅ナカショップ")).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: "詳細を閉じる" }));
+      expect(document.querySelector(".selected-feature-sheet")).toBeNull();
+      expect(screen.getByTestId("indoor-map-stub").getAttribute("data-selected-feature-id")).toBe("");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

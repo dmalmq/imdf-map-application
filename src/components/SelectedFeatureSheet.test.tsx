@@ -1,0 +1,74 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ResolvedFeatureContent } from "./resolveSelectedFeatureContent";
+import { SelectedFeatureSheet } from "./SelectedFeatureSheet";
+
+let resizeCallback: ResizeObserverCallback | null = null;
+class ResizeObserverMock {
+  constructor(callback: ResizeObserverCallback) {
+    resizeCallback = callback;
+  }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+const content: ResolvedFeatureContent = {
+  name: "Station Shop",
+  description: "Compact details",
+  category: "shop",
+  floor: "1F",
+  hours: "Daily",
+  accessibility: [],
+  phone: null,
+  website: null,
+  image: null,
+};
+
+afterEach(() => {
+  resizeCallback = null;
+  vi.unstubAllGlobals();
+});
+
+describe("SelectedFeatureSheet", () => {
+  it("renders shared content, reports height, and closes selection", async () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    const onHeightChange = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <SelectedFeatureSheet
+        content={content}
+        locale="en"
+        onClose={onClose}
+        onHeightChange={onHeightChange}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Station Shop" })).toBeTruthy();
+    expect(screen.getByText("Compact details")).toBeTruthy();
+    const sheet = document.querySelector<HTMLElement>(".selected-feature-sheet");
+    expect(sheet).not.toBeNull();
+    resizeCallback?.(
+      [{ target: sheet!, contentRect: { height: 240 } } as unknown as ResizeObserverEntry],
+      {} as ResizeObserver,
+    );
+    expect(onHeightChange).toHaveBeenCalledWith(240);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Close details" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("provides a bounded internal scroll region", () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    render(
+      <SelectedFeatureSheet
+        content={content}
+        locale="en"
+        onClose={() => {}}
+        onHeightChange={() => {}}
+      />,
+    );
+    expect(document.querySelector(".selected-feature-sheet__scroll")).not.toBeNull();
+  });
+});

@@ -21,6 +21,7 @@ import {
   CLICKABLE_LAYER_IDS,
 } from "./featureLayers";
 import { useFeatureMarkers } from "./useFeatureMarkers";
+import { useSelectedFeaturePopup } from "./useSelectedFeaturePopup";
 
 export interface IndoorMapProps {
   venue: LoadedVenue;
@@ -29,6 +30,8 @@ export interface IndoorMapProps {
   locale: LocaleCode;
   theme: ViewerTheme;
   searchCategory: SearchCategory;
+  compact: boolean;
+  bottomPadding: number;
   /** null = background click */
   onSelectFeature: (featureId: string | null) => void;
 }
@@ -37,6 +40,67 @@ const FIT_PADDING = 48;
 const FIT_MAX_ZOOM = 20;
 const EASE_DURATION_MS = 450;
 const FIT_DURATION_MS = 500;
+
+interface ViewportSize {
+  width: number;
+  height: number;
+}
+
+interface MapPadding {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export function revealOffset(
+  point: { x: number; y: number },
+  viewport: ViewportSize,
+  padding: MapPadding,
+  margin: number,
+): [number, number] | null {
+  const left = padding.left + margin;
+  const right = viewport.width - padding.right - margin;
+  const top = padding.top + margin;
+  const bottom = viewport.height - padding.bottom - margin;
+  const dx = point.x < left ? point.x - left : point.x > right ? point.x - right : 0;
+  const dy = point.y < top ? point.y - top : point.y > bottom ? point.y - bottom : 0;
+  return dx === 0 && dy === 0 ? null : [dx, dy];
+}
+
+export function selectionRevealOffset(
+  compact: boolean,
+  point: { x: number; y: number },
+  viewport: ViewportSize,
+  padding: MapPadding,
+  margin: number,
+): [number, number] | null {
+  return compact ? null : revealOffset(point, viewport, padding, margin);
+}
+
+function revealSelection(
+  map: MapLibreMap,
+  center: [number, number],
+  compact: boolean,
+): void {
+  const canvas = map.getCanvasContainer();
+  const padding = map.getPadding();
+  const offset = selectionRevealOffset(
+    compact,
+    map.project(center),
+    { width: canvas.clientWidth, height: canvas.clientHeight },
+    {
+      top: padding.top ?? 0,
+      right: padding.right ?? 0,
+      bottom: padding.bottom ?? 0,
+      left: padding.left ?? 0,
+    },
+    16,
+  );
+  if (offset !== null) {
+    map.panBy(offset, { duration: prefersReducedMotion() ? 0 : EASE_DURATION_MS });
+  }
+}
 
 function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -190,6 +254,8 @@ export function IndoorMap({
   locale,
   theme,
   searchCategory,
+  compact,
+  bottomPadding,
   onSelectFeature,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -202,6 +268,7 @@ export function IndoorMap({
   const appliedSelectedRef = useRef<string | null>(null);
   const themeIdRef = useRef(theme.id);
   const cancelReadyRef = useRef<(() => void) | null>(null);
+  const previousBottomPaddingRef = useRef(0);
   const [mapInstance, setMapInstance] = useState<MapLibreMap | null>(null);
 
   onSelectRef.current = onSelectFeature;
@@ -213,6 +280,10 @@ export function IndoorMap({
     onSelectRef.current(featureId);
   }, []);
 
+  const onPopupClose = useCallback(() => {
+    onSelectRef.current(null);
+  }, []);
+
   useFeatureMarkers({
     map: mapInstance,
     venue,
@@ -221,6 +292,15 @@ export function IndoorMap({
     selectedFeatureId,
     searchCategory,
     onSelect: onMarkerSelect,
+  });
+
+  useSelectedFeaturePopup({
+    map: mapInstance,
+    venue,
+    selectedFeatureId,
+    locale,
+    compact,
+    onClose: onPopupClose,
   });
 
   // Create the map once.
@@ -386,18 +466,10 @@ export function IndoorMap({
         applyFeatureState(map, selected, { selected: true });
         appliedSelectedRef.current = selected;
 
-        const reduced = prefersReducedMotion();
-        if (reduced) {
-          map.jumpTo({ center: feature.center });
-        } else {
-          map.easeTo({
-            center: feature.center,
-            duration: EASE_DURATION_MS,
-          });
-        }
+        revealSelection(map, feature.center, compact);
       });
     }
-  }, [venue, levelId]);
+  }, [venue, levelId, compact]);
 
   // Selection change (same level): update feature-state + camera.
   useEffect(() => {
@@ -433,15 +505,7 @@ export function IndoorMap({
       applyFeatureState(map, selectedFeatureId, { selected: true });
       appliedSelectedRef.current = selectedFeatureId;
 
-      const reduced = prefersReducedMotion();
-      if (reduced) {
-        map.jumpTo({ center: feature.center });
-      } else {
-        map.easeTo({
-          center: feature.center,
-          duration: EASE_DURATION_MS,
-        });
-      }
+      revealSelection(map, feature.center, compact);
     };
 
     // If the feature is on another level, the level effect owns reapplication
@@ -453,7 +517,25 @@ export function IndoorMap({
 
     cancelReadyRef.current?.();
     cancelReadyRef.current = whenSourceReady(map, applySelection);
-  }, [selectedFeatureId, venue, levelId]);
+  }, [selectedFeatureId, venue, levelId, compact]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map == null || !map.isStyleLoaded()) return;
+    const previous = previousBottomPaddingRef.current;
+    previousBottomPaddingRef.current = bottomPadding;
+    map.setPadding({ top: 0, right: 0, bottom: bottomPadding, left: 0 });
+    if (!compact || bottomPadding <= previous || selectedFeatureId === null) return;
+    const feature = venue.featuresById.get(selectedFeatureId);
+    if (feature?.center == null) return;
+    const point = map.project(feature.center);
+    const visibleBottom = map.getCanvasContainer().clientHeight - bottomPadding;
+    if (point.y > visibleBottom - 16) {
+      map.panBy([0, point.y - visibleBottom + 16], {
+        duration: prefersReducedMotion() ? 0 : EASE_DURATION_MS,
+      });
+    }
+  }, [bottomPadding, compact, selectedFeatureId, venue]);
 
   // Theme switch: paint properties only — never rebuild style/map.
   useEffect(() => {
