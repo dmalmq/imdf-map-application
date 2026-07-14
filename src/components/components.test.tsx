@@ -1,9 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ViewerFeature, ViewerLevel, ViewerWarning } from "../imdf/types";
+import type { ViewerLevel, ViewerWarning } from "../imdf/types";
 import { CategoryChips } from "./CategoryChips";
-import { FeatureDetails } from "./FeatureDetails";
+import { SelectedFeatureContent } from "./SelectedFeatureContent.jsx";
 import { ImdfDropzone } from "./ImdfDropzone";
 import { LevelSwitcher } from "./LevelSwitcher";
 import { ThemeSwitcher } from "./ThemeSwitcher";
@@ -35,22 +35,6 @@ const LEVEL_B1: ViewerLevel = {
 
 /** Descending ordinal order as normalizeVenue produces. */
 const LEVELS_DESC: ViewerLevel[] = [LEVEL_2F, LEVEL_1F, LEVEL_B1];
-
-function makeFeature(overrides: Partial<ViewerFeature> & Pick<ViewerFeature, "id">): ViewerFeature {
-  return {
-    featureType: "unit",
-    levelId: LEVEL_1F.id,
-    geometry: null,
-    center: null,
-    labels: {},
-    altLabels: {},
-    category: null,
-    accessibility: [],
-    restriction: null,
-    sourceProperties: {},
-    ...overrides,
-  };
-}
 
 describe("LevelSwitcher", () => {
   it("renders levels in the given descending order with aria-pressed on the selected pill", () => {
@@ -158,76 +142,93 @@ describe("ThemeSwitcher", () => {
   });
 });
 
-describe("FeatureDetails", () => {
-  it("omits category, hours, and restriction rows when absent", () => {
-    const feature = makeFeature({
-      id: "c1000012-0000-4000-8000-00000000012f",
-      labels: { en: "Open Room", ja: "オープンスペース" },
-      category: null,
-      restriction: null,
-      sourceProperties: {},
-    });
+describe("SelectedFeatureContent", () => {
+  const content = {
+    name: "Station Shop",
+    description: "A convenient station shop.",
+    category: "shopping",
+    floor: "1F",
+    hours: "Daily 09:00-21:00",
+    accessibility: ["wheelchair"],
+    phone: "+81 3 1234 5678",
+    website: "https://example.com",
+    image: { src: "/station-shop.jpg", alt: "Station Shop storefront" },
+  };
 
-    render(
-      <FeatureDetails
-        feature={feature}
-        levels={LEVELS_DESC}
-        locale="en"
-        manifestLanguage="ja-JP"
-      />,
-    );
+  it("renders visitor content and secure contact actions without diagnostics", () => {
+    render(<SelectedFeatureContent content={content} locale="en" onClose={() => {}} />);
 
-    expect(screen.getByText("Open Room")).toBeTruthy();
-    expect(screen.queryByText("Category")).toBeNull();
-    expect(screen.queryByText("Hours")).toBeNull();
-    expect(screen.queryByText("Restriction")).toBeNull();
-    expect(screen.getByText("Type")).toBeTruthy();
-    expect(screen.getByText("ID")).toBeTruthy();
-  });
-
-  it("renders hours when present in sourceProperties", () => {
-    const feature = makeFeature({
-      id: "a1000008-0000-4000-8000-0000000000c1",
-      featureType: "occupant",
-      labels: { ja: "駅ナカショップ", en: "Station Shop" },
-      category: "shopping",
-      sourceProperties: { hours: "Mo-Fr 10:00-20:00" },
-    });
-
-    render(
-      <FeatureDetails
-        feature={feature}
-        levels={LEVELS_DESC}
-        locale="en"
-        manifestLanguage="ja-JP"
-      />,
-    );
-
-    expect(screen.getByText("Hours")).toBeTruthy();
-    expect(screen.getByText("Mo-Fr 10:00-20:00")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Station Shop" })).toBeTruthy();
+    expect(screen.getByText("A convenient station shop.")).toBeTruthy();
     expect(screen.getByText("shopping")).toBeTruthy();
+    expect(screen.getByText("1F")).toBeTruthy();
+    expect(screen.getByText("Daily 09:00-21:00")).toBeTruthy();
+    expect(screen.getByText("wheelchair")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Station Shop storefront" })).toBeTruthy();
+
+    const phone = screen.getByRole("link", { name: "+81 3 1234 5678" });
+    expect(phone.getAttribute("href")).toBe("tel:+81 3 1234 5678");
+    const website = screen.getByRole("link", { name: "Website" });
+    expect(website.getAttribute("href")).toBe("https://example.com");
+    expect(website.getAttribute("target")).toBe("_blank");
+    expect(website.getAttribute("rel")).toBe("noreferrer");
+
+    expect(screen.queryByText("Type")).toBeNull();
+    expect(screen.queryByText("ID")).toBeNull();
+    expect(screen.queryByText("Restriction")).toBeNull();
   });
 
-  it("falls back to the feature id when locale labels are missing", () => {
-    const featureId = "c1000002-0000-4000-8000-0000000000b2";
-    const feature = makeFeature({
-      id: featureId,
-      labels: {},
-      altLabels: {},
-    });
-
-    render(
-      <FeatureDetails
-        feature={feature}
-        levels={LEVELS_DESC}
+  it("omits missing rows and removes failed media without a placeholder", () => {
+    const { rerender } = render(
+      <SelectedFeatureContent
+        content={{
+          ...content,
+          description: null,
+          category: null,
+          floor: null,
+          hours: null,
+          accessibility: [],
+          phone: null,
+          website: null,
+        }}
         locale="en"
-        manifestLanguage="ja-JP"
+        onClose={() => {}}
       />,
     );
-    // Name uses the id fallback; ID row also shows the id.
-    const name = document.querySelector(".feature-details__name");
-    expect(name?.textContent).toBe(featureId);
-    expect(document.querySelector(".feature-details__id")?.textContent).toBe(featureId);
+
+    expect(screen.queryByText("Description")).toBeNull();
+    expect(screen.queryByText("Category")).toBeNull();
+    expect(screen.queryByText("Floor")).toBeNull();
+    expect(screen.queryByText("Hours")).toBeNull();
+    expect(screen.queryByText("Accessibility")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.queryByRole("img")).toBeNull();
+
+    rerender(
+      <SelectedFeatureContent
+        content={{ ...content, image: { src: "/another.jpg", alt: "Another place" } }}
+        locale="en"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByRole("img", { name: "Another place" })).toBeTruthy();
+  });
+
+  it("calls onClose from the localized close button", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <SelectedFeatureContent content={{ ...content, image: null }} locale="en" onClose={onClose} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Close details" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <SelectedFeatureContent content={{ ...content, image: null }} locale="ja" onClose={onClose} />,
+    );
+    expect(screen.getByRole("button", { name: "詳細を閉じる" })).toBeTruthy();
   });
 });
 
