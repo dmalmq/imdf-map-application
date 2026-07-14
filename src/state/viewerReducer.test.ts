@@ -11,7 +11,7 @@ import {
 } from "./viewerReducer";
 
 function level(id: string, ordinal: number): ViewerLevel {
-  return { id, ordinal, label: { en: id }, shortName: {} };
+  return { id, sourceLevelIds: [id], ordinal, label: { en: id }, shortName: {} };
 }
 
 function venueFeature(): ViewerFeature {
@@ -30,12 +30,15 @@ function venueFeature(): ViewerFeature {
   };
 }
 
-function makeVenue(levels: ViewerLevel[]): LoadedVenue {
+function makeVenue(
+  levels: ViewerLevel[],
+  features: ViewerFeature[] = [],
+): LoadedVenue {
   return {
     manifest: { version: "1.0.0", language: "ja-JP" },
     venue: venueFeature(),
     levels,
-    featuresById: new Map(),
+    featuresById: new Map(features.map((feature) => [feature.id, feature])),
     renderFeaturesByLevel: new Map(),
     searchEntries: [],
     boundsByLevel: new Map(),
@@ -99,13 +102,26 @@ describe("pickInitialLevelId", () => {
 
 describe("matchLevelId", () => {
   const shortNamed: ViewerLevel[] = [
-    { id: "lvl-2f", ordinal: 1, label: { ja: "2階", en: "Level 2" }, shortName: { ja: "2F", en: "2F" } },
-    { id: "lvl-1f", ordinal: 0, label: { ja: "1階", en: "Level 1" }, shortName: { ja: "1F", en: "1F" } },
-    { id: "lvl-b1", ordinal: -1, label: { ja: "地下1階", en: "Basement 1" }, shortName: { en: "B1" } },
+    { id: "lvl-2f", sourceLevelIds: ["lvl-2f"], ordinal: 1, label: { ja: "2階", en: "Level 2" }, shortName: { ja: "2F", en: "2F" } },
+    { id: "lvl-1f", sourceLevelIds: ["lvl-1f"], ordinal: 0, label: { ja: "1階", en: "Level 1" }, shortName: { ja: "1F", en: "1F" } },
+    { id: "lvl-b1", sourceLevelIds: ["lvl-b1"], ordinal: -1, label: { ja: "地下1階", en: "Basement 1" }, shortName: { en: "B1" } },
   ];
 
   it("matches a level id", () => {
     expect(matchLevelId(shortNamed, "lvl-1f")).toBe("lvl-1f");
+  });
+
+  it("matches a source level id inside an ordinal group", () => {
+    const grouped: ViewerLevel[] = [
+      {
+        id: "ordinal:0",
+        ordinal: 0,
+        label: { en: "1F" },
+        shortName: { en: "1F" },
+        sourceLevelIds: ["level-1f-north", "level-1f-south"],
+      },
+    ];
+    expect(matchLevelId(grouped, "level-1f-south")).toBe("ordinal:0");
   });
 
   it("matches short_name across locales case-insensitively", () => {
@@ -129,8 +145,8 @@ describe("matchLevelId", () => {
 
   it("prefers an id match over a short_name collision", () => {
     const colliding: ViewerLevel[] = [
-      { id: "b1", ordinal: 2, label: {}, shortName: {} },
-      { id: "other", ordinal: -1, label: {}, shortName: { en: "B1" } },
+      { id: "b1", sourceLevelIds: ["b1"], ordinal: 2, label: {}, shortName: {} },
+      { id: "other", sourceLevelIds: ["other"], ordinal: -1, label: {}, shortName: { en: "B1" } },
     ];
     expect(matchLevelId(colliding, "B1")).toBe("b1");
   });
@@ -477,5 +493,54 @@ describe("viewerReducer search fields", () => {
         category: "gates",
       }),
     ).toBe(initialViewerState);
+  });
+
+  it("clears a selected feature when the category excludes it", () => {
+    const occupant: ViewerFeature = {
+      id: "occupant-shop",
+      featureType: "occupant",
+      levelId: "level-1",
+      geometry: null,
+      center: [139.7, 35.6],
+      labels: { en: "Shop" },
+      altLabels: {},
+      category: "shopping",
+      accessibility: [],
+      restriction: null,
+      sourceProperties: {},
+    };
+    const ready = readyState("venue.zip", levels1F, {
+      loadedVenue: makeVenue(levels1F, [occupant]),
+      selectedFeatureId: occupant.id,
+      searchCategory: "all",
+    });
+
+    const shops = viewerReducer(ready, { type: "set_search_category", category: "shops" });
+    expect(shops.status).toBe("ready");
+    if (shops.status !== "ready") return;
+    expect(shops.searchCategory).toBe("shops");
+    expect(shops.selectedFeatureId).toBe(occupant.id);
+
+    const facilities = viewerReducer(shops, {
+      type: "set_search_category",
+      category: "facilities",
+    });
+    expect(facilities.status).toBe("ready");
+    if (facilities.status !== "ready") return;
+    expect(facilities.searchCategory).toBe("facilities");
+    expect(facilities.selectedFeatureId).toBeNull();
+
+    const cleared = readyState("venue.zip", levels1F, {
+      loadedVenue: makeVenue(levels1F, [occupant]),
+      selectedFeatureId: null,
+      searchCategory: "shops",
+    });
+    const stillNull = viewerReducer(cleared, {
+      type: "set_search_category",
+      category: "facilities",
+    });
+    expect(stillNull.status).toBe("ready");
+    if (stillNull.status !== "ready") return;
+    expect(stillNull.selectedFeatureId).toBeNull();
   });
 });

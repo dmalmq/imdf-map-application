@@ -1,8 +1,7 @@
 import { localizedLabel } from "../imdf/localize";
 import type { LocaleCode, SearchEntry, SearchResult } from "../imdf/types";
 import { normalizeSearchText } from "./normalizeSearchText";
-
-export type SearchCategory = "all" | "gates" | "shops" | "facilities";
+import { matchesSearchCategory, type SearchCategory } from "./searchCategories";
 
 export interface SearchQuery {
   text: string;
@@ -13,19 +12,6 @@ export interface SearchQuery {
 
 const MAX_RESULTS = 50;
 const LEVEL_BOOST = 20;
-
-function matchesCategory(entry: SearchEntry, category: SearchCategory): boolean {
-  switch (category) {
-    case "all":
-      return true;
-    case "gates":
-      return entry.featureType === "opening" && (entry.category?.startsWith("pedestrian") ?? false);
-    case "shops":
-      return entry.featureType === "occupant";
-    case "facilities":
-      return entry.featureType === "amenity" || entry.featureType === "kiosk";
-  }
-}
 
 function matchScore(entry: SearchEntry, text: string): number {
   for (const label of entry.normalizedLabels) {
@@ -76,7 +62,7 @@ function toResult(entry: SearchEntry, locale: LocaleCode, score: number): Search
 
 export function searchVenue(entries: SearchEntry[], query: SearchQuery): SearchResult[] {
   const text = normalizeSearchText(query.text);
-  const filtered = entries.filter((entry) => matchesCategory(entry, query.category));
+  const filtered = entries.filter((entry) => matchesSearchCategory(entry, query.category));
 
   if (text === "") {
     if (query.category === "all") {

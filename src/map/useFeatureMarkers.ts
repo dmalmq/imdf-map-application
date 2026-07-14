@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { localizedLabel } from "../imdf/localize";
 import type { FeatureType, LoadedVenue, LocaleCode, ViewerFeature } from "../imdf/types";
+import { isUnitMarkerEligible } from "../search/searchCategories";
 
 /** Overlay container class hosting all feature markers. */
 export const MARKER_OVERLAY_CLASS = "indoor-marker-overlay";
@@ -12,6 +13,8 @@ export const MARKER_CLASS = "indoor-marker";
 export const MARKER_BUBBLE_CLASS = "indoor-marker--bubble";
 /** Selected variant, combined with MARKER_CLASS. */
 export const MARKER_SELECTED_CLASS = "indoor-marker--selected";
+const MARKER_OVERLAY_EXPANDED_CLASS = "indoor-marker-overlay--expanded";
+const COMPACT_MARKER_SIZE = 10;
 
 const MARKER_FEATURE_TYPES: Record<FeatureType, true | undefined> = {
   amenity: true,
@@ -82,7 +85,6 @@ export function markerIconFor(category: string): string | undefined {
   return ICON_RESTROOM;
 }
 
-const ROOM_CATEGORY = "room";
 
 /** Accessible-name fallback for unnamed bubble units, per locale. */
 const CATEGORY_LABELS: Record<string, Record<LocaleCode, string>> = {
@@ -90,6 +92,7 @@ const CATEGORY_LABELS: Record<string, Record<LocaleCode, string>> = {
   escalator: { ja: "エスカレーター", en: "Escalator" },
   stairs: { ja: "階段", en: "Stairs" },
   steps: { ja: "階段", en: "Stairs" },
+  room: { ja: "部屋", en: "Room" },
 };
 
 /** Locale fallback name for an unnamed bubble unit. */
@@ -113,6 +116,42 @@ function categoryLabelFor(category: string, locale: LocaleCode): string | undefi
   return locale === "ja" ? "トイレ" : "Restroom";
 }
 
+/** Name when present; localized category instead of a UUID when unnamed. */
+export function markerLabelFor(
+  feature: ViewerFeature,
+  locale: LocaleCode,
+  manifestLanguage: string,
+): string {
+  if (
+    Object.keys(feature.labels).length === 0 &&
+    (feature.featureType === "unit" || feature.featureType === "amenity") &&
+    feature.category !== null
+  ) {
+    return categoryLabelFor(feature.category, locale) ?? feature.category;
+  }
+  return localizedLabel(feature.labels, locale, feature.id, manifestLanguage);
+}
+
+/** Text markers expand at close zoom; icon bubbles stay at their fixed size. */
+export function showFullMarkerLabelsAtZoom(zoom: number): boolean {
+  return zoom >= 17;
+}
+
+export function markerTransformAtPoint(
+  point: { x: number; y: number },
+  width: number,
+  height: number,
+  textMarker: boolean,
+  compact: boolean,
+): string {
+  const renderedWidth = compact ? COMPACT_MARKER_SIZE : width;
+  const renderedHeight = compact ? COMPACT_MARKER_SIZE : height;
+  const anchorBottom = textMarker && !compact;
+  const x = Math.round(point.x - renderedWidth / 2);
+  const y = Math.round(point.y - (anchorBottom ? renderedHeight : renderedHeight / 2));
+  return `translate(${x}px, ${y}px)`;
+}
+
 const MAX_MARKERS = 200;
 
 export interface UseFeatureMarkersArgs {
@@ -125,31 +164,15 @@ export interface UseFeatureMarkersArgs {
   onSelect: (featureId: string) => void;
 }
 
-function hasOwnName(feature: ViewerFeature): boolean {
-  return Object.keys(feature.labels).length > 0;
-}
-
-/** True for unit features that get a marker: bubble categories and named rooms. */
-function isMarkerUnit(feature: ViewerFeature): boolean {
-  if (feature.featureType !== "unit" || feature.category == null) {
-    return false;
-  }
-  if (markerIconFor(feature.category) !== undefined) {
-    return true;
-  }
-  return feature.category === ROOM_CATEGORY && hasOwnName(feature);
-}
-
 /**
  * Visible-level marker features, capped at MAX_MARKERS with priority:
  * selected feature first, then icon bubbles (conveyance/restroom units and
- * standalone icon amenities), then occupant/kiosk/plain-amenity pills, then
- * room pills; each group id-sorted for determinism. Rooms are last because
- * they are the most numerous and least critical, so a crowded level never
- * silently drops an elevator bubble. An amenity that duplicates an on-level
- * bubble unit through `unit_ids` (Apple exports pair e.g. every escalator
- * unit with an escalator amenity) is dropped; unlinked ones keep their own
- * bubble.
+ * standalone icon amenities), occupant/kiosk/plain-amenity pills, named unit
+ * pills, then unnamed category fallback pills. Named units come first because
+ * their labels carry more location-specific information when markers expand.
+ * An amenity that duplicates an on-level bubble unit through `unit_ids` (Apple
+ * exports pair e.g. every escalator unit with an escalator amenity) is dropped;
+ * unlinked ones keep their own bubble.
  */
 export function collectMarkerFeatures(
   venue: LoadedVenue,
@@ -159,12 +182,13 @@ export function collectMarkerFeatures(
   const unitBubbles: ViewerFeature[] = [];
   const amenityBubbles: ViewerFeature[] = [];
   const pills: ViewerFeature[] = [];
-  const rooms: ViewerFeature[] = [];
+  const namedUnits: ViewerFeature[] = [];
+  const unnamedUnits: ViewerFeature[] = [];
   const bubbleUnitIds = new Set<string>();
   let selected: ViewerFeature | null = null;
 
   for (const feature of venue.featuresById.values()) {
-    const markerUnit = isMarkerUnit(feature);
+    const markerUnit = isUnitMarkerEligible(feature);
     if (MARKER_FEATURE_TYPES[feature.featureType] !== true && !markerUnit) {
       continue;
     }
@@ -178,8 +202,8 @@ export function collectMarkerFeatures(
       continue;
     }
     if (markerUnit) {
-      if (feature.category === ROOM_CATEGORY) {
-        rooms.push(feature);
+      if (markerIconFor(feature.category!) === undefined) {
+        (Object.keys(feature.labels).length > 0 ? namedUnits : unnamedUnits).push(feature);
       } else {
         unitBubbles.push(feature);
         bubbleUnitIds.add(feature.id);
@@ -207,9 +231,10 @@ export function collectMarkerFeatures(
     a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   const bubbles = [...unitBubbles, ...unlinkedAmenityBubbles].sort(byId);
   pills.sort(byId);
-  rooms.sort(byId);
+  namedUnits.sort(byId);
+  unnamedUnits.sort(byId);
 
-  const ordered = [...bubbles, ...pills, ...rooms];
+  const ordered = [...bubbles, ...pills, ...namedUnits, ...unnamedUnits];
 
   // Always include the selected feature when it has a center and is on this level.
   if (selected != null && selected.levelId === levelId) {
@@ -250,28 +275,32 @@ export function useFeatureMarkers({
     }
     let cancelled = false;
     const overlay = document.createElement("div");
-    overlay.className = MARKER_OVERLAY_CLASS;
-    map.getContainer().appendChild(overlay);
+    // Start expanded so every text pill is measured at its full dimensions.
+    overlay.className = `${MARKER_OVERLAY_CLASS} ${MARKER_OVERLAY_EXPANDED_CLASS}`;
+    map.getCanvasContainer().appendChild(overlay);
 
     interface PositionedMarker {
       el: HTMLButtonElement;
       lngLat: [number, number];
       width: number;
       height: number;
-      /** Text pills sit on the point; icon bubbles center on it. */
-      anchorBottom: boolean;
+      textMarker: boolean;
+      selected: boolean;
     }
     const positioned: PositionedMarker[] = [];
 
     const reposition = (): void => {
+      const expanded = showFullMarkerLabelsAtZoom(map.getZoom());
+      overlay.classList.toggle(MARKER_OVERLAY_EXPANDED_CLASS, expanded);
       for (const item of positioned) {
-        const point = map.project(item.lngLat);
-        // Whole pixels keep composited text rasterization stable.
-        const x = Math.round(point.x - item.width / 2);
-        const y = Math.round(
-          point.y - (item.anchorBottom ? item.height : item.height / 2),
+        const compact = item.textMarker && !item.selected && !expanded;
+        item.el.style.transform = markerTransformAtPoint(
+          map.project(item.lngLat),
+          item.width,
+          item.height,
+          item.textMarker,
+          compact,
         );
-        item.el.style.transform = `translate(${x}px, ${y}px)`;
       }
     };
 
@@ -300,15 +329,7 @@ export function useFeatureMarkers({
             ? markerIconFor(feature.category)
             : undefined;
 
-        // Real archives routinely ship unnamed conveyance/restroom units;
-        // announce the category instead of a raw feature UUID.
-        const categoryFallback =
-          icon !== undefined && Object.keys(feature.labels).length === 0
-            ? categoryLabelFor(feature.category!, locale)
-            : undefined;
-        const label =
-          categoryFallback ??
-          localizedLabel(feature.labels, locale, feature.id, manifestLanguage);
+        const label = markerLabelFor(feature, locale, manifestLanguage);
 
         const el = document.createElement("button");
         el.type = "button";
@@ -322,11 +343,11 @@ export function useFeatureMarkers({
         el.className = classes.join(" ");
         if (icon !== undefined) {
           el.innerHTML = icon;
-          // Icon-only bubble: expose the name as a hover tooltip too.
-          el.title = label;
         } else {
           el.textContent = label;
         }
+        // Compact dots and icon-only bubbles retain a discoverable tooltip.
+        el.title = label;
         el.setAttribute("aria-label", label);
         el.addEventListener("click", (event) => {
           event.stopPropagation();
@@ -341,16 +362,17 @@ export function useFeatureMarkers({
           lngLat: center,
           width: rect.width,
           height: rect.height,
-          anchorBottom: icon === undefined,
+          textMarker: icon === undefined,
+          selected: feature.id === selectedFeatureId,
         });
       }
 
       reposition();
+      map.on("move", reposition);
+      map.on("moveend", reposition);
+      map.on("resize", reposition);
     });
 
-    map.on("move", reposition);
-    map.on("moveend", reposition);
-    map.on("resize", reposition);
 
     return () => {
       cancelled = true;

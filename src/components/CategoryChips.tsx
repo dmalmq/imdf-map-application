@@ -1,5 +1,5 @@
 import type { LocaleCode } from "../imdf/types";
-import type { SearchCategory } from "../search/searchVenue";
+import type { SearchCategory } from "../search/searchCategories";
 
 const CATEGORIES: SearchCategory[] = ["all", "gates", "shops", "facilities"];
 

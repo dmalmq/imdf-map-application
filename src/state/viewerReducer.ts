@@ -1,6 +1,6 @@
 import type { ArchiveError } from "../errors/ArchiveError";
 import type { LoadedVenue, LocaleCode, ViewerLevel } from "../imdf/types";
-import type { SearchCategory } from "../search/searchVenue";
+import { matchesSearchCategory, type SearchCategory } from "../search/searchCategories";
 import type { ThemeId } from "../theme/types";
 
 export interface ReadyVenueState {
@@ -76,6 +76,11 @@ export function matchLevelId(levels: ViewerLevel[], query: string): string | nul
   const wanted = normalize(query);
   for (const level of levels) {
     if (normalize(level.id) === wanted) {
+      return level.id;
+    }
+  }
+  for (const level of levels) {
+    if (level.sourceLevelIds.some((id) => normalize(id) === wanted)) {
       return level.id;
     }
   }
@@ -180,8 +185,23 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
     }
     case "set_search_text":
       return state.status === "ready" ? { ...state, searchText: action.text } : state;
-    case "set_search_category":
-      return state.status === "ready" ? { ...state, searchCategory: action.category } : state;
+    case "set_search_category": {
+      if (state.status !== "ready") {
+        return state;
+      }
+      const selected =
+        state.selectedFeatureId === null
+          ? undefined
+          : state.loadedVenue.featuresById.get(state.selectedFeatureId);
+      return {
+        ...state,
+        searchCategory: action.category,
+        selectedFeatureId:
+          selected !== undefined && !matchesSearchCategory(selected, action.category)
+            ? null
+            : state.selectedFeatureId,
+      };
+    }
     case "set_theme":
       return { ...state, themeId: action.themeId };
     case "set_locale":

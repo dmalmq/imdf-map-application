@@ -279,9 +279,9 @@ describe("searchVenue category filters", () => {
     expect(results.map((r) => r.featureId)).toEqual(["shop-a"]);
   });
 
-  it("filters facilities to amenities and kiosks", () => {
+  it("filters facilities to amenities, kiosks, and eligible units", () => {
     const results = searchVenue(catalog, query({ text: "", category: "facilities", levelId: null }));
-    expect(results.map((r) => r.featureId).sort()).toEqual(["amenity-a", "kiosk-a"]);
+    expect(results.map((r) => r.featureId).sort()).toEqual(["amenity-a", "kiosk-a", "unit-a"]);
   });
 
   it("includes every indexed type under all when text matches", () => {

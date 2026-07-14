@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { LocaleCode, LoadedVenue, SearchResult, ViewerFeature } from "../imdf/types";
-import type { SearchCategory } from "../search/searchVenue";
+import type { SearchCategory } from "../search/searchCategories";
 import { CategoryChips } from "./CategoryChips";
 import { FeatureDetails } from "./FeatureDetails";
 import { SearchBox } from "./SearchBox";
