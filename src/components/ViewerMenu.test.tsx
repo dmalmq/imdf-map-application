@@ -1,35 +1,14 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ViewerLevel } from "../imdf/types";
 import { ViewerMenu } from "./ViewerMenu";
-
-const levels: ViewerLevel[] = [
-  {
-    id: "level-2",
-    sourceLevelIds: ["level-2"],
-    ordinal: 1,
-    label: { en: "Second Floor", ja: "2階" },
-    shortName: { en: "2F", ja: "2F" },
-  },
-  {
-    id: "level-1",
-    sourceLevelIds: ["level-1"],
-    ordinal: 0,
-    label: { en: "First Floor", ja: "1階" },
-    shortName: { en: "1F", ja: "1F" },
-  },
-];
 
 const baseProps = {
   venueName: "Test Station",
   floorName: "First Floor",
-  levels,
-  selectedLevelId: "level-1",
   locale: "en" as const,
   themeId: "tokyo-green" as const,
   showFileControls: true,
-  onSelectLevel: () => {},
   onLocaleChange: () => {},
   onThemeChange: () => {},
   onOpenFile: () => {},
@@ -37,7 +16,7 @@ const baseProps = {
 };
 
 describe("ViewerMenu", () => {
-  it("opens localized venue, floor, level, locale, and theme controls", async () => {
+  it("opens localized venue, floor, locale, and theme controls", async () => {
     const user = userEvent.setup();
     const { rerender } = render(<ViewerMenu {...baseProps} />);
     const trigger = screen.getByRole("button", { name: "Menu" });
@@ -48,8 +27,6 @@ describe("ViewerMenu", () => {
     const menu = screen.getByRole("dialog", { name: "Viewer menu" });
     expect(within(menu).getByText("Test Station")).toBeTruthy();
     expect(menu.querySelector(".viewer-menu__meta span")?.textContent).toBe("First Floor");
-    expect(within(menu).getByRole("button", { name: "Second Floor" })).toBeTruthy();
-    expect(within(menu).getByRole("button", { name: "First Floor" })).toBeTruthy();
     expect(within(menu).getByRole("button", { name: "English" })).toBeTruthy();
     expect(within(menu).getByRole("button", { name: "Customer Blue" })).toBeTruthy();
 

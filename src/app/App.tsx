@@ -13,6 +13,7 @@ import { FloatingSearch } from "../components/FloatingSearch";
 import { SelectedFeatureSheet } from "../components/SelectedFeatureSheet";
 import { resolveSelectedFeatureContent } from "../components/resolveSelectedFeatureContent";
 import { ImdfDropzone } from "../components/ImdfDropzone";
+import { LevelSwitcher } from "../components/LevelSwitcher";
 import { ViewerMenu } from "../components/ViewerMenu";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { ArchiveError } from "../errors/ArchiveError";
@@ -393,15 +394,9 @@ export function App() {
                 key={`menu-${menuKey}`}
                 venueName={venueName ?? venueState.loadedVenue.venue.id}
                 floorName={levelName}
-                levels={venueState.loadedVenue.levels}
-                selectedLevelId={venueState.selectedLevelId}
                 locale={locale}
-                manifestLanguage={venueState.loadedVenue.manifest.language}
                 themeId={state.themeId}
                 showFileControls={!embed || params.allowOpen}
-                onSelectLevel={(levelId) => {
-                  dispatch({ type: "select_level", levelId });
-                }}
                 onLocaleChange={(nextLocale) => {
                   dispatch({ type: "set_locale", locale: nextLocale });
                 }}
@@ -411,6 +406,17 @@ export function App() {
                 onOpenFile={openPicker}
                 onOpenChange={onMenuOpenChange}
               />
+              <div className="map-stage__levels">
+                <LevelSwitcher
+                  levels={venueState.loadedVenue.levels}
+                  selectedLevelId={venueState.selectedLevelId}
+                  locale={locale}
+                  manifestLanguage={venueState.loadedVenue.manifest.language}
+                  onSelect={(levelId) => {
+                    dispatch({ type: "select_level", levelId });
+                  }}
+                />
+              </div>
               <IndoorMap
                 venue={venueState.loadedVenue}
                 levelId={venueState.selectedLevelId}

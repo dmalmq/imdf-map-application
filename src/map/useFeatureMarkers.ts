@@ -139,9 +139,13 @@ export function markerLabelFor(
   return localizedLabel(feature.labels, locale, feature.id, manifestLanguage);
 }
 
-/** Text markers expand at close zoom; icon bubbles stay at their fixed size. */
+/**
+ * Text markers expand at close zoom; icon bubbles stay at their fixed size.
+ * 17.4 ≈ 30% more map scale than the original 17 (log2(1.3) ≈ 0.4), keeping
+ * whole-floor views as low-clutter dots for longer.
+ */
 export function showFullMarkerLabelsAtZoom(zoom: number): boolean {
-  return zoom >= 17;
+  return zoom >= 17.4;
 }
 
 export function markerTransformAtPoint(

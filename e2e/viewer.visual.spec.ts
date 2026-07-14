@@ -1,11 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   LEVEL_1F_JA,
-  closeMenu,
   levelPill,
   OCCUPANT_EN,
   OCCUPANT_JA,
-  openMenu,
   searchAndSelect,
   switchLocale,
   switchTheme,
@@ -104,10 +102,7 @@ test.describe("viewer visual baselines", () => {
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
     await waitForCompactReady(page);
-    const panel = await openMenu(page);
     await expect(levelPill(page, LEVEL_1F_JA)).toBeVisible();
-    await expect(panel).toBeVisible();
-    await closeMenu(page);
     await switchLocale(page, "en");
     await waitForCompactReady(page);
     await switchTheme(page, "Customer Blue");

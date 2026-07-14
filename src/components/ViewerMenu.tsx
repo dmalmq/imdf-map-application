@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { LocaleCode, ViewerLevel } from "../imdf/types";
+import type { LocaleCode } from "../imdf/types";
 import type { ThemeId } from "../theme/types";
-import { LevelSwitcher } from "./LevelSwitcher";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
 const ui = {
@@ -17,13 +16,9 @@ const ui = {
 export interface ViewerMenuProps {
   venueName: string;
   floorName: string | null;
-  levels: ViewerLevel[];
-  selectedLevelId: string;
   locale: LocaleCode;
-  manifestLanguage?: string;
   themeId: ThemeId;
   showFileControls: boolean;
-  onSelectLevel: (levelId: string) => void;
   onLocaleChange: (locale: LocaleCode) => void;
   onThemeChange: (themeId: ThemeId) => void;
   onOpenFile: () => void;
@@ -33,13 +28,9 @@ export interface ViewerMenuProps {
 export function ViewerMenu({
   venueName,
   floorName,
-  levels,
-  selectedLevelId,
   locale,
-  manifestLanguage = "en",
   themeId,
   showFileControls,
-  onSelectLevel,
   onLocaleChange,
   onThemeChange,
   onOpenFile,
@@ -117,13 +108,6 @@ export function ViewerMenu({
                 <strong>{venueName}</strong>
                 {floorName === null ? null : <span>{floorName}</span>}
               </div>
-              <LevelSwitcher
-                levels={levels}
-                selectedLevelId={selectedLevelId}
-                locale={locale}
-                manifestLanguage={manifestLanguage}
-                onSelect={onSelectLevel}
-              />
               <div role="group" aria-label={ui.language[locale]} className="viewer-menu__locale">
                 <button
                   type="button"

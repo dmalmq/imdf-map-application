@@ -314,13 +314,13 @@ describe("App", () => {
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_1F.id);
 
     // Switch to 2F first so we can assert null-level selection retains it.
-    await user.click(screen.getByRole("button", { name: "メニュー" }));
     await user.click(screen.getByRole("button", { name: "2F" }));
     await waitFor(() => {
       expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
     });
 
-    // Switch to English so search result labels match English queries.
+    // Switch to English via the menu so search labels match English queries.
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
     await user.click(screen.getByRole("button", { name: "English" }));
     await user.keyboard("{Escape}");
 
@@ -549,8 +549,8 @@ describe("App deep links", () => {
     expect(fetchImdfFileMock).toHaveBeenCalledWith("/venues/minimal.zip", expect.any(AbortSignal));
     // Deep-linked level 2f (short_name 2F) instead of the default ordinal-0 1F.
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
-    await userEvent.setup().click(screen.getByRole("button", { name: "メニュー" }));
     expect(screen.getByRole("button", { name: "2F" }).getAttribute("aria-pressed")).toBe("true");
+    await userEvent.setup().click(screen.getByRole("button", { name: "メニュー" }));
     expect(container.querySelector(".top-bar")).toBeNull();
     expect(container.querySelector(".explorer-sidebar")).toBeNull();
     expect(container.querySelector('input[type="file"]')).toBeTruthy();

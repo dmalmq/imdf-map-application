@@ -232,9 +232,10 @@ describe("markerLabelFor", () => {
 });
 
 describe("compact marker zoom state", () => {
-  it("expands every text marker at zoom 17", () => {
-    expect(showFullMarkerLabelsAtZoom(16.99)).toBe(false);
-    expect(showFullMarkerLabelsAtZoom(17)).toBe(true);
+  it("expands every text marker at zoom 17.4", () => {
+    expect(showFullMarkerLabelsAtZoom(17)).toBe(false);
+    expect(showFullMarkerLabelsAtZoom(17.39)).toBe(false);
+    expect(showFullMarkerLabelsAtZoom(17.4)).toBe(true);
   });
 
   it("centers compact dots using their rendered size", () => {
@@ -311,7 +312,7 @@ describe("useFeatureMarkers", () => {
       await fontsReady;
     });
 
-    zoom = 17;
+    zoom = 17.4;
     listeners.get("move")?.forEach((listener) => {
       listener();
     });
@@ -331,7 +332,7 @@ describe("useFeatureMarkers", () => {
     document.body.append(canvasContainer);
     const map = {
       getCanvasContainer: () => canvasContainer,
-      getZoom: () => 17,
+      getZoom: () => 17.4,
       project: () => ({ x: 100, y: 100 }),
       on: vi.fn(),
       off: vi.fn(),

@@ -112,7 +112,8 @@ test.describe("embed deep links", () => {
 
     // 5. Hamburger shows floor/language/theme but no file controls in embed.
     const panel = await openMenu(page);
-    await expect(panel.locator(".level-switcher")).toBeVisible();
+    await expect(panel.locator(".level-switcher")).toHaveCount(0);
+    await expect(page.locator(".map-stage__levels .level-switcher")).toBeVisible();
     await expect(panel.locator(".viewer-menu__locale")).toBeVisible();
     await expect(panel.locator(".theme-switcher")).toBeVisible();
     await expect(panel.getByRole("button", { name: "Open IMDF ZIP" })).toHaveCount(0);

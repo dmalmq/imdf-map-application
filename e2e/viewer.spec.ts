@@ -168,10 +168,7 @@ test.describe("IMDF viewer journey", () => {
     await switchLocale(page, "en");
     await searchAndSelect(page, "B1 Stairs", UNIT_STAIRS_EN);
     await expectSelectedContent(page, [UNIT_STAIRS_EN]);
-    const panel = await openMenu(page);
     await expect(levelPill(page, LEVEL_B1_EN)).toHaveAttribute("aria-pressed", "true");
-    await expect(panel).toBeVisible();
-    await closeMenu(page);
   });
 
   test("clicking room pills and transit bubbles selects the feature", async ({

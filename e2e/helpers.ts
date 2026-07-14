@@ -105,11 +105,9 @@ export function levelPill(page: Page, label: string): Locator {
 }
 
 export async function selectLevel(page: Page, label: string): Promise<void> {
-  await openMenu(page);
   const pill = levelPill(page, label);
   await pill.click();
   await expect(pill).toHaveAttribute("aria-pressed", "true");
-  await closeMenu(page);
   await waitForMapIdle(page);
 }
 
