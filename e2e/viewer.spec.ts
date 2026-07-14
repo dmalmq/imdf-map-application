@@ -203,4 +203,111 @@ test.describe("IMDF viewer journey", () => {
     await markerByLabel(page, "B1 Restroom").click();
     await expectDetailsContain(page, ["B1 Restroom", "restroom.female"]);
   });
+  test("wheel zoom over a compact marker expands labels and keeps dots selectable", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await uploadMinimalImdf(page);
+    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await switchLocale(page, "en");
+
+    const overlay = page.locator(".indoor-marker-overlay");
+    const marker = markerByLabel(page, "Waiting Room");
+    const zoomOut = page.locator(".maplibregl-ctrl-zoom-out");
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (!(await overlay.evaluate((element) => element.classList.contains("indoor-marker-overlay--expanded")))) {
+        break;
+      }
+      await zoomOut.click();
+      await waitForMapIdle(page);
+    }
+
+    await expect(overlay).not.toHaveClass(/indoor-marker-overlay--expanded/);
+    await expect(marker).toHaveCSS("width", "10px");
+
+    await marker.hover();
+    await page.mouse.wheel(0, -4000);
+    await expect(overlay).toHaveClass(/indoor-marker-overlay--expanded/);
+    await expect(marker).not.toHaveCSS("width", "10px");
+
+    await zoomOut.click();
+    await waitForMapIdle(page);
+    await expect(overlay).not.toHaveClass(/indoor-marker-overlay--expanded/);
+    await expect(marker).toHaveCSS("width", "10px");
+    await marker.click();
+    await expectDetailsContain(page, ["Waiting Room"]);
+    expect(await marker.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(10);
+    await expect(overlay).not.toHaveClass(/indoor-marker-overlay--expanded/);
+  });
+
+});
+
+test.describe("marker keyboard focus", () => {
+  async function readyEnglishViewer(page: import("@playwright/test").Page): Promise<void> {
+    await page.goto("/");
+    await uploadMinimalImdf(page);
+    await waitForMapIdle(page);
+    await page.getByRole("button", { name: "メニュー" }).click();
+    await page.getByRole("button", { name: "English" }).click();
+    await page.keyboard.press("Escape");
+    await expect(markerByLabel(page, "Waiting Room")).toBeVisible();
+  }
+
+  async function tabToWaitingRoom(page: import("@playwright/test").Page): Promise<void> {
+    for (let presses = 0; presses < 80; presses += 1) {
+      const label = await page.evaluate(
+        () => document.activeElement?.getAttribute("aria-label") ?? "",
+      );
+      if (label === "Waiting Room") {
+        return;
+      }
+      await page.keyboard.press("Tab");
+    }
+    throw new Error("Tab never reached the Waiting Room marker");
+  }
+
+  async function activeMarkerState(
+    page: import("@playwright/test").Page,
+  ): Promise<{ label: string; selected: boolean }> {
+    return page.evaluate(() => {
+      const active = document.activeElement;
+      return {
+        label: active?.getAttribute("aria-label") ?? "",
+        selected: active?.classList.contains("indoor-marker--selected") ?? false,
+      };
+    });
+  }
+
+  test("desktop popup keeps keyboard focus through selection and Escape", async ({ page }) => {
+    await readyEnglishViewer(page);
+    await tabToWaitingRoom(page);
+
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".maplibregl-popup")).toBeVisible();
+    await expect
+      .poll(async () => activeMarkerState(page))
+      .toEqual({ label: "Waiting Room", selected: true });
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".maplibregl-popup")).toHaveCount(0);
+    await expect
+      .poll(async () => activeMarkerState(page))
+      .toEqual({ label: "Waiting Room", selected: false });
+  });
+
+  test("compact sheet close returns keyboard focus to the marker", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await readyEnglishViewer(page);
+    await tabToWaitingRoom(page);
+
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".selected-feature-sheet")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".selected-feature-sheet")).toHaveCount(0);
+    await expect
+      .poll(async () => activeMarkerState(page))
+      .toEqual({ label: "Waiting Room", selected: false });
+  });
 });

@@ -4,6 +4,7 @@ import { Popup, type Map as MapLibreMap } from "maplibre-gl";
 import { SelectedFeatureContent } from "../components/SelectedFeatureContent";
 import { resolveSelectedFeatureContent } from "../components/resolveSelectedFeatureContent";
 import type { LoadedVenue, LocaleCode } from "../imdf/types";
+import { focusFeatureMarker } from "./useFeatureMarkers";
 
 export interface UseSelectedFeaturePopupArgs {
   map: MapLibreMap | null;
@@ -44,6 +45,7 @@ export function useSelectedFeaturePopup({
     const dispatchClose = () => {
       if (dispatched || cleaning) return;
       dispatched = true;
+      focusFeatureMarker(selectedFeatureId, map.getCanvasContainer());
       onClose();
     };
 
@@ -55,15 +57,23 @@ export function useSelectedFeaturePopup({
           if (dispatched) return;
           dispatched = true;
           popup.remove();
+          focusFeatureMarker(selectedFeatureId, map.getCanvasContainer());
           onClose();
         }}
       />,
     );
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        popup.remove();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
     popup.on("close", dispatchClose);
     popup.setLngLat(feature.center).setDOMContent(container).addTo(map);
 
     return () => {
       cleaning = true;
+      document.removeEventListener("keydown", onKeyDown);
       root.unmount();
       popup.remove();
     };

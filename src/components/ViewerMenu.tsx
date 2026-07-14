@@ -48,7 +48,7 @@ export function ViewerMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, right: 0 });
+  const [position, setPosition] = useState({ top: 0, left: 0 });
 
   const close = useCallback(() => {
     setOpen(false);
@@ -61,7 +61,10 @@ export function ViewerMenu({
     const update = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
       if (rect !== undefined) {
-        setPosition({ top: rect.bottom + 8, right: Math.max(16, window.innerWidth - rect.right) });
+        setPosition({
+          top: rect.bottom + 8,
+          left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)),
+        });
       }
     };
     const onPointerDown = (event: MouseEvent) => {
@@ -108,7 +111,7 @@ export function ViewerMenu({
               role="dialog"
               aria-label={ui.panel[locale]}
               className="viewer-menu__panel"
-              style={{ position: "fixed", top: position.top, right: position.right }}
+              style={{ position: "fixed", top: position.top, left: position.left }}
             >
               <div className="viewer-menu__meta">
                 <strong>{venueName}</strong>

@@ -422,9 +422,11 @@ export function App() {
                 bottomPadding={compact ? sheetHeight : 0}
                 onSelectFeature={onMapSelectFeature}
               />
-              {compact && selectedContent !== null ? (
+              {compact && selectedContent !== null && venueState.selectedFeatureId !== null ? (
                 <SelectedFeatureSheet
                   content={selectedContent}
+                  selectedFeatureId={venueState.selectedFeatureId}
+                  {...(appRootRef.current !== null ? { markerRoot: appRootRef.current } : {})}
                   locale={locale}
                   onClose={() => {
                     dispatch({ type: "select_feature", featureId: null });

@@ -36,9 +36,19 @@ describe("SelectedFeatureSheet", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     const onHeightChange = vi.fn();
     const onClose = vi.fn();
+    const markerRoot = document.createElement("div");
+    const marker = document.createElement("button");
+    marker.dataset.featureId = "shop-1";
+    markerRoot.append(marker);
+    document.body.append(markerRoot);
+    onClose.mockImplementation(() => {
+      expect(document.activeElement).toBe(marker);
+    });
     render(
       <SelectedFeatureSheet
         content={content}
+        selectedFeatureId="shop-1"
+        markerRoot={markerRoot}
         locale="en"
         onClose={onClose}
         onHeightChange={onHeightChange}
@@ -57,6 +67,8 @@ describe("SelectedFeatureSheet", () => {
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Close details" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(marker);
+    markerRoot.remove();
   });
 
   it("provides a bounded internal scroll region", () => {
@@ -64,6 +76,7 @@ describe("SelectedFeatureSheet", () => {
     render(
       <SelectedFeatureSheet
         content={content}
+        selectedFeatureId="shop-1"
         locale="en"
         onClose={() => {}}
         onHeightChange={() => {}}

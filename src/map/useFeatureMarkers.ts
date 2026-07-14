@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { localizedLabel } from "../imdf/localize";
 import type { FeatureType, LoadedVenue, LocaleCode, ViewerFeature } from "../imdf/types";
@@ -258,6 +258,24 @@ export function collectMarkerFeatures(
 }
 
 /**
+ * Focus the current DOM marker for `featureId`. Exact dataset comparison —
+ * never builds a CSS selector from the untrusted ID.
+ */
+export function focusFeatureMarker(
+  featureId: string,
+  root: ParentNode = document,
+): boolean {
+  const marker = Array.from(
+    root.querySelectorAll<HTMLButtonElement>("[data-feature-id]"),
+  ).find((candidate) => candidate.dataset.featureId === featureId);
+  if (marker === undefined) {
+    return false;
+  }
+  marker.focus({ preventScroll: true });
+  return true;
+}
+
+/**
  * DOM feature markers on the visible level: text pills for amenity /
  * occupant / kiosk and named rooms, circular icon bubbles for elevator /
  * escalator / stairs / steps units. Every marker is a button that selects
@@ -282,6 +300,8 @@ export function useFeatureMarkers({
   searchCategory,
   onSelect,
 }: UseFeatureMarkersArgs): void {
+  const pendingFocusFeatureId = useRef<string | null>(null);
+
   useEffect(() => {
     if (map == null) {
       return;
@@ -362,6 +382,7 @@ export function useFeatureMarkers({
         // Compact dots and icon-only bubbles retain a discoverable tooltip.
         el.title = label;
         el.setAttribute("aria-label", label);
+        el.dataset.featureId = feature.id;
         el.addEventListener("click", (event) => {
           event.stopPropagation();
           onSelect(feature.id);
@@ -381,6 +402,12 @@ export function useFeatureMarkers({
       }
 
       reposition();
+
+      const pendingFocus = pendingFocusFeatureId.current;
+      if (pendingFocus !== null) {
+        focusFeatureMarker(pendingFocus, overlay);
+        pendingFocusFeatureId.current = null;
+      }
       map.on("move", reposition);
       map.on("moveend", reposition);
       map.on("resize", reposition);
@@ -392,6 +419,10 @@ export function useFeatureMarkers({
       map.off("move", reposition);
       map.off("moveend", reposition);
       map.off("resize", reposition);
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && overlay.contains(active)) {
+        pendingFocusFeatureId.current = active.dataset.featureId ?? null;
+      }
       overlay.remove();
     };
   }, [map, venue, levelId, locale, selectedFeatureId, searchCategory, onSelect]);

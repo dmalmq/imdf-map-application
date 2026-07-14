@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
 import {
   collectMarkerFeatures,
+  focusFeatureMarker,
   markerIconFor,
   markerLabelFor,
   markerTransformAtPoint,
@@ -319,6 +320,67 @@ describe("useFeatureMarkers", () => {
     );
 
     rectSpy.mockRestore();
+  });
+
+  it("keeps focus on the matching marker through selection recreation", async () => {
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: { ready: Promise.resolve() },
+    });
+    const canvasContainer = document.createElement("div");
+    document.body.append(canvasContainer);
+    const map = {
+      getCanvasContainer: () => canvasContainer,
+      getZoom: () => 17,
+      project: () => ({ x: 100, y: 100 }),
+      on: vi.fn(),
+      off: vi.fn(),
+    } as unknown as MapLibreMap;
+
+    function Harness({ selectedFeatureId }: { selectedFeatureId: string | null }) {
+      useFeatureMarkers({
+        map,
+        venue: venueWith([feature("room", "unit", "room")]),
+        levelId: LEVEL,
+        locale: "en",
+        selectedFeatureId,
+        searchCategory: "all",
+        onSelect: vi.fn(),
+      });
+      return null;
+    }
+
+    const { rerender } = render(createElement(Harness, { selectedFeatureId: null }));
+    await act(async () => {});
+
+    const marker = canvasContainer.querySelector<HTMLButtonElement>('[data-feature-id="room"]');
+    expect(marker).not.toBeNull();
+    marker!.focus();
+    expect(document.activeElement).toBe(marker);
+
+    rerender(createElement(Harness, { selectedFeatureId: "room" }));
+    await act(async () => {});
+    expect(document.activeElement).toBe(
+      canvasContainer.querySelector('[data-feature-id="room"]'),
+    );
+    expect(
+      canvasContainer
+        .querySelector('[data-feature-id="room"]')
+        ?.classList.contains("indoor-marker--selected"),
+    ).toBe(true);
+
+    rerender(createElement(Harness, { selectedFeatureId: null }));
+    await act(async () => {});
+    expect(document.activeElement).toBe(
+      canvasContainer.querySelector('[data-feature-id="room"]'),
+    );
+
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    expect(focusFeatureMarker("room", canvasContainer)).toBe(true);
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    expect(focusFeatureMarker("missing", canvasContainer)).toBe(false);
+    focusSpy.mockRestore();
+    canvasContainer.remove();
   });
 });
 

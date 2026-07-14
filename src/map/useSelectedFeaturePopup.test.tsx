@@ -81,6 +81,13 @@ function venue(features: ViewerFeature[]): LoadedVenue {
   };
 }
 
+function fakeMap(): { map: MapLibreMap; canvas: HTMLElement } {
+  const canvas = document.createElement("div");
+  document.body.append(canvas);
+  const map = { getCanvasContainer: () => canvas } as unknown as MapLibreMap;
+  return { map, canvas };
+}
+
 function Harness({
   loaded,
   selectedFeatureId,
@@ -95,7 +102,7 @@ function Harness({
   onClose?: () => void;
 }) {
   useSelectedFeaturePopup({
-    map: {} as MapLibreMap,
+    map: fakeMap().map,
     venue: loaded,
     selectedFeatureId,
     locale,
@@ -119,7 +126,7 @@ describe("useSelectedFeaturePopup", () => {
   it("anchors desktop content and replaces it on locale or selection changes", async () => {
     popupMocks.instances.length = 0;
     const loaded = venue([feature("one"), feature("two", [140, 36])]);
-    const map = {} as MapLibreMap;
+    const map = fakeMap().map;
     function Direct({ id, locale }: { id: string; locale: "ja" | "en" }) {
       useSelectedFeaturePopup({ map, venue: loaded, selectedFeatureId: id, locale, compact: false, onClose: () => {} });
       return null;
@@ -149,5 +156,44 @@ describe("useSelectedFeaturePopup", () => {
     expect(popupMocks.instances[0]?.removed).toBe(true);
     unmount();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores marker focus before dispatching close from both close paths", async () => {
+    popupMocks.instances.length = 0;
+    const { map, canvas } = fakeMap();
+    const marker = document.createElement("button");
+    marker.dataset.featureId = "one";
+    canvas.append(marker);
+
+    const loaded = venue([feature("one")]);
+    const onClose = vi.fn(() => {
+      expect(document.activeElement).toBe(marker);
+    });
+    function Direct({ onClose }: { onClose: () => void }) {
+      useSelectedFeaturePopup({
+        map,
+        venue: loaded,
+        selectedFeatureId: "one",
+        locale: "en",
+        compact: false,
+        onClose,
+      });
+      return null;
+    }
+
+    // Explicit content close.
+    const first = render(<Direct onClose={onClose} />);
+    await screen.findByRole("button", { name: "Close details" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Close details" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    first.unmount();
+
+    // MapLibre popup close event (e.g. map-background click).
+    onClose.mockClear();
+    render(<Direct onClose={onClose} />);
+    await waitFor(() => expect(popupMocks.instances.at(-1)?.map).toBe(map));
+    popupMocks.instances.at(-1)?.close?.();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    canvas.remove();
   });
 });
