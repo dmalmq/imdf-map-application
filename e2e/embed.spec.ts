@@ -179,11 +179,20 @@ test.describe("embed deep links", () => {
     await page.keyboard.press("Escape");
     await pickFilter(page, "Facilities");
 
-    // 2. Selection opens the bottom sheet, not a MapLibre popup.
+    // 2. Selection opens the floating place card, not a MapLibre popup, and
+    //    it sits above the bottom search bar without covering it.
     await markerByLabel(page, AMENITY_EN).click();
     const sheet = page.locator(".selected-feature-sheet");
     await expect(sheet).toBeVisible();
     await expect(page.locator(".maplibregl-popup")).toHaveCount(0);
+    await expect(searchInput(page)).toBeVisible();
+    const sheetBox = await sheet.boundingBox();
+    expect(sheetBox).not.toBeNull();
+    expect(sheetBox!.y + sheetBox!.height).toBeLessThanOrEqual(controlBox!.y);
+    // The selected marker stays visible above the card.
+    const markerBox = await markerByLabel(page, AMENITY_EN).boundingBox();
+    expect(markerBox).not.toBeNull();
+    expect(markerBox!.y + markerBox!.height).toBeLessThanOrEqual(sheetBox!.y);
 
     // 3. The sheet is bounded and dismissible.
     const sheetHeight = await sheet.evaluate((element) => element.getBoundingClientRect().height);

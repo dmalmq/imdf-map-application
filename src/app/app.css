@@ -474,20 +474,20 @@ button {
   width: 100%;
 }
 
+/* Floating place card above the bottom search bar (compact-only surface). */
 .selected-feature-sheet {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 8px;
+  right: 8px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   z-index: var(--z-selected-surface);
   display: flex;
   max-height: min(60%, 480px);
-  border-top: 1px solid var(--color-border);
-  border-radius: 16px 16px 0 0;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
   background: var(--color-panel);
   color: var(--color-text);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  box-shadow: 0 -8px 24px rgb(0 0 0 / 0.12);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
   transition: transform 180ms ease, opacity 180ms ease;
 }
 
@@ -907,11 +907,6 @@ button {
   /* Keep MapLibre zoom controls and attribution clear of the search bar. */
   .map-stage .maplibregl-ctrl-bottom-right {
     margin-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-  }
-
-  /* The open sheet owns the bottom edge and covers bottom controls. */
-  .selected-feature-sheet {
-    z-index: 35;
   }
 }
 

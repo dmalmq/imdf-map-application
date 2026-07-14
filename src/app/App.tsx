@@ -46,6 +46,9 @@ const ui = {
   empty: { ja: "会場が未読み込みです", en: "No venue loaded" },
 } as const;
 
+/** Compact sheet floats above the bottom search bar (CSS `bottom: 72px`). */
+const SHEET_BOTTOM_CLEARANCE = 72;
+
 
 function useCompactLayout(rootRef: RefObject<HTMLDivElement | null>): boolean {
   const [compact, setCompact] = useState(false);
@@ -425,7 +428,9 @@ export function App() {
                 theme={theme}
                 searchCategory={venueState.searchCategory}
                 compact={compact}
-                bottomPadding={compact ? sheetHeight : 0}
+                bottomPadding={
+                  compact && sheetHeight > 0 ? sheetHeight + SHEET_BOTTOM_CLEARANCE : 0
+                }
                 onSelectFeature={onMapSelectFeature}
               />
               {compact && selectedContent !== null && venueState.selectedFeatureId !== null ? (
