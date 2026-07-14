@@ -63,7 +63,7 @@ describe("collectMarkerFeatures", () => {
       feature("u-restroom", "unit", "restroom.female"),
       feature("o-opening", "opening", null),
     ]);
-    const ids = collectMarkerFeatures(venue, LEVEL, null).map((f) => f.id);
+    const ids = collectMarkerFeatures(venue, LEVEL, null, "all").map((f) => f.id);
     expect(ids).toEqual([
       "a-amenity",
       "u-elevator",
@@ -89,7 +89,7 @@ describe("collectMarkerFeatures", () => {
         sourceProperties: { unit_ids: ["u-elevator"] },
       }),
     ]);
-    const ids = collectMarkerFeatures(venue, LEVEL, null).map((f) => f.id);
+    const ids = collectMarkerFeatures(venue, LEVEL, null, "all").map((f) => f.id);
     expect(ids).toEqual(["a-unlinked", "u-elevator", "a-nonbubble"]);
   });
 
@@ -101,7 +101,7 @@ describe("collectMarkerFeatures", () => {
       feature("u-nonpublic-unnamed", "unit", "nonpublic", { labels: {} }),
       feature("u-walkway-unnamed", "unit", "walkway", { labels: {} }),
     ]);
-    const ids = collectMarkerFeatures(venue, LEVEL, null).map((f) => f.id);
+    const ids = collectMarkerFeatures(venue, LEVEL, null, "all").map((f) => f.id);
     expect(ids).toEqual(["u-room-named", "u-nonpublic-unnamed", "u-room-unnamed"]);
   });
 
@@ -111,7 +111,7 @@ describe("collectMarkerFeatures", () => {
       crowd.push(feature(`occ-${String(i).padStart(3, "0")}`, "occupant", null));
     }
     const venue = venueWith([...crowd, feature("u-elevator", "unit", "elevator")]);
-    const result = collectMarkerFeatures(venue, LEVEL, null);
+    const result = collectMarkerFeatures(venue, LEVEL, null, "all");
     expect(result).toHaveLength(200);
     expect(result[0]!.id).toBe("u-elevator");
   });
@@ -124,7 +124,7 @@ describe("collectMarkerFeatures", () => {
     features.push(feature("u-room-a", "unit", "room"));
     features.push(feature("u-room-b", "unit", "room"));
     const venue = venueWith(features);
-    const ids = collectMarkerFeatures(venue, LEVEL, null).map((f) => f.id);
+    const ids = collectMarkerFeatures(venue, LEVEL, null, "all").map((f) => f.id);
     expect(ids).toHaveLength(200);
     expect(ids).toContain("u-room-a");
     expect(ids).not.toContain("u-room-b");
@@ -137,7 +137,7 @@ describe("collectMarkerFeatures", () => {
     }
     features.push(feature("u-room-z", "unit", "room"));
     const venue = venueWith(features);
-    const ids = collectMarkerFeatures(venue, LEVEL, "u-room-z").map((f) => f.id);
+    const ids = collectMarkerFeatures(venue, LEVEL, "u-room-z", "all").map((f) => f.id);
     expect(ids).toHaveLength(200);
     expect(ids[0]).toBe("u-room-z");
   });
@@ -152,7 +152,7 @@ describe("collectMarkerFeatures", () => {
       );
     }
     features.push(feature("z-named-room", "unit", "room"));
-    const ids = collectMarkerFeatures(venueWith(features), LEVEL, null).map((f) => f.id);
+    const ids = collectMarkerFeatures(venueWith(features), LEVEL, null, "all").map((f) => f.id);
     expect(ids).toHaveLength(200);
     expect(ids).toContain("z-named-room");
   });
@@ -162,8 +162,35 @@ describe("collectMarkerFeatures", () => {
       feature("u-stairs-here", "unit", "stairs"),
       feature("u-stairs-there", "unit", "stairs", { levelId: "level-2" }),
     ]);
-    const ids = collectMarkerFeatures(venue, LEVEL, null).map((f) => f.id);
+    const ids = collectMarkerFeatures(venue, LEVEL, null, "all").map((f) => f.id);
     expect(ids).toEqual(["u-stairs-here"]);
+  });
+
+  it("filters markers by search category and only promotes pedestrian openings in gates", () => {
+    const venue = venueWith([
+      feature("shop", "occupant", "shopping"),
+      feature("amenity", "amenity", "information"),
+      feature("kiosk", "kiosk", null),
+      feature("elevator", "unit", "elevator"),
+      feature("walkway", "unit", "walkway"),
+      feature("pedestrian-opening", "opening", "pedestrian"),
+      feature("service-opening", "opening", "service"),
+    ]);
+
+    expect(collectMarkerFeatures(venue, LEVEL, null, "shops").map((entry) => entry.id)).toEqual([
+      "shop",
+    ]);
+    expect(collectMarkerFeatures(venue, LEVEL, null, "facilities").map((entry) => entry.id)).toEqual([
+      "elevator",
+      "amenity",
+      "kiosk",
+    ]);
+    expect(collectMarkerFeatures(venue, LEVEL, null, "gates").map((entry) => entry.id)).toEqual([
+      "pedestrian-opening",
+    ]);
+    expect(collectMarkerFeatures(venue, LEVEL, null, "all").map((entry) => entry.id)).not.toContain(
+      "pedestrian-opening",
+    );
   });
 });
 
@@ -190,6 +217,15 @@ describe("markerLabelFor", () => {
         "ja",
       ),
     ).toBe("Women's Restroom");
+  });
+
+  it("labels unnamed pedestrian openings as Entrance or 入口", () => {
+    expect(markerLabelFor(feature("gate", "opening", "pedestrian", { labels: {} }), "en", "ja")).toBe(
+      "Entrance",
+    );
+    expect(markerLabelFor(feature("gate", "opening", "pedestrian", { labels: {} }), "ja", "en")).toBe(
+      "入口",
+    );
   });
 });
 
@@ -257,6 +293,7 @@ describe("useFeatureMarkers", () => {
         levelId: LEVEL,
         locale: "en",
         selectedFeatureId: null,
+        searchCategory: "all",
         onSelect: vi.fn(),
       });
       return null;

@@ -12,6 +12,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { LocaleCode, LoadedVenue } from "../imdf/types";
+import type { SearchCategory } from "../search/searchCategories";
 import type { ViewerTheme } from "../theme/types";
 import { buildIndoorStyle, INDOOR_SOURCE_ID } from "./buildIndoorStyle";
 import { buildRenderFeatures } from "./buildRenderFeatures";
@@ -27,6 +28,7 @@ export interface IndoorMapProps {
   selectedFeatureId: string | null;
   locale: LocaleCode;
   theme: ViewerTheme;
+  searchCategory: SearchCategory;
   /** null = background click */
   onSelectFeature: (featureId: string | null) => void;
 }
@@ -187,6 +189,7 @@ export function IndoorMap({
   selectedFeatureId,
   locale,
   theme,
+  searchCategory,
   onSelectFeature,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -216,6 +219,7 @@ export function IndoorMap({
     levelId,
     locale,
     selectedFeatureId,
+    searchCategory,
     onSelect: onMarkerSelect,
   });
 

@@ -165,6 +165,7 @@ vi.mock("../map/IndoorMap", () => ({
         data-selected-feature-id={props.selectedFeatureId ?? ""}
         data-locale={props.locale}
         data-theme-id={props.theme.id}
+        data-search-category={props.searchCategory}
         data-identity={identityRef.current.n}
       >
         <button

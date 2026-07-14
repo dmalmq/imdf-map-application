@@ -456,6 +456,7 @@ export function App() {
                 selectedFeatureId={venueState.selectedFeatureId}
                 locale={locale}
                 theme={theme}
+                searchCategory={venueState.searchCategory}
                 onSelectFeature={onMapSelectFeature}
               />
               <div className="map-stage__levels">

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { localizedLabel } from "../imdf/localize";
 import type { FeatureType, LoadedVenue, LocaleCode, ViewerFeature } from "../imdf/types";
-import { isUnitMarkerEligible } from "../search/searchCategories";
+import { isUnitMarkerEligible, matchesSearchCategory, type SearchCategory } from "../search/searchCategories";
 
 /** Overlay container class hosting all feature markers. */
 export const MARKER_OVERLAY_CLASS = "indoor-marker-overlay";
@@ -129,6 +129,13 @@ export function markerLabelFor(
   ) {
     return categoryLabelFor(feature.category, locale) ?? feature.category;
   }
+  if (
+    feature.featureType === "opening" &&
+    (feature.category?.startsWith("pedestrian") ?? false) &&
+    Object.keys(feature.labels).length === 0
+  ) {
+    return locale === "ja" ? "入口" : "Entrance";
+  }
   return localizedLabel(feature.labels, locale, feature.id, manifestLanguage);
 }
 
@@ -160,6 +167,7 @@ export interface UseFeatureMarkersArgs {
   levelId: string;
   locale: LocaleCode;
   selectedFeatureId: string | null;
+  searchCategory: SearchCategory;
   /** Stable callback; marker click selects the feature. */
   onSelect: (featureId: string) => void;
 }
@@ -178,7 +186,9 @@ export function collectMarkerFeatures(
   venue: LoadedVenue,
   levelId: string,
   selectedFeatureId: string | null,
+  category: SearchCategory,
 ): ViewerFeature[] {
+  const focused = category !== "all";
   const unitBubbles: ViewerFeature[] = [];
   const amenityBubbles: ViewerFeature[] = [];
   const pills: ViewerFeature[] = [];
@@ -189,7 +199,9 @@ export function collectMarkerFeatures(
 
   for (const feature of venue.featuresById.values()) {
     const markerUnit = isUnitMarkerEligible(feature);
-    if (MARKER_FEATURE_TYPES[feature.featureType] !== true && !markerUnit) {
+    const defaultMarker = MARKER_FEATURE_TYPES[feature.featureType] === true || markerUnit;
+    const focusedMarker = focused && matchesSearchCategory(feature, category);
+    if (!(focused ? focusedMarker : defaultMarker)) {
       continue;
     }
     if (feature.center == null) {
@@ -267,6 +279,7 @@ export function useFeatureMarkers({
   levelId,
   locale,
   selectedFeatureId,
+  searchCategory,
   onSelect,
 }: UseFeatureMarkersArgs): void {
   useEffect(() => {
@@ -315,7 +328,7 @@ export function useFeatureMarkers({
         return;
       }
 
-      const features = collectMarkerFeatures(venue, levelId, selectedFeatureId);
+      const features = collectMarkerFeatures(venue, levelId, selectedFeatureId, searchCategory);
       const manifestLanguage = venue.manifest.language;
       for (const feature of features) {
         const center = feature.center;
@@ -381,5 +394,5 @@ export function useFeatureMarkers({
       map.off("resize", reposition);
       overlay.remove();
     };
-  }, [map, venue, levelId, locale, selectedFeatureId, onSelect]);
+  }, [map, venue, levelId, locale, selectedFeatureId, searchCategory, onSelect]);
 }
