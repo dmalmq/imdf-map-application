@@ -384,6 +384,7 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
       id: feature.id,
       ordinal,
       label: feature.labels,
+      shortName: localizedRecord(feature.sourceProperties["short_name"]),
     });
   }
   levels.sort((a, b) => b.ordinal - a.ordinal);

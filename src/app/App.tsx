@@ -15,6 +15,7 @@ import { LevelSwitcher } from "../components/LevelSwitcher";
 import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { ArchiveError } from "../errors/ArchiveError";
+import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
 import { loadImdfArchive } from "../imdf/loadImdfArchive";
 import { localizedLabel } from "../imdf/localize";
 import type { SearchResult } from "../imdf/types";
@@ -28,6 +29,7 @@ import {
 } from "../state/viewerReducer";
 import { themes } from "../theme/presets";
 import type { ThemeId } from "../theme/types";
+import { parseViewerParams } from "./viewerParams";
 
 const ui = {
   product: { ja: "IMDF Indoor Viewer", en: "IMDF Indoor Viewer" },
@@ -143,7 +145,13 @@ function liveMessage(state: ViewerState): string {
 }
 
 export function App() {
-  const [state, dispatch] = useReducer(viewerReducer, initialViewerState);
+  const params = useMemo(() => parseViewerParams(window.location.search), []);
+  const embed = params.embed;
+  const [state, dispatch] = useReducer(viewerReducer, params, (p) => ({
+    ...initialViewerState,
+    ...(p.locale !== null ? { locale: p.locale } : {}),
+    ...(p.themeId !== null ? { themeId: p.themeId } : {}),
+  }));
   const attemptTokenRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,37 +204,65 @@ export function App() {
     return localizedLabel(level.label, locale, level.id, venueState.loadedVenue.manifest.language);
   }, [venueState, locale]);
 
-  const handleFile = useCallback((file: File) => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const token = attemptTokenRef.current + 1;
-    attemptTokenRef.current = token;
+  const runLoad = useCallback(
+    (fileName: string, getFile: (signal: AbortSignal) => Promise<File>, requestedLevel?: string) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const token = attemptTokenRef.current + 1;
+      attemptTokenRef.current = token;
 
-    dispatch({ type: "load_started", fileName: file.name });
+      dispatch({ type: "load_started", fileName });
 
-    void loadImdfArchive(file, controller.signal)
-      .then((venue) => {
-        if (token !== attemptTokenRef.current) {
-          return;
-        }
-        dispatch({ type: "load_succeeded", fileName: file.name, venue });
-      })
-      .catch((error: unknown) => {
-        if (token !== attemptTokenRef.current) {
-          return;
-        }
-        if (isAbortError(error)) {
-          return;
-        }
-        dispatch({ type: "load_failed", fileName: file.name, error: toArchiveError(error) });
-      })
-      .finally(() => {
-        if (token === attemptTokenRef.current) {
-          abortRef.current = null;
-        }
-      });
-  }, []);
+      void getFile(controller.signal)
+        .then((file) => loadImdfArchive(file, controller.signal))
+        .then((venue) => {
+          if (token !== attemptTokenRef.current) {
+            return;
+          }
+          dispatch({
+            type: "load_succeeded",
+            fileName,
+            venue,
+            ...(requestedLevel !== undefined ? { requestedLevel } : {}),
+          });
+        })
+        .catch((error: unknown) => {
+          if (token !== attemptTokenRef.current) {
+            return;
+          }
+          if (isAbortError(error)) {
+            return;
+          }
+          dispatch({ type: "load_failed", fileName, error: toArchiveError(error) });
+        })
+        .finally(() => {
+          if (token === attemptTokenRef.current) {
+            abortRef.current = null;
+          }
+        });
+    },
+    [],
+  );
+
+  const handleFile = useCallback(
+    (file: File) => {
+      runLoad(file.name, () => Promise.resolve(file));
+    },
+    [runLoad],
+  );
+
+  const loadFromSrc = useCallback(() => {
+    if (params.src === null) {
+      return;
+    }
+    const src = params.src;
+    runLoad(fileNameFromSrc(src), (signal) => fetchImdfFile(src, signal), params.level ?? undefined);
+  }, [runLoad, params]);
+
+  useEffect(() => {
+    loadFromSrc();
+  }, [loadFromSrc]);
 
   useEffect(() => {
     return () => {
@@ -336,10 +372,16 @@ export function App() {
     ) : null;
 
   const showMap = venueState !== null;
-  const showEmptyDropzone = state.status === "empty" || (state.status === "loading" && !state.previous);
+  const dragEnabled = showMap && !embed;
+  const showEmptyDropzone =
+    !embed && (state.status === "empty" || (state.status === "loading" && !state.previous));
+  const showEmbedLoading = embed && state.status === "loading" && !state.previous;
   const showErrorBanner = state.status === "error";
   const showReplaceOverlay =
-    mapDragActive && (state.status === "ready" || (state.status === "loading" && Boolean(state.previous)));
+    mapDragActive &&
+    !embed &&
+    (state.status === "ready" || (state.status === "loading" && Boolean(state.previous)));
+  const onRetry = params.src !== null ? loadFromSrc : openPicker;
 
   return (
     <div className={compact ? "app app--compact" : "app"} style={themeStyle(state.themeId)}>
@@ -362,24 +404,26 @@ export function App() {
         }}
       />
 
-      <header className="top-bar">
-        <div className="top-bar__brand">
-          <span className="top-bar__product">{ui.product[locale]}</span>
-          {!compact ? venueMeta : null}
-        </div>
-        <div className="top-bar__actions">
-          {!compact ? (
-            <>
-              {localeSwitcher}
-              {themeSwitcher}
-            </>
-          ) : null}
-          {openButton}
-        </div>
-      </header>
+      {!embed ? (
+        <header className="top-bar">
+          <div className="top-bar__brand">
+            <span className="top-bar__product">{ui.product[locale]}</span>
+            {!compact ? venueMeta : null}
+          </div>
+          <div className="top-bar__actions">
+            {!compact ? (
+              <>
+                {localeSwitcher}
+                {themeSwitcher}
+              </>
+            ) : null}
+            {openButton}
+          </div>
+        </header>
+      ) : null}
 
       <div className="app__body">
-        {showMap ? (
+        {showMap && !embed ? (
           <ExplorerSidebar
             locale={locale}
             searchText={venueState.searchText}
@@ -400,9 +444,9 @@ export function App() {
 
         <main
           className="map-stage"
-          onDragOver={showMap ? onMapDragOver : undefined}
-          onDragLeave={showMap ? onMapDragLeave : undefined}
-          onDrop={showMap ? onMapDrop : undefined}
+          onDragOver={dragEnabled ? onMapDragOver : undefined}
+          onDragLeave={dragEnabled ? onMapDragLeave : undefined}
+          onDrop={dragEnabled ? onMapDrop : undefined}
         >
           {showMap ? (
             <>
@@ -457,9 +501,18 @@ export function App() {
             />
           ) : null}
 
+          {showEmbedLoading ? (
+            <div className="map-stage__loading" role="status">
+              <span className="imdf-dropzone__spinner" aria-hidden="true" />
+              <span>
+                {ui.loading[locale]}: {state.status === "loading" ? state.fileName : ""}
+              </span>
+            </div>
+          ) : null}
+
           {showErrorBanner ? (
             <div className="map-stage__error">
-              <ViewerErrorNotice error={state.error} locale={locale} onRetry={openPicker} />
+              <ViewerErrorNotice error={state.error} locale={locale} onRetry={onRetry} />
             </div>
           ) : null}
         </main>

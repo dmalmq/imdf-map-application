@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IndoorMapProps } from "../map/IndoorMap";
+import type * as FetchImdfArchiveModule from "../imdf/fetchImdfArchive";
 import type {
   LoadedVenue,
   SearchEntry,
@@ -17,12 +18,14 @@ const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
   ordinal: 1,
   label: { ja: "2F", en: "2F" },
+  shortName: { ja: "2F", en: "2F" },
 };
 
 const LEVEL_1F: ViewerLevel = {
   id: "b1000002-0000-4000-8000-00000000001f",
   ordinal: 0,
   label: { ja: "1F", en: "1F" },
+  shortName: { ja: "1F", en: "1F" },
 };
 
 const LEVELS: ViewerLevel[] = [LEVEL_2F, LEVEL_1F];
@@ -139,6 +142,16 @@ const loadImdfArchiveMock = vi.fn();
 vi.mock("../imdf/loadImdfArchive", () => ({
   loadImdfArchive: (...args: unknown[]) => loadImdfArchiveMock(...args),
 }));
+
+const fetchImdfFileMock = vi.fn();
+
+vi.mock("../imdf/fetchImdfArchive", async (importOriginal) => {
+  const actual = await importOriginal<typeof FetchImdfArchiveModule>();
+  return {
+    fileNameFromSrc: actual.fileNameFromSrc,
+    fetchImdfFile: (...args: unknown[]) => fetchImdfFileMock(...args),
+  };
+});
 
 vi.mock("../map/IndoorMap", () => ({
   IndoorMap: function IndoorMapStub(props: IndoorMapProps) {
@@ -415,5 +428,83 @@ describe("App", () => {
     const details = screen.getByRole("region", { name: "詳細" });
     expect(within(details).getByText("駅ナカショップ")).toBeTruthy();
     expect(within(details).getByText("Mo-Fr 10:00-20:00")).toBeTruthy();
+  });
+});
+
+describe("App deep links", () => {
+  beforeEach(() => {
+    loadImdfArchiveMock.mockReset();
+    fetchImdfFileMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("embed deep link hides chrome, auto-loads src, and selects the requested level", async () => {
+    const venue = buildMinimalVenue();
+    fetchImdfFileMock.mockResolvedValue(zipFile("minimal.zip"));
+    loadImdfArchiveMock.mockResolvedValue(venue);
+    window.history.replaceState(null, "", "/?src=/venues/minimal.zip&level=2f&embed=1");
+
+    const { container } = render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+
+    expect(fetchImdfFileMock).toHaveBeenCalledWith("/venues/minimal.zip", expect.any(AbortSignal));
+    // Deep-linked level 2f (short_name 2F) instead of the default ordinal-0 1F.
+    expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
+    expect(screen.getByRole("button", { name: "2F" }).getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector(".top-bar")).toBeNull();
+    expect(container.querySelector(".explorer-sidebar")).toBeNull();
+    expect(container.querySelector('input[type="file"]')).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "IMDF ZIP を開く" })).toBeNull();
+  });
+
+  it("lang and theme params initialize locale and theme", async () => {
+    const venue = buildMinimalVenue();
+    fetchImdfFileMock.mockResolvedValue(zipFile("minimal.zip"));
+    loadImdfArchiveMock.mockResolvedValue(venue);
+    window.history.replaceState(
+      null,
+      "",
+      "/?src=/venues/minimal.zip&lang=en&theme=customer-blue",
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+
+    const stub = screen.getByTestId("indoor-map-stub");
+    expect(stub.getAttribute("data-locale")).toBe("en");
+    expect(stub.getAttribute("data-theme-id")).toBe("customer-blue");
+  });
+
+  it("fetch failure shows fetch_failed copy and retry re-fetches", async () => {
+    const user = userEvent.setup();
+    fetchImdfFileMock.mockRejectedValueOnce(new ArchiveError("fetch_failed", "download failed"));
+    window.history.replaceState(null, "", "/?src=/venues/minimal.zip&embed=1");
+
+    render(<App />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(archiveErrorCopy.fetch_failed);
+    expect(fetchImdfFileMock).toHaveBeenCalledTimes(1);
+
+    const venue = buildMinimalVenue();
+    fetchImdfFileMock.mockResolvedValueOnce(zipFile("minimal.zip"));
+    loadImdfArchiveMock.mockResolvedValue(venue);
+
+    await user.click(screen.getByRole("button", { name: "再試行" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+    expect(fetchImdfFileMock).toHaveBeenCalledTimes(2);
   });
 });

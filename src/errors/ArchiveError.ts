@@ -8,7 +8,8 @@ export type ArchiveErrorCode =
   | "invalid_manifest_version"
   | "invalid_feature_collection"
   | "duplicate_feature_id"
-  | "worker_failed";
+  | "worker_failed"
+  | "fetch_failed";
 
 export class ArchiveError extends Error {
   constructor(
@@ -34,4 +35,6 @@ export const archiveErrorCopy: Record<ArchiveErrorCode, string> = {
   invalid_feature_collection: "One of the IMDF GeoJSON files has an invalid feature collection.",
   duplicate_feature_id: "The archive contains the same IMDF feature ID more than once.",
   worker_failed: "The venue could not be processed. Try the archive again.",
+  fetch_failed:
+    "The IMDF archive could not be downloaded. Check the link and the host\u2019s CORS settings.",
 };

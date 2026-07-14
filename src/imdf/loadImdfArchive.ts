@@ -26,7 +26,8 @@ function isArchiveErrorCode(value: unknown): value is ArchiveErrorCode {
     value === "invalid_manifest_version" ||
     value === "invalid_feature_collection" ||
     value === "duplicate_feature_id" ||
-    value === "worker_failed"
+    value === "worker_failed" ||
+    value === "fetch_failed"
   );
 }
 

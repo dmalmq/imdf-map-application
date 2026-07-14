@@ -3,6 +3,7 @@ import { ArchiveError } from "../errors/ArchiveError";
 import type { LoadedVenue, ViewerFeature, ViewerLevel } from "../imdf/types";
 import {
   initialViewerState,
+  matchLevelId,
   pickInitialLevelId,
   viewerReducer,
   type ReadyVenueState,
@@ -10,7 +11,7 @@ import {
 } from "./viewerReducer";
 
 function level(id: string, ordinal: number): ViewerLevel {
-  return { id, ordinal, label: { en: id } };
+  return { id, ordinal, label: { en: id }, shortName: {} };
 }
 
 function venueFeature(): ViewerFeature {
@@ -96,6 +97,50 @@ describe("pickInitialLevelId", () => {
   });
 });
 
+describe("matchLevelId", () => {
+  const shortNamed: ViewerLevel[] = [
+    { id: "lvl-2f", ordinal: 1, label: { ja: "2階", en: "Level 2" }, shortName: { ja: "2F", en: "2F" } },
+    { id: "lvl-1f", ordinal: 0, label: { ja: "1階", en: "Level 1" }, shortName: { ja: "1F", en: "1F" } },
+    { id: "lvl-b1", ordinal: -1, label: { ja: "地下1階", en: "Basement 1" }, shortName: { en: "B1" } },
+  ];
+
+  it("matches a level id", () => {
+    expect(matchLevelId(shortNamed, "lvl-1f")).toBe("lvl-1f");
+  });
+
+  it("matches short_name across locales case-insensitively", () => {
+    expect(matchLevelId(shortNamed, "b1")).toBe("lvl-b1");
+    expect(matchLevelId(shortNamed, "2f")).toBe("lvl-2f");
+  });
+
+  it("folds full-width characters via NFKC", () => {
+    expect(matchLevelId(shortNamed, "\uFF11\uFF26")).toBe("lvl-1f");
+  });
+
+  it("falls back to name labels", () => {
+    expect(matchLevelId(shortNamed, "basement 1")).toBe("lvl-b1");
+    expect(matchLevelId(shortNamed, "地下1階")).toBe("lvl-b1");
+  });
+
+  it("returns null when nothing matches", () => {
+    expect(matchLevelId(shortNamed, "5f")).toBeNull();
+    expect(matchLevelId([], "1f")).toBeNull();
+  });
+
+  it("prefers an id match over a short_name collision", () => {
+    const colliding: ViewerLevel[] = [
+      { id: "b1", ordinal: 2, label: {}, shortName: {} },
+      { id: "other", ordinal: -1, label: {}, shortName: { en: "B1" } },
+    ];
+    expect(matchLevelId(colliding, "B1")).toBe("b1");
+  });
+
+  it("never interprets a bare number as an ordinal", () => {
+    // "1" is nobody's id/short_name/name here; ordinal 1 exists but must not match.
+    expect(matchLevelId(shortNamed, "1")).toBeNull();
+  });
+});
+
 describe("viewerReducer load lifecycle", () => {
   it("load_started from empty has no previous", () => {
     const next = viewerReducer(initialViewerState, {
@@ -159,6 +204,40 @@ describe("viewerReducer load lifecycle", () => {
     expect(next.status).toBe("ready");
     if (next.status !== "ready") return;
     expect(next.selectedLevelId).toBe("hi");
+  });
+
+  it("load_succeeded with a matching requestedLevel selects it", () => {
+    const loading = viewerReducer(initialViewerState, {
+      type: "load_started",
+      fileName: "a.zip",
+    });
+    const venue = makeVenue(levels1F);
+    const next = viewerReducer(loading, {
+      type: "load_succeeded",
+      fileName: "a.zip",
+      venue,
+      requestedLevel: "b1000001-0000-4000-8000-0000000000b1",
+    });
+    expect(next.status).toBe("ready");
+    if (next.status !== "ready") return;
+    expect(next.selectedLevelId).toBe("b1000001-0000-4000-8000-0000000000b1");
+  });
+
+  it("load_succeeded with an unknown requestedLevel falls back to the default level", () => {
+    const loading = viewerReducer(initialViewerState, {
+      type: "load_started",
+      fileName: "a.zip",
+    });
+    const venue = makeVenue(levels1F);
+    const next = viewerReducer(loading, {
+      type: "load_succeeded",
+      fileName: "a.zip",
+      venue,
+      requestedLevel: "nonexistent",
+    });
+    expect(next.status).toBe("ready");
+    if (next.status !== "ready") return;
+    expect(next.selectedLevelId).toBe(pickInitialLevelId(levels1F));
   });
 });
 

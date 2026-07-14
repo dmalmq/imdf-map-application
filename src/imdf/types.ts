@@ -47,6 +47,7 @@ export interface ViewerLevel {
   id: string;
   ordinal: number;
   label: Record<string, string>;
+  shortName: Record<string, string>;
 }
 
 export interface ViewerFeature {

@@ -32,7 +32,7 @@ export type ViewerState =
 
 export type ViewerAction =
   | { type: "load_started"; fileName: string }
-  | { type: "load_succeeded"; fileName: string; venue: LoadedVenue }
+  | { type: "load_succeeded"; fileName: string; venue: LoadedVenue; requestedLevel?: string }
   | { type: "load_failed"; fileName: string; error: ArchiveError }
   | { type: "select_level"; levelId: string }
   | { type: "select_feature"; featureId: string | null; levelId?: string }
@@ -64,6 +64,32 @@ export function pickInitialLevelId(levels: ViewerLevel[]): string {
     throw new Error("Venue has no levels");
   }
   return best.id;
+}
+
+/**
+ * Case/width-insensitive match of a deep-link level query against id,
+ * short_name, then name. Never interprets numbers as ordinals — IMDF ordinals
+ * are offset from display floor numbers.
+ */
+export function matchLevelId(levels: ViewerLevel[], query: string): string | null {
+  const normalize = (value: string): string => value.normalize("NFKC").trim().toLowerCase();
+  const wanted = normalize(query);
+  for (const level of levels) {
+    if (normalize(level.id) === wanted) {
+      return level.id;
+    }
+  }
+  for (const level of levels) {
+    if (Object.values(level.shortName).some((value) => normalize(value) === wanted)) {
+      return level.id;
+    }
+  }
+  for (const level of levels) {
+    if (Object.values(level.label).some((value) => normalize(value) === wanted)) {
+      return level.id;
+    }
+  }
+  return null;
 }
 
 function currentReadyState(state: ViewerState): ReadyVenueState | undefined {
@@ -112,7 +138,10 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
         locale: state.locale,
         fileName: action.fileName,
         loadedVenue: action.venue,
-        selectedLevelId: pickInitialLevelId(action.venue.levels),
+        selectedLevelId:
+          (action.requestedLevel !== undefined
+            ? matchLevelId(action.venue.levels, action.requestedLevel)
+            : null) ?? pickInitialLevelId(action.venue.levels),
         selectedFeatureId: null,
         searchText: "",
         searchCategory: "all",
