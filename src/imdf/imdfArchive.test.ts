@@ -24,6 +24,7 @@ configure({ useWebWorkers: false });
 const VENUE_JA = "東京駅テスト会場";
 const VENUE_EN = "Tokyo Station Test Venue";
 const VENUE_ID = "a1000001-0000-4000-8000-000000000001";
+const OCCUPANT_ID = "a1000008-0000-4000-8000-0000000000c1";
 
 function asFile(bytes: Uint8Array, name = "venue.zip"): File {
   // Copy into a fresh ArrayBuffer-backed view so File/Blob always receives a plain buffer.
@@ -501,5 +502,103 @@ describe("IMDF archive boundary (loadArchive)", () => {
     expect(unknown[0]?.archiveEntry).toBe("extra.txt");
     // Entry was not parsed as IMDF: venue still loads and retains fixture labels.
     expect(result.venue.venue.labels["en"]).toBe(VENUE_EN);
+  });
+
+  it("loads one valid viewer-enrichment.json into the normalized venue", async () => {
+    const bytes = await buildMinimalImdfZip({
+      extraEntries: {
+        "viewer-enrichment.json": JSON.stringify({
+          version: "1.0",
+          features: {
+            [OCCUPANT_ID]: { description: { en: "Concourse shop" } },
+          },
+        }),
+      },
+    });
+    const result = await tryLoadArchive(asFile(bytes));
+    expect(result.type).toBe("loaded");
+    if (result.type === "loaded") {
+      expect(result.venue.enrichmentByFeatureId.get(OCCUPANT_ID)?.description?.en).toBe(
+        "Concourse shop",
+      );
+      expect(
+        result.venue.warnings.some((warning) => warning.code === "unknown_archive_entry"),
+      ).toBe(false);
+    }
+  });
+
+  it("disables enrichment when case-insensitive duplicates are present", async () => {
+    const payload = JSON.stringify({
+      version: "1.0",
+      features: {
+        [OCCUPANT_ID]: { description: { en: "Should not load" } },
+      },
+    });
+    const bytes = await buildMinimalImdfZip({
+      extraEntries: {
+        "viewer-enrichment.json": payload,
+        "VIEWER-ENRICHMENT.JSON": payload,
+      },
+    });
+    const result = await tryLoadArchive(asFile(bytes));
+    expect(result.type).toBe("loaded");
+    if (result.type !== "loaded") {
+      return;
+    }
+    expect(result.venue.enrichmentByFeatureId.size).toBe(0);
+    const duplicates = result.venue.warnings.filter(
+      (warning) => warning.code === "duplicate_viewer_enrichment",
+    );
+    expect(duplicates).toHaveLength(1);
+    expect(
+      result.venue.warnings.some((warning) => warning.code === "unknown_archive_entry"),
+    ).toBe(false);
+  });
+
+  it("loads nonfatally with malformed viewer-enrichment.json", async () => {
+    const bytes = await buildMinimalImdfZip({
+      extraEntries: {
+        "viewer-enrichment.json": "{not-json",
+      },
+    });
+    const result = await tryLoadArchive(asFile(bytes));
+    expect(result.type).toBe("loaded");
+    if (result.type !== "loaded") {
+      return;
+    }
+    expect(result.venue.enrichmentByFeatureId.size).toBe(0);
+    const invalid = result.venue.warnings.filter(
+      (warning) => warning.code === "invalid_viewer_enrichment",
+    );
+    expect(invalid).toHaveLength(1);
+    expect(
+      result.venue.warnings.some((warning) => warning.code === "unknown_archive_entry"),
+    ).toBe(false);
+  });
+
+  it("loads nonfatally with unsupported viewer-enrichment version", async () => {
+    const bytes = await buildMinimalImdfZip({
+      extraEntries: {
+        "viewer-enrichment.json": JSON.stringify({
+          version: "9.9",
+          features: {
+            [OCCUPANT_ID]: { description: { en: "ignored" } },
+          },
+        }),
+      },
+    });
+    const result = await tryLoadArchive(asFile(bytes));
+    expect(result.type).toBe("loaded");
+    if (result.type !== "loaded") {
+      return;
+    }
+    expect(result.venue.enrichmentByFeatureId.size).toBe(0);
+    const invalid = result.venue.warnings.filter(
+      (warning) => warning.code === "invalid_viewer_enrichment",
+    );
+    expect(invalid).toHaveLength(1);
+    expect(
+      result.venue.warnings.some((warning) => warning.code === "unknown_archive_entry"),
+    ).toBe(false);
   });
 });

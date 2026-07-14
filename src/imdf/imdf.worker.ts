@@ -24,8 +24,10 @@ import type {
   FeatureType,
   ImdfManifest,
   ParsedImdfArchive,
+  ViewerEnrichmentEntry,
   ViewerWarning,
 } from "./types";
+import { parseViewerEnrichment } from "./viewerEnrichment";
 
 configure({ useWebWorkers: false });
 
@@ -56,6 +58,8 @@ const REQUIRED_FILES: Record<string, true> = {
   "venue.geojson": true,
   "address.geojson": true,
 };
+
+const VIEWER_ENRICHMENT_NAME = "viewer-enrichment.json";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -377,12 +381,17 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
 
       const folded = entry.filename.toLowerCase();
       if (seenNames.has(folded)) {
-        fail("invalid_archive", archiveErrorCopy.invalid_archive, {
-          entry: entry.filename,
-          reason: "duplicate_name",
-        });
+        // Enrichment duplicates are nonfatal and handled after the scan; every
+        // other case-folded collision remains a hard archive error.
+        if (folded !== VIEWER_ENRICHMENT_NAME) {
+          fail("invalid_archive", archiveErrorCopy.invalid_archive, {
+            entry: entry.filename,
+            reason: "duplicate_name",
+          });
+        }
+      } else {
+        seenNames.set(folded, true);
       }
-      seenNames.set(folded, true);
       fileEntries.push(entry);
     }
 
@@ -402,9 +411,66 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
     const totalTracker = { bytes: 0 };
     const collections: ParsedImdfArchive["collections"] = {};
     let manifest: ImdfManifest | undefined;
+    let enrichment: Record<string, ViewerEnrichmentEntry> | undefined;
+
+    const enrichmentMatches = fileEntries.filter(
+      (entry) => entry.filename.toLowerCase() === VIEWER_ENRICHMENT_NAME,
+    );
+    if (enrichmentMatches.length > 1) {
+      warnings.push({
+        code: "duplicate_viewer_enrichment",
+        message:
+          "Multiple viewer-enrichment.json entries found; enrichment was ignored.",
+        archiveEntry: VIEWER_ENRICHMENT_NAME,
+      });
+    } else if (enrichmentMatches.length === 1) {
+      const enrichmentEntry = enrichmentMatches[0]!;
+      try {
+        const text = await extractEntryText(enrichmentEntry, totalTracker);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text) as unknown;
+        } catch {
+          warnings.push({
+            code: "invalid_viewer_enrichment",
+            message: `Malformed viewer enrichment JSON in ${enrichmentEntry.filename}.`,
+            archiveEntry: enrichmentEntry.filename,
+          });
+          parsed = undefined;
+        }
+        if (parsed !== undefined) {
+          const parsedEnrichment = parseViewerEnrichment(parsed);
+          if (parsedEnrichment.warnings.length > 0) {
+            warnings.push(
+              ...parsedEnrichment.warnings.map((warning) => ({
+                ...warning,
+                archiveEntry: warning.archiveEntry ?? enrichmentEntry.filename,
+              })),
+            );
+          }
+          if (Object.keys(parsedEnrichment.entries).length > 0) {
+            enrichment = parsedEnrichment.entries;
+          }
+        }
+      } catch (error) {
+        // Size / path failures remain fatal ArchiveErrors; rethrow those.
+        if (error instanceof ArchiveError) {
+          throw error;
+        }
+        warnings.push({
+          code: "invalid_viewer_enrichment",
+          message: `Failed to read viewer enrichment from ${enrichmentEntry.filename}.`,
+          archiveEntry: enrichmentEntry.filename,
+        });
+      }
+    }
 
     for (const entry of fileEntries) {
       const lower = entry.filename.toLowerCase();
+      if (lower === VIEWER_ENRICHMENT_NAME) {
+        // Already handled above; never emit unknown_archive_entry for it.
+        continue;
+      }
       if (lower === "manifest.json") {
         const text = await extractEntryText(entry, totalTracker);
         const parsed = parseJson(text, entry.filename);
@@ -501,7 +567,7 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
       }
     }
 
-    const archive: ParsedImdfArchive = { manifest, collections };
+    const archive: ParsedImdfArchive = { manifest, collections, enrichment };
     const venue = normalizeVenue(archive);
     if (warnings.length > 0) {
       venue.warnings = [...warnings, ...venue.warnings];

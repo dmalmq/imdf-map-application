@@ -30,7 +30,9 @@ export type ViewerWarningCode =
   | "unresolved_reference"
   | "missing_level_geometry"
   | "missing_display_point"
-  | "unknown_archive_entry";
+  | "unknown_archive_entry"
+  | "invalid_viewer_enrichment"
+  | "duplicate_viewer_enrichment";
 
 export interface ImdfManifest {
   version: "1.0.0";
@@ -41,6 +43,20 @@ export interface ImdfManifest {
 export interface ParsedImdfArchive {
   manifest: ImdfManifest;
   collections: Partial<Record<FeatureType, GeoJSON.FeatureCollection>>;
+  enrichment?: Record<string, ViewerEnrichmentEntry>;
+}
+
+export interface ViewerEnrichmentImage {
+  src: string;
+  alt: Record<string, string>;
+}
+
+export interface ViewerEnrichmentEntry {
+  description?: Record<string, string>;
+  hours?: string;
+  phone?: string;
+  website?: string;
+  images?: [] | [ViewerEnrichmentImage];
 }
 
 export interface ViewerLevel {
@@ -102,5 +118,6 @@ export interface LoadedVenue {
   renderFeaturesByLevel: Map<string, GeoJSON.FeatureCollection>;
   searchEntries: SearchEntry[];
   boundsByLevel: Map<string, BoundsTuple>;
+  enrichmentByFeatureId: Map<string, ViewerEnrichmentEntry>;
   warnings: ViewerWarning[];
 }

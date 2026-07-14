@@ -134,6 +134,7 @@ function buildMinimalVenue(overrides?: Partial<LoadedVenue>): LoadedVenue {
       [LEVEL_1F.id, [139.766, 35.68, 139.768, 35.682]],
       [LEVEL_2F.id, [139.766, 35.68, 139.768, 35.682]],
     ]),
+    enrichmentByFeatureId: new Map(),
     warnings: WARNINGS,
     ...overrides,
   };

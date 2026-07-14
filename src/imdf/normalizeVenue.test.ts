@@ -283,6 +283,23 @@ describe("normalizeVenue", () => {
     expect(categories.has("restroom.female")).toBe(true);
     expect(categories.has("unenclosedarea")).toBe(true);
   });
+
+  it("normalizes missing enrichment to an empty map", async () => {
+    const venue = normalizeVenue(await loadMinimalArchive());
+    expect(venue.enrichmentByFeatureId).toBeInstanceOf(Map);
+    expect(venue.enrichmentByFeatureId.size).toBe(0);
+  });
+
+  it("copies archive enrichment into enrichmentByFeatureId by stable feature id", async () => {
+    const archive = await loadMinimalArchive();
+    archive.enrichment = {
+      [OCCUPANT_ID]: { description: { en: "Concourse shop" } },
+    };
+    const venue = normalizeVenue(archive);
+    expect(venue.enrichmentByFeatureId.get(OCCUPANT_ID)?.description?.en).toBe(
+      "Concourse shop",
+    );
+  });
 });
 
 describe("locale fallback chain (localize)", () => {

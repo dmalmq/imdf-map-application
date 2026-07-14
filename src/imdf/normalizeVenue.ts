@@ -469,6 +469,8 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
     }
   }
 
+  const enrichmentByFeatureId = new Map(Object.entries(archive.enrichment ?? {}));
+
   return {
     manifest: archive.manifest,
     venue,
@@ -477,6 +479,7 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
     renderFeaturesByLevel,
     searchEntries: buildSearchEntries(featuresById.values()),
     boundsByLevel,
+    enrichmentByFeatureId,
     warnings,
   };
 }

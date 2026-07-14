@@ -42,6 +42,7 @@ function makeVenue(
     renderFeaturesByLevel: new Map(),
     searchEntries: [],
     boundsByLevel: new Map(),
+    enrichmentByFeatureId: new Map(),
     warnings: [],
   };
 }
