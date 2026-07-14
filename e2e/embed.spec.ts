@@ -159,16 +159,23 @@ test.describe("embed deep links", () => {
     await page.goto(`/?src=${SRC_PARAM}&embed=1&lang=en`);
     await waitForReadyVenue(page);
 
-    // 1. Search and hamburger usable without horizontal overflow.
+    // 1. Search sits at the bottom, hamburger stays usable, no horizontal overflow.
     await expect(searchInput(page)).toBeVisible();
     await expect(menuTrigger(page)).toBeVisible();
+    const controlBox = await page.locator(".floating-search__control").boundingBox();
+    expect(controlBox).not.toBeNull();
+    expect(controlBox!.y).toBeGreaterThan(844 / 2);
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
 
     // Search text + focused category that still matches the amenity marker.
+    // The dropdown opens upward from the bottom-anchored control.
     await searchInput(page).fill("Rest");
+    const dropdownBox = await page.locator(".floating-search__dropdown").boundingBox();
+    expect(dropdownBox).not.toBeNull();
+    expect(dropdownBox!.y + dropdownBox!.height).toBeLessThanOrEqual(controlBox!.y);
     await page.keyboard.press("Escape");
     await pickFilter(page, "Facilities");
 

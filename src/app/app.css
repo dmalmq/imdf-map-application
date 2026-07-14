@@ -889,8 +889,29 @@ button {
     min-height: 0;
   }
 
+  /* Thumb-reachable bottom search bar; dropdown opens upward from it. */
   .floating-search {
-    max-width: calc(100% - 96px);
+    top: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    left: 12px;
+    right: 12px;
+    max-width: none;
+    flex-direction: column-reverse;
+  }
+
+  /* Floor pills sit above the bottom search bar. */
+  .map-stage__levels {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Keep MapLibre zoom controls and attribution clear of the search bar. */
+  .map-stage .maplibregl-ctrl-bottom-right {
+    margin-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* The open sheet owns the bottom edge and covers bottom controls. */
+  .selected-feature-sheet {
+    z-index: 35;
   }
 }
 

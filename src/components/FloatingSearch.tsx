@@ -36,8 +36,11 @@ export interface FloatingSearchProps {
 
 interface PopupPosition {
   top: number;
+  bottom: number;
   left: number;
   width: number;
+  /** Control sits in the lower viewport half: open the dropdown upward. */
+  up: boolean;
 }
 
 export function FloatingSearch({
@@ -59,7 +62,13 @@ export function FloatingSearch({
   const [resultsOpen, setResultsOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [position, setPosition] = useState<PopupPosition>({ top: 0, left: 0, width: 320 });
+  const [position, setPosition] = useState<PopupPosition>({
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: 320,
+    up: false,
+  });
   const visibleResults = results.slice(0, 50);
   const canOpenResults = value.trim() !== "" || category !== "all";
 
@@ -78,7 +87,13 @@ export function FloatingSearch({
     if (control === null) return;
     const update = () => {
       const rect = control.getBoundingClientRect();
-      setPosition({ top: rect.bottom + 8, left: rect.left, width: rect.width });
+      setPosition({
+        top: rect.bottom + 8,
+        bottom: window.innerHeight - rect.top + 8,
+        left: rect.left,
+        width: rect.width,
+        up: rect.top > window.innerHeight / 2,
+      });
     };
     update();
     const observer =
@@ -108,7 +123,12 @@ export function FloatingSearch({
       ? createPortal(
           <div
             className="floating-search__dropdown"
-            style={{ position: "fixed", top: position.top, left: position.left, width: position.width }}
+            style={{
+              position: "fixed",
+              left: position.left,
+              width: position.width,
+              ...(position.up ? { bottom: position.bottom } : { top: position.top }),
+            }}
           >
             {resultsOpen ? (
               <div id={listboxId} role="listbox" aria-label={labels.results[locale]}>
