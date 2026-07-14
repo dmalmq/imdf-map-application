@@ -1,15 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   LEVEL_1F_JA,
+  closeMenu,
   levelPill,
   OCCUPANT_EN,
   OCCUPANT_JA,
+  openMenu,
   searchAndSelect,
   switchLocale,
   switchTheme,
   uploadMinimalImdf,
-  VENUE_NAME_EN,
-  VENUE_NAME_JA,
   waitForMapIdle,
   waitForReadyVenue,
 } from "./helpers";
@@ -44,12 +44,9 @@ async function settleForScreenshot(page: Page): Promise<void> {
   });
 }
 
-/** Compact layout keeps venue name in the sheet, not the top bar. */
-async function waitForCompactReady(page: Page, venueName: string): Promise<void> {
-  await expect(
-    page.locator(".explorer-sidebar__compact-row--meta .top-bar__venue"),
-  ).toHaveText(venueName, { timeout: 15_000 });
-  await waitForMapIdle(page);
+/** Compact layout keeps floating controls; readiness matches desktop. */
+async function waitForCompactReady(page: Page): Promise<void> {
+  await waitForReadyVenue(page);
 }
 
 test.describe("viewer visual baselines", () => {
@@ -91,7 +88,7 @@ test.describe("viewer visual baselines", () => {
     await page.goto("/");
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
-    await waitForCompactReady(page, VENUE_NAME_JA);
+    await waitForCompactReady(page);
     await expect(page.locator(".app")).toHaveClass(/app--compact/);
     await searchAndSelect(page, "駅ナカ", OCCUPANT_JA);
     await settleForScreenshot(page);
@@ -106,10 +103,13 @@ test.describe("viewer visual baselines", () => {
     await page.goto("/");
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
-    await waitForCompactReady(page, VENUE_NAME_JA);
+    await waitForCompactReady(page);
+    const panel = await openMenu(page);
     await expect(levelPill(page, LEVEL_1F_JA)).toBeVisible();
+    await expect(panel).toBeVisible();
+    await closeMenu(page);
     await switchLocale(page, "en");
-    await waitForCompactReady(page, VENUE_NAME_EN);
+    await waitForCompactReady(page);
     await switchTheme(page, "Customer Blue");
     await searchAndSelect(page, "Station Shop", OCCUPANT_EN);
     await settleForScreenshot(page);

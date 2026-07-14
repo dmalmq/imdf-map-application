@@ -230,9 +230,9 @@ test.describe("viewer performance", () => {
     await waitForMapIdle(page);
 
     // Seed search results so detail selection is meaningful during the drag.
-    await page.locator("#viewer-search-input").fill("駅");
+    await page.locator('.floating-search__control input[type="search"]').fill("駅");
     await expect(
-      page.locator(".explorer-sidebar__result", { hasText: OCCUPANT_JA }),
+      page.locator(".floating-search__option", { hasText: OCCUPANT_JA }).first(),
     ).toBeVisible({ timeout: 5_000 });
 
     const canvas = mapCanvas(page);
@@ -281,12 +281,14 @@ test.describe("viewer performance", () => {
 
     // Kick off alternating search/detail updates every 100ms for 1s.
     const churn = page.evaluate(async () => {
-      const input = document.querySelector<HTMLInputElement>("#viewer-search-input");
+      const input = document.querySelector<HTMLInputElement>(
+        '.floating-search__control input[type="search"]',
+      );
       if (!input) {
         throw new Error("search input missing");
       }
       const results = () =>
-        Array.from(document.querySelectorAll<HTMLButtonElement>(".explorer-sidebar__result"));
+        Array.from(document.querySelectorAll<HTMLButtonElement>(".floating-search__option"));
 
       const texts = ["駅", "トイレ", "キオスク", "ショップ", "駅ナカ"];
       for (let i = 0; i < 10; i += 1) {
