@@ -136,6 +136,7 @@ describe("PlatformStore", () => {
     for (const bad of ["../evil", "/etc/passwd", "a/b", "UPPER", "", ".", "a".repeat(65)]) {
       expect(() => store.blobPath(bad)).toThrow();
       expect(() => store.getBlobSnapshot(bad)).toThrow();
+      expect(() => store.acquireBlob(bad)).toThrow();
       await expect(store.putDataset({ ...META, id: bad }, ZIP)).rejects.toThrow();
       await expect(store.deleteDataset(bad)).rejects.toThrow();
       await expect(store.listComments(bad)).rejects.toThrow();
@@ -190,25 +191,36 @@ describe("PlatformStore", () => {
     expect(store.findSession("t1")).toBeUndefined();
   });
 
-  it("retains the superseded generation after a completed overwrite, then GCs it at startup", async () => {
+  it("keeps a leased superseded generation until release, then reclaims it", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
-    const captured = store.getBlobSnapshot("tokyo-station");
+    const captured = store.acquireBlob("tokyo-station");
     expect(captured).toBeDefined();
     if (!captured) return;
     const V2 = Buffer.from([1, 2, 3, 4]);
     await store.putDataset({ ...META, name: "v2" }, V2);
-    // A reader that captured the snapshot before the overwrite can still open it afterward:
-    // the superseded generation is not unlinked at commit.
     expect(existsSync(captured.path)).toBe(true);
     expect(sha256(await readFile(captured.path))).toBe(captured.entry.contentHash);
     expect(await readFile(store.blobPath("tokyo-station"))).toEqual(V2);
-    // Startup GC reclaims the now-unreferenced old generation.
-    const reopened = await PlatformStore.open(dir);
+    await captured.release();
     expect(existsSync(captured.path)).toBe(false);
     expect(await readdir(path.join(dir, "blobs"))).toHaveLength(1);
-    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(V2);
+  });
+
+  it("does not reclaim a leased generation that becomes current again", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const captured = store.acquireBlob("tokyo-station");
+    expect(captured).toBeDefined();
+    if (!captured) return;
+    await store.putDataset({ ...META, name: "v2" }, Buffer.from([9, 8, 7, 6]));
+    await store.putDataset(META, ZIP);
+    expect(store.blobPath("tokyo-station")).toBe(captured.path);
+    await captured.release();
+    expect(await readFile(captured.path)).toEqual(ZIP);
+    expect(await readdir(path.join(dir, "blobs"))).toEqual([path.basename(captured.path)]);
   });
 
   it("removes unreferenced blob generations and orphans at boot", async () => {
@@ -224,22 +236,19 @@ describe("PlatformStore", () => {
     expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
   });
 
-  it("retains the deleted generation until startup GC, keeping a captured snapshot readable", async () => {
+  it("keeps a leased deleted generation until release, then reclaims it", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
-    const captured = store.getBlobSnapshot("tokyo-station");
+    const captured = store.acquireBlob("tokyo-station");
     expect(captured).toBeDefined();
     if (!captured) return;
     expect(await store.deleteDataset("tokyo-station")).toBe(true);
-    // A reader that captured the snapshot before the delete can still open it afterward.
     expect(existsSync(captured.path)).toBe(true);
     expect(sha256(await readFile(captured.path))).toBe(captured.entry.contentHash);
-    // Startup GC reclaims the now-unreferenced generation.
-    const reopened = await PlatformStore.open(dir);
+    await captured.release();
     expect(existsSync(captured.path)).toBe(false);
     expect(await readdir(path.join(dir, "blobs"))).toEqual([]);
-    expect(reopened.getEntry("tokyo-station")).toBeUndefined();
   });
 
   it("keeps a delete committed even when comment cleanup fails", async () => {
@@ -334,7 +343,7 @@ describe("PlatformStore", () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
-    const retained = store.getBlobSnapshot("tokyo-station");
+    const retained = store.acquireBlob("tokyo-station");
     expect(retained).toBeDefined();
     if (!retained) return;
     const V2 = Buffer.from([9, 8, 7, 6, 5]);
@@ -350,6 +359,8 @@ describe("PlatformStore", () => {
     const retainedBytes = await readFile(retained.path);
     expect(retainedBytes).toEqual(ZIP);
     expect(sha256(retainedBytes)).toBe(retained.entry.contentHash);
+    await retained.release();
+    expect(existsSync(retained.path)).toBe(false);
   });
 
   it("keeps a blob snapshot readable and matching through a paused delete", async () => {

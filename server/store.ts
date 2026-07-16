@@ -10,6 +10,12 @@ export interface StoredCatalogEntry extends CatalogEntry {
   contentHash: string;
 }
 
+export interface BlobLease {
+  entry: StoredCatalogEntry;
+  path: string;
+  release(): Promise<void>;
+}
+
 /** Read + parse a JSON file. A missing file yields the fallback; parse/permission/I/O errors propagate. */
 async function readJsonFile<T>(file: string, fallback: T): Promise<T> {
   let raw: string;
@@ -30,6 +36,8 @@ export class PlatformStore {
   private readonly users = new Map<string, UserRecord>();
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly deletedDatasets = new Set<string>();
+  private readonly blobLeases = new Map<string, number>();
+  private readonly retiredBlobs = new Set<string>();
 
   private constructor(private readonly dataDir: string) {}
 
@@ -94,12 +102,7 @@ export class PlatformStore {
     return this.blobFile(id, entry.contentHash);
   }
 
-  /**
-   * Capture one dataset's catalog entry and the content-addressed path derived from that
-   * exact contentHash as a single immutable pair. A concurrent put/delete never mutates the
-   * captured generation, so the returned entry.contentHash always matches the bytes at path.
-   * Concurrency-sensitive readers (HTTP downloads) must use this instead of blobPath(id).
-   */
+  /** Capture the current hash/path pair without retaining the generation. */
   getBlobSnapshot(id: string): { entry: StoredCatalogEntry; path: string } | undefined {
     this.assertDatasetId(id);
     const entry = this.catalog.get(id);
@@ -107,6 +110,39 @@ export class PlatformStore {
       return undefined;
     }
     return { entry, path: this.blobFile(id, entry.contentHash) };
+  }
+
+  /**
+   * Retain the current immutable generation until the caller releases it. HTTP readers use
+   * this so overwrite/delete can reclaim old generations promptly without racing a response
+   * that has resolved the path but has not finished streaming it.
+   */
+  acquireBlob(id: string): BlobLease | undefined {
+    const snapshot = this.getBlobSnapshot(id);
+    if (snapshot === undefined) return undefined;
+    const { path: blobPath } = snapshot;
+    this.blobLeases.set(blobPath, (this.blobLeases.get(blobPath) ?? 0) + 1);
+    let released = false;
+    return {
+      ...snapshot,
+      release: async () => {
+        if (released) return;
+        released = true;
+        await this.enqueue(async () => {
+          const count = this.blobLeases.get(blobPath) ?? 0;
+          if (count > 1) {
+            this.blobLeases.set(blobPath, count - 1);
+            return;
+          }
+          this.blobLeases.delete(blobPath);
+          if (this.retiredBlobs.delete(blobPath)) {
+            await rm(blobPath, { force: true }).catch((error: unknown) => {
+              console.warn(`[store] failed to reclaim blob ${blobPath}: ${String(error)}`);
+            });
+          }
+        });
+      },
+    };
   }
 
   private commentsPath(id: string): string {
@@ -128,6 +164,17 @@ export class PlatformStore {
     const tmp = `${file}.tmp-${randomUUID()}`;
     await writeFile(tmp, data);
     await rename(tmp, file);
+  }
+
+  /** Reclaim an unreferenced generation now, or after its last active reader releases it. */
+  private async retireBlob(blobPath: string): Promise<void> {
+    if ((this.blobLeases.get(blobPath) ?? 0) > 0) {
+      this.retiredBlobs.add(blobPath);
+      return;
+    }
+    await rm(blobPath, { force: true }).catch((error: unknown) => {
+      console.warn(`[store] failed to reclaim blob ${blobPath}: ${String(error)}`);
+    });
   }
 
   /**
@@ -207,12 +254,15 @@ export class PlatformStore {
         }
         throw error;
       }
-      // Catalog is the durable commit point: advance memory. The superseded generation is
-      // deliberately NOT unlinked here — a concurrent reader may have captured its snapshot
-      // path but not yet opened it. Immutable old generations are reclaimed only by open()'s
-      // startup GC once they are unreferenced by the persisted catalog.
+      // Catalog is the durable commit point: advance memory, cancel any pending retirement
+      // when an older hash becomes current again, then reclaim the superseded generation once
+      // its active readers (if any) drain.
       this.catalog.set(meta.id, stored);
       this.deletedDatasets.delete(meta.id);
+      this.retiredBlobs.delete(newBlob);
+      if (previous !== undefined && previous.contentHash !== contentHash) {
+        await this.retireBlob(this.blobFile(meta.id, previous.contentHash));
+      }
       const { contentHash: _hash, ...entry } = stored;
       return entry;
     });
@@ -227,13 +277,13 @@ export class PlatformStore {
       }
       const rows = [...this.catalog.values()].filter((row) => row.id !== id);
       await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
-      // Committed: advance memory. The deleted blob generation is deliberately NOT unlinked
-      // here — a reader may have captured its snapshot path but not yet opened it. It is
-      // reclaimed by open()'s startup GC once unreferenced. Comments are not content-addressed
-      // and must not remain readable after delete, so they are cleaned best-effort now
-      // (boot recovery + the durable empty file on reuse cover a cleanup failure).
+      // Committed: advance memory and retire the immutable generation. Active leases keep it
+      // readable until their response streams close; otherwise it is reclaimed immediately.
+      // Startup GC remains the crash-recovery fallback. Comments are fixed-path and cleaned
+      // best-effort, while the deleted marker makes them immediately unobservable.
       this.catalog.delete(id);
       this.deletedDatasets.add(id);
+      await this.retireBlob(this.blobFile(id, entry.contentHash));
       await rm(this.commentsPath(id), { force: true }).catch((error: unknown) => {
         console.warn(`[store] failed to remove comments for ${id}: ${String(error)}`);
       });
