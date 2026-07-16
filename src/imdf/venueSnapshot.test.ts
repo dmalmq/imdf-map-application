@@ -149,4 +149,25 @@ describe("venueSnapshot", () => {
     });
     await expect(readVenueSnapshot(bad)).rejects.toMatchObject({ code: "invalid_archive" });
   });
+  it("rejects missing snapshot metadata as invalid_archive", async () => {
+    const bad = await snapshotBlob({
+      schemaVersion: 1,
+      kind: "venue-snapshot",
+      generatedAt: "not-a-date",
+      sourceName: "",
+      venue: {
+        manifest: {},
+        venue: {},
+        levels: [],
+        featuresById: [],
+        renderFeaturesByLevel: [],
+        searchEntries: [],
+        boundsByLevel: [],
+        enrichmentByFeatureId: [],
+        warnings: [],
+      },
+    });
+    await expect(readVenueSnapshot(bad)).rejects.toMatchObject({ code: "invalid_archive" });
+  });
+
 });

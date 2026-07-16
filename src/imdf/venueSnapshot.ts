@@ -129,6 +129,14 @@ export async function readVenueSnapshot(data: Blob): Promise<LoadedVenue> {
       { schemaVersion: parsed.schemaVersion },
     );
   }
+  if (
+    typeof parsed.generatedAt !== "string" ||
+    !Number.isFinite(Date.parse(parsed.generatedAt)) ||
+    typeof parsed.sourceName !== "string" ||
+    parsed.sourceName.trim() === ""
+  ) {
+    throw new ArchiveError("invalid_archive", "snapshot.json is missing required metadata.");
+  }
 
   const venue = parsed.venue;
   if (
