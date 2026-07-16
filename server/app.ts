@@ -4,9 +4,9 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { SESSION_COOKIE, newSessionToken, parseCookies, verifyPassword } from "./auth";
-import { DATASET_ID_RE, PlatformStore } from "./store";
-import type { CatalogEntry, CommentRecord, DatasetKind, UserRecord } from "./types";
+import { SESSION_COOKIE, newSessionToken, parseCookies, verifyPassword } from "./auth.js";
+import { DATASET_ID_RE, PlatformStore } from "./store.js";
+import type { CatalogEntry, CommentRecord, DatasetKind, UserRecord } from "./types.js";
 
 export interface AppOptions {
   store: PlatformStore;

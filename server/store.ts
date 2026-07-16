@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { CatalogEntry, CommentRecord, SessionRecord, UserRecord } from "./types";
+import type { CatalogEntry, CommentRecord, SessionRecord, UserRecord } from "./types.js";
 
 export const DATASET_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
