@@ -1312,7 +1312,8 @@ button {
 .platform-bar {
   position: absolute;
   top: 12px;
-  right: 12px;
+  /* Leave room for the viewer menu trigger at top-right. */
+  right: 72px;
   z-index: 30;
   display: flex;
   align-items: center;
