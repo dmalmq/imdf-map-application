@@ -37,6 +37,8 @@ export class PlatformStore {
     await mkdir(path.join(dataDir, "blobs"), { recursive: true });
     await mkdir(path.join(dataDir, "comments"), { recursive: true });
     const rows = await readJsonFile<StoredCatalogEntry[]>(store.file("catalog.json"), []);
+    await store.recoverBlobs(new Map(rows.map((row) => [row.id, row.contentHash])));
+    await store.recoverComments(new Set(rows.map((row) => row.id)));
     const blobs = new Set(await readdir(path.join(dataDir, "blobs")));
     for (const row of rows) {
       if (blobs.has(`${row.id}.zip`)) {
@@ -89,6 +91,147 @@ export class PlatformStore {
     const tmp = `${file}.tmp-${randomUUID()}`;
     await writeFile(tmp, data);
     await rename(tmp, file);
+  }
+
+  /** Rename src to dest, treating a missing src as a no-op. Returns whether it moved. */
+  private async renameIfExists(src: string, dest: string): Promise<boolean> {
+    try {
+      await rename(src, dest);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Reconcile blob files against the persisted catalog after an interrupted put/delete.
+   * The catalog contentHash is authoritative: a live blob that matches is kept and its
+   * `.bak-*`/`.tomb-*`/`.tmp-*` sidecars cleaned; otherwise the first sidecar whose hash
+   * matches is restored. Files for ids no longer in the catalog are discarded.
+   */
+  private async recoverBlobs(catalogHash: Map<string, string>): Promise<void> {
+    const dir = path.join(this.dataDir, "blobs");
+    const groups = new Map<string, { live: boolean; sidecars: string[] }>();
+    for (const name of await readdir(dir)) {
+      const sidecar = /^(.+)\.zip\.(?:bak|tomb|tmp)-/.exec(name);
+      const live = /^(.+)\.zip$/.exec(name);
+      if (sidecar) {
+        const id = sidecar[1] as string;
+        const group = groups.get(id) ?? { live: false, sidecars: [] };
+        group.sidecars.push(name);
+        groups.set(id, group);
+      } else if (live) {
+        const id = live[1] as string;
+        const group = groups.get(id) ?? { live: false, sidecars: [] };
+        group.live = true;
+        groups.set(id, group);
+      }
+    }
+    for (const [id, group] of groups) {
+      // A clean live blob with no interrupted-op sidecars is trusted as-is.
+      if (group.sidecars.length === 0) {
+        continue;
+      }
+      const livePath = path.join(dir, `${id}.zip`);
+      const expected = catalogHash.get(id);
+      if (expected === undefined) {
+        if (group.live) {
+          await rm(livePath, { force: true });
+        }
+        for (const name of group.sidecars) {
+          await rm(path.join(dir, name), { force: true });
+        }
+        continue;
+      }
+      const liveHash = group.live
+        ? createHash("sha256").update(await readFile(livePath)).digest("hex")
+        : null;
+      if (liveHash === expected) {
+        for (const name of group.sidecars) {
+          await rm(path.join(dir, name), { force: true });
+        }
+        continue;
+      }
+      let restored = false;
+      for (const name of group.sidecars) {
+        const sidecarPath = path.join(dir, name);
+        if (
+          !restored &&
+          createHash("sha256").update(await readFile(sidecarPath)).digest("hex") === expected
+        ) {
+          if (group.live) {
+            await rm(livePath, { force: true });
+          }
+          await rename(sidecarPath, livePath);
+          restored = true;
+        } else {
+          await rm(sidecarPath, { force: true });
+        }
+      }
+      if (!restored && group.live) {
+        await rm(livePath, { force: true });
+      }
+    }
+  }
+
+  /**
+   * Reconcile comment files after an interrupted delete. For a still-cataloged id a
+   * pre-commit delete tombstone is restored when the live file is gone; for an id no
+   * longer in the catalog every file is discarded so old comments cannot reappear when
+   * the id is reused. Partial `.tmp-*` writes are always dropped.
+   */
+  private async recoverComments(catalogIds: Set<string>): Promise<void> {
+    const dir = path.join(this.dataDir, "comments");
+    const groups = new Map<string, { live: boolean; tombstones: string[]; scratch: string[] }>();
+    for (const name of await readdir(dir)) {
+      const tomb = /^(.+)\.json\.tomb-/.exec(name);
+      const tmp = /^(.+)\.json\.tmp-/.exec(name);
+      const live = /^(.+)\.json$/.exec(name);
+      if (tomb) {
+        const id = tomb[1] as string;
+        const group = groups.get(id) ?? { live: false, tombstones: [], scratch: [] };
+        group.tombstones.push(name);
+        groups.set(id, group);
+      } else if (tmp) {
+        const id = tmp[1] as string;
+        const group = groups.get(id) ?? { live: false, tombstones: [], scratch: [] };
+        group.scratch.push(name);
+        groups.set(id, group);
+      } else if (live) {
+        const id = live[1] as string;
+        const group = groups.get(id) ?? { live: false, tombstones: [], scratch: [] };
+        group.live = true;
+        groups.set(id, group);
+      }
+    }
+    for (const [id, group] of groups) {
+      const livePath = path.join(dir, `${id}.json`);
+      const discard = [...group.scratch];
+      if (!catalogIds.has(id)) {
+        if (group.live) {
+          await rm(livePath, { force: true });
+        }
+        discard.push(...group.tombstones);
+      } else if (group.live) {
+        discard.push(...group.tombstones);
+      } else {
+        let restored = false;
+        for (const name of group.tombstones) {
+          if (!restored) {
+            await rename(path.join(dir, name), livePath);
+            restored = true;
+          } else {
+            discard.push(name);
+          }
+        }
+      }
+      for (const name of discard) {
+        await rm(path.join(dir, name), { force: true });
+      }
+    }
   }
 
   listCatalog(): CatalogEntry[] {
@@ -151,11 +294,40 @@ export class PlatformStore {
       if (!this.catalog.has(id)) {
         return false;
       }
+      const blobPath = this.blobPath(id);
+      const commentsPath = this.commentsPath(id);
+      const blobTomb = `${blobPath}.tomb-${randomUUID()}`;
+      const commentsTomb = `${commentsPath}.tomb-${randomUUID()}`;
+      // Move blob and comments aside before the catalog commit so a commit failure can be
+      // rolled back and a crash mid-delete leaves recoverable tombstones rather than a
+      // committed entry with stale data (or comments that resurface when the id is reused).
+      const movedBlob = await this.renameIfExists(blobPath, blobTomb);
+      const movedComments = await this.renameIfExists(commentsPath, commentsTomb);
       const rows = [...this.catalog.values()].filter((entry) => entry.id !== id);
-      await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
+      try {
+        await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
+      } catch (error) {
+        if (movedBlob) {
+          await rename(blobTomb, blobPath);
+        }
+        if (movedComments) {
+          await rename(commentsTomb, commentsPath);
+        }
+        throw error;
+      }
+      // Catalog commit is durable: advance memory, then clean tombstones best-effort so a
+      // cleanup failure cannot turn a committed delete into a rejection.
       this.catalog.delete(id);
-      await rm(this.blobPath(id), { force: true });
-      await rm(this.commentsPath(id), { force: true });
+      if (movedBlob) {
+        await rm(blobTomb, { force: true }).catch((error: unknown) => {
+          console.warn(`[store] failed to remove blob tombstone ${blobTomb}: ${String(error)}`);
+        });
+      }
+      if (movedComments) {
+        await rm(commentsTomb, { force: true }).catch((error: unknown) => {
+          console.warn(`[store] failed to remove comments tombstone ${commentsTomb}: ${String(error)}`);
+        });
+      }
       return true;
     });
   }

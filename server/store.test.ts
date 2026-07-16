@@ -1,22 +1,23 @@
 // @vitest-environment node
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformStore } from "./store";
 import type { CatalogEntry } from "./types";
 import type { PathLike, RmOptions } from "node:fs";
-import * as NodeFsPromises from "node:fs/promises";
 
-const mockCtl = vi.hoisted(() => ({ failBackupRm: false }));
+const mockCtl = vi.hoisted(() => ({ rejectRmSubstring: null as string | null }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof NodeFsPromises>();
+  const actual = (await importOriginal()) as {
+    rm: (target: PathLike, options?: RmOptions) => Promise<void>;
+  } & Record<string, unknown>;
   return {
     ...actual,
     rm: (target: PathLike, options?: RmOptions): Promise<void> =>
-      mockCtl.failBackupRm && String(target).includes(".bak-")
+      mockCtl.rejectRmSubstring !== null && String(target).includes(mockCtl.rejectRmSubstring)
         ? Promise.reject(new Error("cleanup boom"))
         : actual.rm(target, options),
   };
@@ -163,16 +164,101 @@ describe("PlatformStore", () => {
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
     const NEW = Buffer.from([1, 2, 3, 4]);
-    mockCtl.failBackupRm = true;
+    mockCtl.rejectRmSubstring = ".bak-";
     try {
       const entry = await store.putDataset({ ...META, name: "v2", featureCount: 42 }, NEW);
       expect(entry.name).toBe("v2");
     } finally {
-      mockCtl.failBackupRm = false;
+      mockCtl.rejectRmSubstring = null;
     }
     expect(store.getEntry("tokyo-station")?.name).toBe("v2");
     expect(store.getEntry("tokyo-station")?.featureCount).toBe(42);
     expect(await readFile(store.blobPath("tokyo-station"))).toEqual(NEW);
     expect(store.listCatalog()[0]?.name).toBe("v2");
+  });
+
+  it("recovers an overwrite interrupted after the new blob is published (before catalog commit)", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const blob = store.blobPath("tokyo-station");
+    // Crash state: old blob moved to a backup, new content published, catalog still v1.
+    await rename(blob, `${blob}.bak-crash`);
+    await writeFile(blob, Buffer.from([7, 7, 7]));
+    const reopened = await PlatformStore.open(dir);
+    expect(reopened.getEntry("tokyo-station")?.name).toBe("東京駅");
+    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
+    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
+  });
+
+  it("recovers an overwrite interrupted after the old blob was moved aside", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const blob = store.blobPath("tokyo-station");
+    // Crash state: old blob moved to backup, new blob never published, catalog still v1.
+    await rename(blob, `${blob}.bak-crash`);
+    const reopened = await PlatformStore.open(dir);
+    expect(reopened.getEntry("tokyo-station")?.name).toBe("東京駅");
+    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
+    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
+  });
+
+  it("cleans a stale backup left after a committed overwrite, retaining the new blob", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const V2 = Buffer.from([9, 9, 9]);
+    await store.putDataset({ ...META, name: "v2" }, V2);
+    const blob = store.blobPath("tokyo-station");
+    await writeFile(`${blob}.bak-stale`, ZIP);
+    const reopened = await PlatformStore.open(dir);
+    expect(reopened.getEntry("tokyo-station")?.name).toBe("v2");
+    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(V2);
+    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
+  });
+
+  it("keeps a delete committed and comments gone even when tombstone cleanup fails", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    await store.addComment("tokyo-station", { author: "alice", text: "hi" });
+    mockCtl.rejectRmSubstring = ".json";
+    try {
+      expect(await store.deleteDataset("tokyo-station")).toBe(true);
+    } finally {
+      mockCtl.rejectRmSubstring = null;
+    }
+    expect(store.listCatalog()).toEqual([]);
+    expect(await store.listComments("tokyo-station")).toEqual([]);
+  });
+
+  it("removes orphan comments for a deleted id so a reused id starts clean", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    await store.addComment("tokyo-station", { author: "alice", text: "old" });
+    // Simulate a delete whose committed catalog persisted but blob/comment cleanup was lost.
+    await writeFile(path.join(dir, "catalog.json"), JSON.stringify([]));
+    await rm(store.blobPath("tokyo-station"), { force: true });
+    const reopened = await PlatformStore.open(dir);
+    await reopened.putDataset(META, ZIP);
+    expect(await reopened.listComments("tokyo-station")).toEqual([]);
+  });
+
+  it("restores a pre-commit delete tombstone for a still-cataloged entry", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const created = await store.addComment("tokyo-station", { author: "alice", text: "keep" });
+    const blob = store.blobPath("tokyo-station");
+    const comments = path.join(dir, "comments", "tokyo-station.json");
+    // Crash state: delete moved blob + comments aside but never committed the catalog.
+    await rename(blob, `${blob}.tomb-crash`);
+    await rename(comments, `${comments}.tomb-crash`);
+    const reopened = await PlatformStore.open(dir);
+    expect(reopened.getEntry("tokyo-station")?.name).toBe("東京駅");
+    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
+    expect(await reopened.listComments("tokyo-station")).toEqual([created]);
   });
 });
