@@ -27,7 +27,10 @@ function isArchiveErrorCode(value: unknown): value is ArchiveErrorCode {
     value === "invalid_feature_collection" ||
     value === "duplicate_feature_id" ||
     value === "worker_failed" ||
-    value === "fetch_failed"
+    value === "fetch_failed" ||
+    value === "invalid_geodatabase" ||
+    value === "gdb_too_large" ||
+    value === "gdb_conversion_failed"
   );
 }
 

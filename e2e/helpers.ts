@@ -42,12 +42,30 @@ export async function uploadZip(
   buffer: Buffer,
   fileName = MINIMAL_ZIP_NAME,
 ): Promise<void> {
-  const input = page.locator('input[type="file"][accept*=".zip"]');
+  // IMDF input is the non-multiple accept=".zip,application/zip" control.
+  // GDB archives also accept .zip (with multiple + .gdb.zip), so never use a
+  // broad [accept*=".zip"] selector here.
+  const input = page.locator('input[type="file"][accept=".zip,application/zip"]:not([multiple])');
   await input.setInputFiles({
     name: fileName,
     mimeType: MINIMAL_ZIP_MIME,
     buffer,
   });
+}
+
+/** Upload one or more GDB archive files through the dedicated multi-file picker. */
+export async function uploadGdbArchives(
+  page: Page,
+  files: Array<{ buffer: Buffer; fileName: string; mimeType?: string }>,
+): Promise<void> {
+  const input = page.locator('input[type="file"][multiple][accept*=".gdb.zip"]');
+  await input.setInputFiles(
+    files.map(({ buffer, fileName, mimeType = MINIMAL_ZIP_MIME }) => ({
+      name: fileName,
+      mimeType,
+      buffer,
+    })),
+  );
 }
 
 export async function uploadMinimalImdf(page: Page): Promise<void> {

@@ -21,6 +21,13 @@ export type ViewerState =
       locale: LocaleCode;
       previous?: ReadyVenueState;
     }
+  | {
+      status: "reviewing";
+      fileName: string;
+      themeId: ThemeId;
+      locale: LocaleCode;
+      previous?: ReadyVenueState;
+    }
   | ({ status: "ready"; themeId: ThemeId; locale: LocaleCode } & ReadyVenueState)
   | {
       status: "error";
@@ -32,6 +39,8 @@ export type ViewerState =
 
 export type ViewerAction =
   | { type: "load_started"; fileName: string }
+  | { type: "load_review_started"; fileName: string }
+  | { type: "load_cancelled"; fileName: string }
   | { type: "load_succeeded"; fileName: string; venue: LoadedVenue; requestedLevel?: string }
   | { type: "load_failed"; fileName: string; error: ArchiveError }
   | { type: "select_level"; levelId: string }
@@ -105,6 +114,7 @@ function currentReadyState(state: ViewerState): ReadyVenueState | undefined {
       return { fileName, loadedVenue, selectedLevelId, selectedFeatureId, searchText, searchCategory };
     }
     case "loading":
+    case "reviewing":
     case "error":
       return state.previous;
     case "empty":
@@ -131,10 +141,48 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
             locale: state.locale,
           };
     }
-    case "load_succeeded": {
-      // Stale-attempt suppression: only the load currently in flight may
-      // transition to ready. App additionally gates dispatch by attempt token.
+    case "load_review_started": {
+      // Only the matching in-flight load may enter review.
       if (state.status !== "loading" || state.fileName !== action.fileName) {
+        return state;
+      }
+      return state.previous
+        ? {
+            status: "reviewing",
+            fileName: action.fileName,
+            themeId: state.themeId,
+            locale: state.locale,
+            previous: state.previous,
+          }
+        : {
+            status: "reviewing",
+            fileName: action.fileName,
+            themeId: state.themeId,
+            locale: state.locale,
+          };
+    }
+    case "load_cancelled": {
+      // Cancelling a matching review restores the prior venue (retaining the
+      // current theme/locale) or returns to empty when there was none.
+      if (state.status !== "reviewing" || state.fileName !== action.fileName) {
+        return state;
+      }
+      return state.previous
+        ? {
+            status: "ready",
+            themeId: state.themeId,
+            locale: state.locale,
+            ...state.previous,
+          }
+        : { status: "empty", themeId: state.themeId, locale: state.locale };
+    }
+    case "load_succeeded": {
+      // Stale-attempt suppression: only the matching load or review in flight
+      // may transition to ready. App additionally gates dispatch by token.
+      if (
+        (state.status !== "loading" && state.status !== "reviewing") ||
+        state.fileName !== action.fileName
+      ) {
         return state;
       }
       return {
@@ -153,7 +201,10 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
       };
     }
     case "load_failed": {
-      if (state.status !== "loading" || state.fileName !== action.fileName) {
+      if (
+        (state.status !== "loading" && state.status !== "reviewing") ||
+        state.fileName !== action.fileName
+      ) {
         return state;
       }
       // A failed replacement keeps the previously rendered venue.

@@ -258,6 +258,94 @@ describe("viewerReducer load lifecycle", () => {
   });
 });
 
+describe("viewerReducer reviewing lifecycle", () => {
+  function loadingFrom(state: ViewerState, fileName: string): ViewerState {
+    return viewerReducer(state, { type: "load_started", fileName });
+  }
+  function reviewingFrom(state: ViewerState, fileName: string): ViewerState {
+    return viewerReducer(loadingFrom(state, fileName), {
+      type: "load_review_started",
+      fileName,
+    });
+  }
+
+  it("only a matching in-flight load enters reviewing", () => {
+    const loading = loadingFrom(initialViewerState, "a.gdb");
+    const reviewing = viewerReducer(loading, { type: "load_review_started", fileName: "a.gdb" });
+    expect(reviewing.status).toBe("reviewing");
+    if (reviewing.status !== "reviewing") return;
+    expect(reviewing.fileName).toBe("a.gdb");
+
+    // Mismatched filename is ignored.
+    expect(
+      viewerReducer(loading, { type: "load_review_started", fileName: "b.gdb" }),
+    ).toBe(loading);
+    // Not-loading is ignored.
+    const ready = readyState();
+    expect(
+      viewerReducer(ready, { type: "load_review_started", fileName: "venue.zip" }),
+    ).toBe(ready);
+  });
+
+  it("reviewing carries the previous venue forward", () => {
+    const ready = readyState("old.zip");
+    const reviewing = reviewingFrom(ready, "new.gdb");
+    expect(reviewing.status).toBe("reviewing");
+    if (reviewing.status !== "reviewing") return;
+    expect(reviewing.previous?.fileName).toBe("old.zip");
+  });
+
+  it("load_succeeded from reviewing transitions to ready", () => {
+    const reviewing = reviewingFrom(initialViewerState, "a.gdb");
+    const venue = makeVenue(levels1F);
+    const next = viewerReducer(reviewing, { type: "load_succeeded", fileName: "a.gdb", venue });
+    expect(next.status).toBe("ready");
+    if (next.status !== "ready") return;
+    expect(next.loadedVenue).toBe(venue);
+    expect(next.selectedLevelId).toBe("b1000002-0000-4000-8000-00000000001f");
+  });
+
+  it("load_failed from reviewing retains the previous venue", () => {
+    const ready = readyState("good.zip");
+    const reviewing = reviewingFrom(ready, "bad.gdb");
+    const error = new ArchiveError("gdb_conversion_failed", "boom");
+    const next = viewerReducer(reviewing, { type: "load_failed", fileName: "bad.gdb", error });
+    expect(next.status).toBe("error");
+    if (next.status !== "error") return;
+    expect(next.error).toBe(error);
+    expect(next.previous?.fileName).toBe("good.zip");
+  });
+
+  it("load_cancelled from reviewing restores the previous venue and keeps current theme/locale", () => {
+    const ready = readyState("good.zip");
+    const reviewing = reviewingFrom(ready, "cancel.gdb");
+    // A theme change while reviewing must survive the cancel.
+    const themed = viewerReducer(reviewing, { type: "set_theme", themeId: "customer-blue" });
+    const next = viewerReducer(themed, { type: "load_cancelled", fileName: "cancel.gdb" });
+    expect(next.status).toBe("ready");
+    if (next.status !== "ready") return;
+    expect(next.fileName).toBe("good.zip");
+    expect(next.themeId).toBe("customer-blue");
+  });
+
+  it("load_cancelled from reviewing without a previous venue returns to empty", () => {
+    const reviewing = reviewingFrom(initialViewerState, "cancel.gdb");
+    const next = viewerReducer(reviewing, { type: "load_cancelled", fileName: "cancel.gdb" });
+    expect(next).toEqual({ status: "empty", themeId: "tokyo-green", locale: "ja" });
+  });
+
+  it("load_cancelled is ignored when not reviewing or the filename mismatches", () => {
+    const reviewing = reviewingFrom(initialViewerState, "cancel.gdb");
+    expect(
+      viewerReducer(reviewing, { type: "load_cancelled", fileName: "other.gdb" }),
+    ).toBe(reviewing);
+    const ready = readyState();
+    expect(
+      viewerReducer(ready, { type: "load_cancelled", fileName: "venue.zip" }),
+    ).toBe(ready);
+  });
+});
+
 describe("viewerReducer stale suppression", () => {
   it("ignores load_succeeded when fileName mismatches", () => {
     const loading = viewerReducer(initialViewerState, {

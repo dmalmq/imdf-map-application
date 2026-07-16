@@ -19,6 +19,8 @@ export interface ViewerTheme {
     unitRestroom: string;
     unitUnenclosed: string;
     unitNonPublic: string;
+    unitParking: string;
+    unitPlatform: string;
     opening: string;
     selected: string;
     error: string;

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
 import {
   collectMarkerFeatures,
+  countFloorMarkerMatches,
   focusFeatureMarker,
   markerIconFor,
   markerLabelFor,
@@ -194,6 +195,97 @@ describe("collectMarkerFeatures", () => {
       "pedestrian-opening",
     );
   });
+
+  it("excludes icon-backed features from the DOM marker budget, even when selected", () => {
+    const iconAmenity = feature("icon-amenity", "amenity", "information", {
+      sourceProperties: { image: "/marker/ticket.png" },
+    });
+    const plainAmenity = feature("plain-amenity", "amenity", "information", {
+      sourceProperties: { image: "unknown.png" },
+    });
+    const venue = venueWith([iconAmenity, plainAmenity]);
+
+    const ids = collectMarkerFeatures(venue, LEVEL, null, "all").map((f) => f.id);
+    expect(ids).toContain("plain-amenity");
+    expect(ids).not.toContain("icon-amenity");
+
+    const selectedIds = collectMarkerFeatures(venue, LEVEL, "icon-amenity", "all").map((f) => f.id);
+    expect(selectedIds).not.toContain("icon-amenity");
+  });
+
+  it("keeps zero DOM budget for 251 icon-backed POIs while a regular feature remains", () => {
+    // MAX_MARKERS is 200; if icon-backed features counted, 251 of them would
+    // evict the regular feature. They must never enter the collected markers.
+    const iconFeatures = Array.from({ length: 251 }, (_, index) =>
+      feature(`icon-${index}`, "amenity", "information", {
+        sourceProperties: { image: "/marker/locker.png" },
+      }),
+    );
+    const regular = feature("plain-shop", "occupant", "shopping");
+    const venue = venueWith([...iconFeatures, regular]);
+
+    const ids = collectMarkerFeatures(venue, LEVEL, "icon-0", "all").map((f) => f.id);
+    expect(ids).toContain("plain-shop");
+    expect(ids.some((id) => id.startsWith("icon-"))).toBe(false);
+  });
+});
+
+describe("countFloorMarkerMatches", () => {
+  it("counts allowlisted icon-backed POIs that collectMarkerFeatures excludes from DOM", () => {
+    const venue = venueWith([
+      feature("icon-locker", "amenity", "information", {
+        sourceProperties: { image: "/marker/locker.png" },
+      }),
+      feature("icon-ticket", "amenity", "information", {
+        sourceProperties: { image: "marker/ticket.png" },
+      }),
+    ]);
+
+    expect(collectMarkerFeatures(venue, LEVEL, null, "all")).toEqual([]);
+    expect(collectMarkerFeatures(venue, LEVEL, null, "facilities")).toEqual([]);
+    expect(countFloorMarkerMatches(venue, LEVEL, "all")).toBe(2);
+    expect(countFloorMarkerMatches(venue, LEVEL, "facilities")).toBe(2);
+  });
+
+  it("keeps category, floor, and center filters for icon-backed and plain features", () => {
+    const venue = venueWith([
+      feature("icon-here", "amenity", "information", {
+        sourceProperties: { image: "/marker/locker.png" },
+      }),
+      feature("icon-other-floor", "amenity", "information", {
+        levelId: "level-2",
+        sourceProperties: { image: "/marker/ticket.png" },
+      }),
+      feature("icon-no-center", "amenity", "information", {
+        center: null,
+        sourceProperties: { image: "/marker/bus.png" },
+      }),
+      feature("shop", "occupant", "shopping"),
+      feature("plain-amenity", "amenity", "information", {
+        sourceProperties: { image: "unknown.png" },
+      }),
+    ]);
+
+    expect(countFloorMarkerMatches(venue, LEVEL, "facilities")).toBe(2);
+    expect(countFloorMarkerMatches(venue, LEVEL, "shops")).toBe(1);
+    expect(countFloorMarkerMatches(venue, LEVEL, "gates")).toBe(0);
+    expect(countFloorMarkerMatches(venue, LEVEL, "all")).toBe(3);
+    expect(countFloorMarkerMatches(venue, "level-2", "facilities")).toBe(1);
+  });
+
+  it("does not let icon-backed volume shrink the DOM marker budget", () => {
+    const icons = Array.from({ length: 251 }, (_, index) =>
+      feature(`icon-${index}`, "amenity", "information", {
+        sourceProperties: { image: "/marker/locker.png" },
+      }),
+    );
+    const venue = venueWith([...icons, feature("plain-shop", "occupant", "shopping")]);
+
+    expect(countFloorMarkerMatches(venue, LEVEL, "all")).toBe(252);
+    expect(collectMarkerFeatures(venue, LEVEL, null, "all").map((f) => f.id)).toEqual([
+      "plain-shop",
+    ]);
+  });
 });
 
 describe("markerLabelFor", () => {
@@ -382,6 +474,45 @@ describe("useFeatureMarkers", () => {
     expect(focusFeatureMarker("missing", canvasContainer)).toBe(false);
     focusSpy.mockRestore();
     canvasContainer.remove();
+  });
+});
+
+describe("focusFeatureMarker canvas fallback", () => {
+  it("focuses the map canvas for an icon-backed feature with no DOM marker", () => {
+    const root = document.createElement("div");
+    const canvas = document.createElement("canvas");
+    canvas.className = "maplibregl-canvas";
+    root.append(canvas);
+    document.body.append(root);
+
+    const canvasFocus = vi.spyOn(canvas, "focus");
+    expect(focusFeatureMarker("icon-feature", root)).toBe(true);
+    expect(canvasFocus).toHaveBeenCalledWith({ preventScroll: true });
+    root.remove();
+  });
+
+  it("prefers a matching DOM marker over the canvas fallback", () => {
+    const root = document.createElement("div");
+    const marker = document.createElement("button");
+    marker.dataset.featureId = "shop";
+    const canvas = document.createElement("canvas");
+    canvas.className = "maplibregl-canvas";
+    root.append(marker, canvas);
+    document.body.append(root);
+
+    const markerFocus = vi.spyOn(marker, "focus");
+    const canvasFocus = vi.spyOn(canvas, "focus");
+    expect(focusFeatureMarker("shop", root)).toBe(true);
+    expect(markerFocus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(canvasFocus).not.toHaveBeenCalled();
+    root.remove();
+  });
+
+  it("returns false when neither a marker nor a canvas exists", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    expect(focusFeatureMarker("nothing", root)).toBe(false);
+    root.remove();
   });
 });
 

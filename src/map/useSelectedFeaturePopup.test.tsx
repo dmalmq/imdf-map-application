@@ -196,4 +196,31 @@ describe("useSelectedFeaturePopup", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     canvas.remove();
   });
+
+  it("falls back to the map canvas on close when the selection has no DOM marker", async () => {
+    popupMocks.instances.length = 0;
+    const { map, canvas } = fakeMap();
+    const glCanvas = document.createElement("canvas");
+    glCanvas.className = "maplibregl-canvas";
+    canvas.append(glCanvas);
+
+    const loaded = venue([feature("icon-poi")]);
+    const canvasFocus = vi.spyOn(glCanvas, "focus");
+    function Direct() {
+      useSelectedFeaturePopup({
+        map,
+        venue: loaded,
+        selectedFeatureId: "icon-poi",
+        locale: "en",
+        compact: false,
+        onClose: () => {},
+      });
+      return null;
+    }
+    render(<Direct />);
+    await screen.findByRole("button", { name: "Close details" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Close details" }));
+    expect(canvasFocus).toHaveBeenCalledWith({ preventScroll: true });
+    canvas.remove();
+  });
 });

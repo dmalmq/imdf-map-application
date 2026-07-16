@@ -76,7 +76,7 @@ README.md                              (mod)  deployment section
 - Consumes: nothing (foundation).
 - Produces (used by Tasks 2-4):
   - `server/types.ts`: `DatasetKind = "venue-snapshot" | "imdf"`, `Role = "admin" | "user"`, `CatalogEntry { id; name; kind; levelCount; featureCount; sourceName; updatedAt }`, `CommentRecord { id; author; text; createdAt; levelId?; lngLat?: [number, number]; featureId? }`, `UserRecord { username; role; salt; passwordHash }`, `SessionRecord { token; username; createdAt }` (all string/number fields as in the spec).
-  - `server/store.ts`: `DATASET_ID_RE`, `StoredCatalogEntry extends CatalogEntry { contentHash: string }`, `class PlatformStore` with `static open(dataDir): Promise<PlatformStore>`, `listCatalog(): CatalogEntry[]`, `getEntry(id): StoredCatalogEntry | undefined`, `blobPath(id): string`, `putDataset(meta: Omit<CatalogEntry, "updatedAt">, blob: Buffer): Promise<CatalogEntry>`, `deleteDataset(id): Promise<boolean>`, `listComments(id): Promise<CommentRecord[]>`, `addComment(id, input: Omit<CommentRecord, "id" | "createdAt">): Promise<CommentRecord>`, `deleteComment(id, commentId): Promise<CommentRecord | null>`, `findUser(username): UserRecord | undefined`, `upsertUser(user): Promise<void>`, `findSession(token): SessionRecord | undefined`, `addSession(session): Promise<void>`, `deleteSession(token): Promise<void>`.
+  - `server/store.ts`: `DATASET_ID_RE`, `StoredCatalogEntry extends CatalogEntry { contentHash: string }`, `BlobSnapshot { entry: StoredCatalogEntry; path: string }`, `class PlatformStore` with `static open(dataDir): Promise<PlatformStore>`, `listCatalog(): CatalogEntry[]`, `getEntry(id): StoredCatalogEntry | undefined`, `getBlobSnapshot(id): BlobSnapshot | undefined` (captures one entry and immutable generation path atomically for HTTP reads), `blobPath(id): string`, `putDataset(meta: Omit<CatalogEntry, "updatedAt">, blob: Buffer): Promise<CatalogEntry>`, `deleteDataset(id): Promise<boolean>`, `listComments(id): Promise<CommentRecord[]>`, `addComment(id, input: Omit<CommentRecord, "id" | "createdAt">): Promise<CommentRecord>`, `deleteComment(id, commentId): Promise<CommentRecord | null>`, `findUser(username): UserRecord | undefined`, `upsertUser(user): Promise<void>`, `findSession(token): SessionRecord | undefined`, `addSession(session): Promise<void>`, `deleteSession(token): Promise<void>`. Blob generations are immutable `<id>.<contentHash>.zip` files; overwrite/delete generations remain readable until `open()` startup GC, preventing GET races.
 
 - [ ] **Step 1: Wire test/typecheck plumbing**
 
@@ -1058,18 +1058,20 @@ export function createApp(options: AppOptions): Server {
   }
 
   async function serveBlob(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-    const entry = store.getEntry(id);
-    if (entry === undefined) {
+    const snapshot = store.getBlobSnapshot(id);
+    if (snapshot === undefined) {
       sendError(res, 404, "not_found", "Dataset not found.");
       return;
     }
+    const { entry, path: file } = snapshot;
     const etag = `"${entry.contentHash}"`;
     if (req.headers["if-none-match"] === etag) {
       res.writeHead(304);
       res.end();
       return;
     }
-    const file = store.blobPath(id);
+    // `file` and `entry` come from the same immutable snapshot; an overwrite
+    // cannot pair an old ETag with a new generation path.
     const info = await stat(file);
     res.writeHead(200, {
       "content-type": "application/zip",

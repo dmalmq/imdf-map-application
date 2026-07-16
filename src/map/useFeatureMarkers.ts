@@ -3,6 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { localizedLabel } from "../imdf/localize";
 import type { FeatureType, LoadedVenue, LocaleCode, ViewerFeature } from "../imdf/types";
 import { isUnitMarkerEligible, matchesSearchCategory, type SearchCategory } from "../search/searchCategories";
+import { gdbMarkerIconId } from "./gdbMarkerIcons";
 
 /** Overlay container class hosting all feature markers. */
 export const MARKER_OVERLAY_CLASS = "indoor-marker-overlay";
@@ -177,6 +178,35 @@ export interface UseFeatureMarkersArgs {
 }
 
 /**
+ * Count of current-floor features that match the active search category for
+ * empty-floor UI, including allowlisted icon-backed POIs that render only in
+ * the WebGL symbol layer. Unlike collectMarkerFeatures this does not apply the
+ * DOM marker budget or exclude icon-backed features.
+ */
+export function countFloorMarkerMatches(
+  venue: LoadedVenue,
+  levelId: string,
+  category: SearchCategory,
+): number {
+  const focused = category !== "all";
+  let count = 0;
+
+  for (const feature of venue.featuresById.values()) {
+    if (feature.levelId !== levelId || feature.center == null) {
+      continue;
+    }
+    const markerUnit = isUnitMarkerEligible(feature);
+    const defaultMarker = MARKER_FEATURE_TYPES[feature.featureType] === true || markerUnit;
+    const focusedMarker = focused && matchesSearchCategory(feature, category);
+    if (!(focused ? focusedMarker : defaultMarker)) {
+      continue;
+    }
+    count += 1;
+  }
+
+  return count;
+}
+/**
  * Visible-level marker features, capped at MAX_MARKERS with priority:
  * selected feature first, then icon bubbles (conveyance/restroom units and
  * standalone icon amenities), occupant/kiosk/plain-amenity pills, named unit
@@ -202,6 +232,12 @@ export function collectMarkerFeatures(
   let selected: ViewerFeature | null = null;
 
   for (const feature of venue.featuresById.values()) {
+    // Icon-backed features render in the WebGL symbol layer, never as DOM
+    // markers — excluded up front so they never consume the marker budget,
+    // even when selected.
+    if (gdbMarkerIconId(feature.sourceProperties["image"]) !== null) {
+      continue;
+    }
     const markerUnit = isUnitMarkerEligible(feature);
     const defaultMarker = MARKER_FEATURE_TYPES[feature.featureType] === true || markerUnit;
     const focusedMarker = focused && matchesSearchCategory(feature, category);
@@ -262,8 +298,11 @@ export function collectMarkerFeatures(
 }
 
 /**
- * Focus the current DOM marker for `featureId`. Exact dataset comparison —
- * never builds a CSS selector from the untrusted ID.
+ * Focus the DOM marker for `featureId` when one exists (exact dataset
+ * comparison — never builds a CSS selector from the untrusted ID). Icon-backed
+ * features render only in the WebGL symbol layer and have no marker, so fall
+ * back to the map canvas to keep keyboard focus inside the live map. Returns
+ * false only when neither a marker nor a canvas is present.
  */
 export function focusFeatureMarker(
   featureId: string,
@@ -272,11 +311,16 @@ export function focusFeatureMarker(
   const marker = Array.from(
     root.querySelectorAll<HTMLButtonElement>("[data-feature-id]"),
   ).find((candidate) => candidate.dataset.featureId === featureId);
-  if (marker === undefined) {
-    return false;
+  if (marker !== undefined) {
+    marker.focus({ preventScroll: true });
+    return true;
   }
-  marker.focus({ preventScroll: true });
-  return true;
+  const canvas = root.querySelector<HTMLCanvasElement>(".maplibregl-canvas");
+  if (canvas !== null) {
+    canvas.focus({ preventScroll: true });
+    return true;
+  }
+  return false;
 }
 
 /**

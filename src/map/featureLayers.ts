@@ -4,6 +4,7 @@ import type {
   FillLayerSpecification,
   FilterSpecification,
   LineLayerSpecification,
+  SymbolLayerSpecification,
 } from "maplibre-gl";
 import type { ViewerTheme } from "../theme/types";
 
@@ -26,6 +27,10 @@ export const LAYER_RESTROOM_FILL = "indoor-restroom-fill";
 export const LAYER_RESTROOM_OUTLINE = "indoor-restroom-outline";
 export const LAYER_NONPUBLIC_FILL = "indoor-nonpublic-fill";
 export const LAYER_NONPUBLIC_OUTLINE = "indoor-nonpublic-outline";
+export const LAYER_PARKING_FILL = "indoor-parking-fill";
+export const LAYER_PARKING_OUTLINE = "indoor-parking-outline";
+export const LAYER_PLATFORM_FILL = "indoor-platform-fill";
+export const LAYER_PLATFORM_OUTLINE = "indoor-platform-outline";
 export const LAYER_STRUCTURE_FILL = "indoor-structure-fill";
 export const LAYER_STRUCTURE_OUTLINE = "indoor-structure-outline";
 export const LAYER_RESTRICTED_FILL = "indoor-restricted-fill";
@@ -38,18 +43,20 @@ export const LAYER_DETAIL_LINE = "indoor-detail-line";
 export const LAYER_OPENING_LINE = "indoor-opening-line";
 export const LAYER_AMENITY_CIRCLE = "indoor-amenity-circle";
 export const LAYER_OCCUPANT_CIRCLE = "indoor-occupant-circle";
+export const LAYER_GDB_MARKER_ICON = "indoor-gdb-marker-icon";
 export const LAYER_HOVER_OUTLINE = "indoor-hover-outline";
 export const LAYER_SELECTED_OUTLINE = "indoor-selected-outline";
 
 /** Layers that participate in click / hover hit-testing. */
 export const CLICKABLE_LAYER_IDS: readonly string[] = [
-  LAYER_CONTEXT_FILL,
   LAYER_WALKWAY_FILL,
   LAYER_ROOM_FILL,
   LAYER_UNENCLOSED_FILL,
   LAYER_TRANSIT_FILL,
   LAYER_RESTROOM_FILL,
   LAYER_NONPUBLIC_FILL,
+  LAYER_PARKING_FILL,
+  LAYER_PLATFORM_FILL,
   LAYER_STRUCTURE_FILL,
   LAYER_RESTRICTED_FILL,
   LAYER_FIXTURE_FILL,
@@ -58,6 +65,7 @@ export const CLICKABLE_LAYER_IDS: readonly string[] = [
   LAYER_OPENING_LINE,
   LAYER_AMENITY_CIRCLE,
   LAYER_OCCUPANT_CIRCLE,
+  LAYER_GDB_MARKER_ICON,
 ];
 
 export const WALKWAY_CATEGORIES = [
@@ -81,6 +89,9 @@ export const TRANSIT_CATEGORIES = [
 export const UNENCLOSED_CATEGORIES = ["unenclosedarea", "opentobelow"] as const;
 
 export const NONPUBLIC_CATEGORIES = ["nonpublic"] as const;
+export const PARKING_CATEGORIES = ["parking"] as const;
+
+export const PLATFORM_CATEGORIES = ["platform"] as const;
 
 /** First 8 chars of `__category`; "restroom" covers all 11 restroom.* enum values. */
 const restroomPrefix: ExpressionSpecification = [
@@ -93,7 +104,8 @@ const restroomPrefix: ExpressionSpecification = [
 type AnyLayer =
   | FillLayerSpecification
   | LineLayerSpecification
-  | CircleLayerSpecification;
+  | CircleLayerSpecification
+  | SymbolLayerSpecification;
 
 /**
  * Fixed layer order (plan §3):
@@ -152,8 +164,20 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
   const matchNonPublicUnit: FilterSpecification = [
     "all",
     ["==", ["get", "__feature_type"], "unit"],
-    ["!=", ["get", "__restricted"], true],
     ["in", ["get", "__category"], ["literal", [...NONPUBLIC_CATEGORIES]]],
+  ];
+
+  const matchParkingUnit: FilterSpecification = [
+    "all",
+    ["==", ["get", "__feature_type"], "unit"],
+    ["in", ["get", "__category"], ["literal", [...PARKING_CATEGORIES]]],
+  ];
+
+  const matchPlatformUnit: FilterSpecification = [
+    "all",
+    ["==", ["get", "__feature_type"], "unit"],
+    ["!=", ["get", "__restricted"], true],
+    ["in", ["get", "__category"], ["literal", [...PLATFORM_CATEGORIES]]],
   ];
 
   const matchStructureUnit: FilterSpecification = [
@@ -165,6 +189,8 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
     ["!", ["in", ["get", "__category"], ["literal", [...TRANSIT_CATEGORIES]]]],
     ["!", ["in", ["get", "__category"], ["literal", [...UNENCLOSED_CATEGORIES]]]],
     ["!", ["in", ["get", "__category"], ["literal", [...NONPUBLIC_CATEGORIES]]]],
+    ["!", ["in", ["get", "__category"], ["literal", [...PARKING_CATEGORIES]]]],
+    ["!", ["in", ["get", "__category"], ["literal", [...PLATFORM_CATEGORIES]]]],
     ["!=", restroomPrefix, "restroom"],
   ];
 
@@ -172,6 +198,14 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
     "all",
     ["==", ["get", "__feature_type"], "unit"],
     ["==", ["get", "__restricted"], true],
+    [
+      "!",
+      [
+        "in",
+        ["get", "__category"],
+        ["literal", [...NONPUBLIC_CATEGORIES, ...PARKING_CATEGORIES]],
+      ],
+    ],
   ];
 
   const matchLevelFloor: FilterSpecification = [
@@ -324,6 +358,46 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
         "line-width": 1,
       },
     },
+    {
+      id: LAYER_PARKING_FILL,
+      type: "fill",
+      source: INDOOR_SOURCE_ID,
+      filter: matchParkingUnit,
+      paint: {
+        "fill-color": c.unitParking,
+        "fill-opacity": 1,
+      },
+    },
+    {
+      id: LAYER_PARKING_OUTLINE,
+      type: "line",
+      source: INDOOR_SOURCE_ID,
+      filter: matchParkingUnit,
+      paint: {
+        "line-color": c.unitOutline,
+        "line-width": 1,
+      },
+    },
+    {
+      id: LAYER_PLATFORM_FILL,
+      type: "fill",
+      source: INDOOR_SOURCE_ID,
+      filter: matchPlatformUnit,
+      paint: {
+        "fill-color": c.unitPlatform,
+        "fill-opacity": 1,
+      },
+    },
+    {
+      id: LAYER_PLATFORM_OUTLINE,
+      type: "line",
+      source: INDOOR_SOURCE_ID,
+      filter: matchPlatformUnit,
+      paint: {
+        "line-color": c.unitOutline,
+        "line-width": 1,
+      },
+    },
 
     // 3. Structures, restricted, fixtures, kiosks, details
     {
@@ -456,6 +530,20 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       },
     },
 
+    // 5b. GDB POI icons rendered in the WebGL source (no DOM markers).
+    {
+      id: LAYER_GDB_MARKER_ICON,
+      type: "symbol",
+      source: INDOOR_SOURCE_ID,
+      filter: ["has", "__marker_icon"],
+      layout: {
+        "icon-image": ["get", "__marker_icon"],
+        "icon-size": 1,
+        "icon-anchor": "bottom",
+        "icon-allow-overlap": false,
+      },
+    },
+
     // 6. Hover / selected outlines. Feature-state expressions are not
     // allowed in filters, so both layers cover all features and gate
     // visibility through state-driven line-opacity.
@@ -516,6 +604,10 @@ export function applyThemePaintProperties(
   setPaintProperty(LAYER_RESTROOM_OUTLINE, "line-color", c.unitOutline);
   setPaintProperty(LAYER_NONPUBLIC_FILL, "fill-color", c.unitNonPublic);
   setPaintProperty(LAYER_NONPUBLIC_OUTLINE, "line-color", c.unitOutline);
+  setPaintProperty(LAYER_PARKING_FILL, "fill-color", c.unitParking);
+  setPaintProperty(LAYER_PARKING_OUTLINE, "line-color", c.unitOutline);
+  setPaintProperty(LAYER_PLATFORM_FILL, "fill-color", c.unitPlatform);
+  setPaintProperty(LAYER_PLATFORM_OUTLINE, "line-color", c.unitOutline);
 
   setPaintProperty(LAYER_STRUCTURE_FILL, "fill-color", c.unit);
   setPaintProperty(LAYER_STRUCTURE_OUTLINE, "line-color", c.unitOutline);

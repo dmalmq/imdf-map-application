@@ -45,9 +45,11 @@ test.describe("embed deep links", () => {
     await expect(page.locator(".explorer-sidebar")).toHaveCount(0);
     await openMenu(page);
     await expect(levelPill(page, LEVEL_B1_EN)).toHaveAttribute("aria-pressed", "true");
-    // Embed omits file controls unless allowOpen=1; hidden input stays.
+    // Embed omits visible file controls unless allowOpen=1. Hidden inputs may
+    // still exist for IMDF and GDB (archive/folder) — do not assert total count.
     await expect(page.locator(".viewer-menu__open")).toHaveCount(0);
-    await expect(page.locator('input[type="file"]')).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Open IMDF ZIP" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open GDB archive(s)" })).toHaveCount(0);
     await closeMenu(page);
   });
 
@@ -61,8 +63,9 @@ test.describe("embed deep links", () => {
     const panel = await openMenu(page);
     await expect(panel).toContainText(VENUE_NAME_JA);
     await expect(levelPill(page, LEVEL_2F_JA)).toHaveAttribute("aria-pressed", "true");
-    // Non-embed keeps file controls in the menu.
-    await expect(page.locator(".viewer-menu__open")).toBeVisible();
+    // Non-embed keeps IMDF + GDB file controls in the menu.
+    await expect(page.getByRole("button", { name: "IMDF ZIP を開く" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "GDB アーカイブを開く" })).toBeVisible();
     await closeMenu(page);
   });
 

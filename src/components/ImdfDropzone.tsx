@@ -14,13 +14,30 @@ const ui = {
     en: "Drop to replace venue",
   },
   retry: { ja: "再試行", en: "Retry" },
+  gdbArchive: { ja: "GDB アーカイブを開く", en: "Open GDB archive(s)" },
+  gdbFolder: { ja: "GDB フォルダを開く", en: "Open GDB folder" },
+  gdbFolderUnsupported: {
+    ja: "このブラウザーはフォルダ選択に対応していません。各 .gdb を ZIP 化して「GDB アーカイブを開く」をご利用ください。",
+    en: "This browser cannot pick folders. Zip each .gdb and use Open GDB archive(s).",
+  },
 } as const;
 
-function isZipFile(file: File | undefined): file is File {
-  if (!file) {
-    return false;
+/**
+ * A dropped selection is accepted only as exactly one IMDF `.zip` (not a
+ * `.gdb.zip`) or one-or-more files that all end `.gdb.zip`; App disambiguates
+ * which loader runs. Any other mixture returns null and is ignored.
+ */
+function acceptedDrop(files: readonly File[]): readonly File[] | null {
+  if (files.length === 0) {
+    return null;
   }
-  return file.name.toLowerCase().endsWith(".zip");
+  if (files.every((file) => file.name.toLowerCase().endsWith(".gdb.zip"))) {
+    return files;
+  }
+  if (files.length === 1 && files[0]!.name.toLowerCase().endsWith(".zip")) {
+    return files;
+  }
+  return null;
 }
 
 export interface ImdfDropzoneProps {
@@ -28,9 +45,14 @@ export interface ImdfDropzoneProps {
   status: "empty" | "loading" | "ready" | "error";
   fileName?: string;
   variant: "empty" | "overlay";
-  onFile: (file: File) => void;
+  onFiles: (files: readonly File[]) => void;
   /** Opens the parent-owned file picker (click / retry). */
   onOpenPicker: () => void;
+  onOpenGdbArchives: () => void;
+  onOpenGdbFolder: () => void;
+  /** Directory picking needs `webkitdirectory`; hide the folder control when
+   * the browser lacks it. Defaults to shown. */
+  gdbFolderSupported?: boolean;
 }
 
 export function ImdfDropzone({
@@ -38,19 +60,13 @@ export function ImdfDropzone({
   status,
   fileName,
   variant,
-  onFile,
+  onFiles,
   onOpenPicker,
+  onOpenGdbArchives,
+  onOpenGdbFolder,
+  gdbFolderSupported = true,
 }: ImdfDropzoneProps) {
   const [dragActive, setDragActive] = useState(false);
-
-  const acceptFile = useCallback(
-    (file: File | undefined) => {
-      if (isZipFile(file)) {
-        onFile(file);
-      }
-    },
-    [onFile],
-  );
 
   const onDragOver = useCallback((event: DragEvent) => {
     event.preventDefault();
@@ -69,10 +85,12 @@ export function ImdfDropzone({
       event.preventDefault();
       event.stopPropagation();
       setDragActive(false);
-      const file = event.dataTransfer.files[0];
-      acceptFile(file);
+      const accepted = acceptedDrop(Array.from(event.dataTransfer.files));
+      if (accepted) {
+        onFiles(accepted);
+      }
     },
-    [acceptFile],
+    [onFiles],
   );
 
   if (variant === "overlay") {
@@ -127,6 +145,16 @@ export function ImdfDropzone({
           <button type="button" className="imdf-dropzone__open-btn" onClick={onOpenPicker}>
             {ui.open[locale]}
           </button>
+        )}
+        <button type="button" className="imdf-dropzone__open-btn" onClick={onOpenGdbArchives}>
+          {ui.gdbArchive[locale]}
+        </button>
+        {gdbFolderSupported ? (
+          <button type="button" className="imdf-dropzone__open-btn" onClick={onOpenGdbFolder}>
+            {ui.gdbFolder[locale]}
+          </button>
+        ) : (
+          <p className="imdf-dropzone__hint">{ui.gdbFolderUnsupported[locale]}</p>
         )}
         {status === "error" ? (
           <button type="button" className="imdf-dropzone__retry-btn" onClick={onOpenPicker}>

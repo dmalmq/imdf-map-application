@@ -1,5 +1,6 @@
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
+import { gdbMarkerIconId } from "./gdbMarkerIcons";
 
 /** Renderer-owned property keys flattened onto derived GeoJSON features. */
 export interface RenderFeatureProperties {
@@ -8,6 +9,8 @@ export interface RenderFeatureProperties {
   __level_id: string | null;
   __category: string | null;
   __restricted: boolean;
+  /** Local symbol-layer icon id derived from `sourceProperties.image`, when allowlisted. */
+  __marker_icon?: string;
   [key: string]: unknown;
 }
 
@@ -36,6 +39,11 @@ export function renderFeatureFromViewer(
     __category: feature.category,
     __restricted: feature.restriction !== null,
   };
+
+  const markerIcon = gdbMarkerIconId(feature.sourceProperties["image"]);
+  if (markerIcon !== null) {
+    properties.__marker_icon = markerIcon;
+  }
 
   return {
     type: "Feature",

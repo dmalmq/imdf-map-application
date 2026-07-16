@@ -32,7 +32,9 @@ export type ViewerWarningCode =
   | "missing_display_point"
   | "unknown_archive_entry"
   | "invalid_viewer_enrichment"
-  | "duplicate_viewer_enrichment";
+  | "duplicate_viewer_enrichment"
+  | "gdb_geometry_skipped"
+  | "gdb_worker_warning";
 
 export interface ImdfManifest {
   version: "1.0.0";
