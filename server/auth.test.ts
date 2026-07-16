@@ -10,6 +10,7 @@ describe("auth", () => {
     expect(verifyPassword("secret-pw", salt, passwordHash)).toBe(true);
     expect(verifyPassword("wrong", salt, passwordHash)).toBe(false);
     expect(verifyPassword("secret-pw", salt, "zz")).toBe(false);
+    expect(verifyPassword("secret-pw", salt, `${passwordHash}zz`)).toBe(false);
   });
 
   it("session tokens are 64 hex chars and unique", () => {
@@ -22,5 +23,8 @@ describe("auth", () => {
     expect(parseCookies("gis_session=abc; other=1")).toEqual({ gis_session: "abc", other: "1" });
     expect(parseCookies(undefined)).toEqual({});
     expect(parseCookies("junk")).toEqual({});
+    expect(parseCookies("gis_session=first; gis_session=second")).toEqual({
+      gis_session: "first",
+    });
   });
 });

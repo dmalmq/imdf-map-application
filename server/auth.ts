@@ -12,6 +12,9 @@ export function hashPassword(
 }
 
 export function verifyPassword(password: string, salt: string, passwordHash: string): boolean {
+  if (!/^[0-9a-f]{64}$/.test(passwordHash)) {
+    return false;
+  }
   const candidate = scryptSync(password, salt, 32);
   const expected = Buffer.from(passwordHash, "hex");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
@@ -31,7 +34,10 @@ export function parseCookies(header: string | undefined): Record<string, string>
     if (eq === -1) {
       continue;
     }
-    cookies[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+    const name = part.slice(0, eq).trim();
+    if (name !== "" && cookies[name] === undefined) {
+      cookies[name] = part.slice(eq + 1).trim();
+    }
   }
   return cookies;
 }
