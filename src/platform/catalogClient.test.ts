@@ -5,6 +5,7 @@ import {
   datasetViewUrl,
   fetchCatalog,
   fetchMe,
+  login,
   postComment,
   probeCatalog,
   publishDataset,
@@ -70,6 +71,16 @@ describe("catalogClient", () => {
   it("fetchMe maps 401 to null", async () => {
     mockFetch({ ok: false, status: 401, json: () => Promise.resolve({ code: "unauthenticated", message: "x" }) });
     expect(await fetchMe()).toBeNull();
+  });
+
+  it("passes an AbortSignal through login", async () => {
+    const impl = mockFetch({
+      json: () => Promise.resolve({ account: { username: "admin", role: "admin" } }),
+    });
+    const controller = new AbortController();
+    await login("admin", "pw", controller.signal);
+    const [, init] = impl.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBe(controller.signal);
   });
 
   it("builds blob and view URLs and slugs", () => {

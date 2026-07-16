@@ -142,11 +142,16 @@ export async function deleteComment(datasetId: string, commentId: string): Promi
   }
 }
 
-export async function login(username: string, password: string): Promise<AccountInfo> {
+export async function login(
+  username: string,
+  password: string,
+  signal?: AbortSignal,
+): Promise<AccountInfo> {
   const body = await requestJson<{ account: AccountInfo }>("/api/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
     headers: { "content-type": "application/json" },
+    signal: signal ?? null,
   });
   return body.account;
 }

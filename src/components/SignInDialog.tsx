@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { LocaleCode } from "../imdf/types";
-import { login } from "../platform/catalogClient";
+import { login, logout } from "../platform/catalogClient";
 import type { AccountInfo } from "../platform/types";
 
 const ui = {
@@ -24,9 +24,8 @@ const HEADING_ID = "signin-dialog-title";
 export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const usernameRef = useRef<HTMLInputElement>(null);
-  // Mirrors `open` so an in-flight login resolving after close never fires
-  // onSignedIn or mutates state behind the user's cancellation.
-  const openRef = useRef(open);
+  const attemptRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -34,11 +33,11 @@ export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialog
   // matching GdbImportDialog), reset the previous attempt's busy/error, and
   // focus the username input. App owns post-close focus.
   useEffect(() => {
-    openRef.current = open;
     if (!open) {
+      attemptRef.current += 1;
+      abortRef.current?.abort();
       return;
     }
-    setBusy(false);
     setError(null);
     const dialog = dialogRef.current;
     if (dialog) {
@@ -51,14 +50,28 @@ export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialog
     usernameRef.current?.focus();
   }, [open]);
 
+  useEffect(
+    () => () => {
+      attemptRef.current += 1;
+      abortRef.current?.abort();
+    },
+    [],
+  );
+
   // Escape on a modal dialog fires a native `cancel` event; route it to
   // onClose and let React own the close, matching GdbImportDialog.
+  const requestClose = () => {
+    attemptRef.current += 1;
+    abortRef.current?.abort();
+    onClose();
+  };
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
     const handleCancel = (event: Event) => {
       event.preventDefault();
-      onClose();
+      requestClose();
     };
     dialog.addEventListener("cancel", handleCancel);
     return () => dialog.removeEventListener("cancel", handleCancel);
@@ -74,23 +87,45 @@ export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialog
       return;
     }
     const data = new FormData(event.currentTarget);
+    const attempt = attemptRef.current + 1;
+    attemptRef.current = attempt;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setBusy(true);
     setError(null);
-    void login(String(data.get("username") ?? ""), String(data.get("password") ?? ""))
+    void login(
+      String(data.get("username") ?? ""),
+      String(data.get("password") ?? ""),
+      controller.signal,
+    )
       .then((account) => {
-        if (!openRef.current) return;
-        setBusy(false);
+        if (attempt !== attemptRef.current) {
+          void logout().catch(() => {
+            /* stale session cleanup is best-effort */
+          });
+          return;
+        }
         onSignedIn(account);
       })
       .catch((caught: unknown) => {
-        if (!openRef.current) return;
-        setBusy(false);
+        if (attempt !== attemptRef.current) return;
         setError(caught instanceof Error ? caught.message : String(caught));
+      })
+      .finally(() => {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          setBusy(false);
+        }
       });
   };
 
   return (
-    <dialog ref={dialogRef} className="signin-dialog" aria-labelledby={HEADING_ID} onClose={onClose}>
+    <dialog
+      ref={dialogRef}
+      className="signin-dialog"
+      aria-labelledby={HEADING_ID}
+      onClose={requestClose}
+    >
       <form className="signin-dialog__form" aria-busy={busy} onSubmit={onSubmit}>
         <h2 id={HEADING_ID} className="signin-dialog__title">
           {ui.heading[locale]}
@@ -123,7 +158,7 @@ export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialog
           </p>
         ) : null}
         <div className="signin-dialog__actions">
-          <button type="button" className="signin-dialog__btn" onClick={onClose}>
+          <button type="button" className="signin-dialog__btn" onClick={requestClose}>
             {ui.cancel[locale]}
           </button>
           <button

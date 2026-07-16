@@ -200,4 +200,17 @@ describe("resolveSelectedFeatureContent", () => {
     expect(resolved.sourceAttributes).toBeNull();
     expect(resolved.provenance).toBeNull();
   });
+
+  it("does not treat an IMDF feature with an incidental __gdb_layer property as GDB", () => {
+    const anchor = feature("anchor");
+    const occupant = feature("occupant", {
+      sourceProperties: {
+        __gdb_layer: "partner-layer",
+        hours: "Mo-Fr 10:00-20:00",
+      },
+    });
+    const resolved = resolveSelectedFeatureContent(venue(occupant, anchor, {}), occupant, "en");
+    expect(resolved.sourceAttributes).toBeNull();
+    expect(resolved.provenance).toBeNull();
+  });
 });

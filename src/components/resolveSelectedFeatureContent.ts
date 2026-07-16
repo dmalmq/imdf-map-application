@@ -29,14 +29,24 @@ function resolveSourceAttributes(
   feature: ViewerFeature,
 ): { attributes: SourceAttribute[]; provenance: string } | null {
   const layer = feature.sourceProperties["__gdb_layer"];
-  if (typeof layer !== "string") return null;
   const database = feature.sourceProperties["__gdb_database"];
+  const resolvedLevel = feature.sourceProperties["__gdb_resolved_level_id"];
+  if (
+    typeof layer !== "string" ||
+    layer === "" ||
+    typeof database !== "string" ||
+    database === "" ||
+    typeof resolvedLevel !== "string" ||
+    resolvedLevel === ""
+  ) {
+    return null;
+  }
   const attributes = Object.entries(feature.sourceProperties)
     .filter(([key]) => !key.startsWith("__gdb_"))
     .map(([field, value]) => ({ field, value: formatAttributeValue(value) }));
   return {
     attributes,
-    provenance: typeof database === "string" ? `${layer} (${database})` : layer,
+    provenance: `${layer} (${database})`,
   };
 }
 
