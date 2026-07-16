@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -81,5 +82,63 @@ describe("PlatformStore", () => {
     expect(reopened.findSession("t1")?.username).toBe("admin");
     await reopened.deleteSession("t1");
     expect(reopened.findSession("t1")).toBeUndefined();
+  });
+
+  it("rejects traversal and malformed dataset ids on every path and mutation op", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    for (const bad of ["../evil", "/etc/passwd", "a/b", "UPPER", "", ".", "a".repeat(65)]) {
+      expect(() => store.blobPath(bad)).toThrow();
+      await expect(store.putDataset({ ...META, id: bad }, ZIP)).rejects.toThrow();
+      await expect(store.deleteDataset(bad)).rejects.toThrow();
+      await expect(store.listComments(bad)).rejects.toThrow();
+      await expect(store.addComment(bad, { author: "a", text: "b" })).rejects.toThrow();
+      await expect(store.deleteComment(bad, "x")).rejects.toThrow();
+    }
+  });
+
+  it("propagates a corrupt catalog file at boot instead of silently discarding data", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    await writeFile(path.join(dir, "catalog.json"), "{ not json");
+    await expect(PlatformStore.open(dir)).rejects.toThrow();
+  });
+
+  it("rolls back a new put when catalog persistence fails, leaving no orphan blob", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await mkdir(path.join(dir, "catalog.json"));
+    await expect(store.putDataset(META, ZIP)).rejects.toThrow();
+    expect(existsSync(store.blobPath("tokyo-station"))).toBe(false);
+    expect(store.getEntry("tokyo-station")).toBeUndefined();
+    expect(store.listCatalog()).toEqual([]);
+  });
+
+  it("rolls back an overwrite when catalog persistence fails, preserving the old blob and entry", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const original = await readFile(store.blobPath("tokyo-station"));
+    await rm(path.join(dir, "catalog.json"));
+    await mkdir(path.join(dir, "catalog.json"));
+    await expect(store.putDataset({ ...META, name: "v2" }, Buffer.from([9, 9, 9]))).rejects.toThrow();
+    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(original);
+    expect(store.getEntry("tokyo-station")?.name).toBe("東京駅");
+  });
+
+  it("does not mutate in-memory users or sessions when persistence fails", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await mkdir(path.join(dir, "users.json"));
+    await mkdir(path.join(dir, "sessions.json"));
+    await expect(
+      store.upsertUser({ username: "admin", role: "admin", salt: "a", passwordHash: "b" }),
+    ).rejects.toThrow();
+    await expect(
+      store.addSession({ token: "t1", username: "admin", createdAt: "2026-01-01T00:00:00.000Z" }),
+    ).rejects.toThrow();
+    expect(store.findUser("admin")).toBeUndefined();
+    expect(store.findSession("t1")).toBeUndefined();
   });
 });
