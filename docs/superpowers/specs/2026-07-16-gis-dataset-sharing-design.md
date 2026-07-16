@@ -16,7 +16,7 @@ other websites.
 | Question | Decision |
 |---|---|
 | Hosting | One small intranet server for everything (app, dataset blobs, catalog, comments). |
-| Access control | None in-app; intranet/VPN is the boundary. |
+| Access control | Basic accounts (roles `admin`/`user`), write-gated: reads are public on the intranet so embeds work over plain HTTP; publishing/deleting requires `admin`; commenting requires a signed-in account. Intranet/VPN remains the network boundary. |
 | Source formats | GDB only (plus existing IMDF ZIPs). Shapefiles deferred. |
 | Publishers | The author plus a few GIS-capable colleagues; publish flow must be self-explanatory but stays in-app. |
 | Colleague features | View, deep links, and in-app comments with map pins. |
@@ -105,14 +105,17 @@ node server/dist/main.js --port 8080 --data <data-dir> --app <path-to-dist>
 ### API
 
 ```
-GET    /api/catalog                        -> { datasets: CatalogEntry[] }
+POST   /api/login                          <- { username, password }; sets HttpOnly session cookie
+POST   /api/logout                         -> clears the session
+GET    /api/me                             -> { username, role } or 401
+GET    /api/catalog                        -> { datasets: CatalogEntry[] }            (public)
 PUT    /api/datasets/:id?name=...&kind=...&levelCount=...&featureCount=...&sourceName=...
-                                           <- ZIP body; create or overwrite; updates catalog
-DELETE /api/datasets/:id                   -> removes blob + catalog entry + comments
-GET    /datasets/:id.zip                   -> dataset blob (ETag from content hash)
-GET    /api/datasets/:id/comments          -> { comments: Comment[] }
-POST   /api/datasets/:id/comments          <- { author, text, levelId?, lngLat?, featureId? }
-DELETE /api/datasets/:id/comments/:cid
+                                           <- ZIP body; create or overwrite           (admin)
+DELETE /api/datasets/:id                   -> removes blob + catalog entry + comments (admin)
+GET    /datasets/:id.zip                   -> dataset blob (ETag from content hash)   (public)
+GET    /api/datasets/:id/comments          -> { comments: Comment[] }                 (public)
+POST   /api/datasets/:id/comments          <- { text, levelId?, lngLat?, featureId? } (user or admin)
+DELETE /api/datasets/:id/comments/:cid     -> owner or admin
 GET    /*                                  -> built app (dist/), SPA fallback to index.html
 ```
 
@@ -131,7 +134,7 @@ interface CatalogEntry {
 
 interface Comment {
   id: string;            // server-assigned UUID
-  author: string;        // 1..80 chars
+  author: string;        // server-assigned from the session account
   text: string;          // 1..2000 chars
   createdAt: string;     // ISO, server-assigned
   levelId?: string;      // viewer level id the pin belongs to
@@ -146,6 +149,8 @@ interface Comment {
 <data>/catalog.json          // single source of truth for entries
 <data>/blobs/<id>.zip
 <data>/comments/<id>.json    // flat array
+<data>/users.json            // [{ username, role, salt, passwordHash }] (scrypt)
+<data>/sessions.json         // [{ token, username, createdAt }]
 ```
 
 - All writes are atomic (temp file + rename) and serialized through one
@@ -161,8 +166,26 @@ interface Comment {
 - Id regex, name/kind/comment field validation -> `400` with a typed JSON
   error `{ code, message }` the client surfaces verbatim.
 - Unknown dataset -> `404`.
-- No auth of any kind. Anyone on the intranet can publish, delete, and
-  comment. Revisit only if the trust model changes (future addition).
+
+### Accounts and sessions
+
+- Roles: `admin` (publish, delete datasets, delete any comment) and `user`
+  (comment, delete own comments). Reads (catalog, blobs, comments, app) are
+  public: intranet/VPN is the read boundary, and cross-site iframe embeds
+  must keep working over plain HTTP where session cookies are not sent.
+- Passwords hashed with `node:crypto` scrypt (per-user random salt); verified
+  with `timingSafeEqual`. Sessions are random 32-byte tokens in an HttpOnly,
+  `SameSite=Lax` cookie, persisted to `sessions.json` so restarts keep users
+  signed in. No expiry in v1; logout deletes the session.
+- User management is CLI-only, no UI:
+  `node server/dist/main.js add-user <name> --role admin|user --data <dir>`
+  (prompts for the password; also used to reset one). No password reset,
+  rate limiting, or lockout in v1.
+- Unauthenticated write -> `401`; authenticated but wrong role -> `403`.
+  Both use the typed `{ code, message }` error body.
+- Known trade-off (accepted): login credentials transit the intranet as
+  plain HTTP unless IT terminates TLS in front (IIS/reverse proxy). Noted in
+  the README.
 
 ## 4. Frontend: gallery and dataset loading
 
@@ -193,8 +216,8 @@ interface Comment {
 ## 5. Frontend: publish
 
 - A Publish control is visible only when (a) a venue is loaded from local
-  data (GDB conversion result or locally opened IMDF ZIP) and (b) the server
-  probe succeeded.
+  data (GDB conversion result or locally opened IMDF ZIP), (b) the server
+  probe succeeded, and (c) the signed-in account has role `admin`.
 - Publish dialog: display name (prefilled from the venue name), editable id
   slug (generated from the name), overwrite warning when the id already
   exists in the catalog, upload progress, then copyable view and embed URLs.
@@ -202,20 +225,24 @@ interface Comment {
   browser and uploads it. IMDF path uploads the retained original `File`
   (App keeps a reference to the last locally opened archive).
 - Republish to the same id overwrites; there is no version history.
+- A compact account control (sign in / signed-in name / sign out) lives in
+  the existing viewer menu; it drives `/api/login`, `/api/logout`, and
+  `/api/me`. Signed-out users can view everything.
 
 ## 6. Frontend: comments
 
 - Comments panel is available only when viewing `?dataset=<id>` (comments
   key off the dataset id) and hidden in embed mode; embeds link out to the
   full viewer.
-- Composing: author name (free text, remembered in `localStorage`), comment
-  text, optional map pin (a "pin" mode captures one click as level + lngLat),
-  optional link to the currently selected feature.
+- Composing requires a signed-in account (the panel shows a sign-in prompt
+  otherwise): comment text, optional map pin (a "pin" mode captures one
+  click as level + lngLat), optional link to the currently selected feature.
+  The author is the account name, assigned server-side.
 - Reading: flat list, newest first; clicking a pinned comment switches to its
   level and flies to its location; feature-linked comments select the
   feature.
 - Refresh on panel open and after posting. No polling, no websockets.
-- Anyone can delete any comment (intranet trust).
+- Delete is shown for the comment owner and for admins.
 - Comment failures (list or post) show an inline non-blocking notice with
   retry; they never block viewing.
 
@@ -230,13 +257,18 @@ interface Comment {
   retried without re-converting.
 - Server-side: atomic writes, boot consistency check, typed 4xx errors,
   500 with logged stack for unexpected faults.
+- `401` on a write while signed out opens the sign-in control; `403`
+  (role too low) shows the server message verbatim.
 
 ## 8. Testing
 
 - Server (vitest, node environment, real temp data dir, ephemeral port):
   upload -> catalog -> blob fetch -> comments lifecycle; overwrite semantics;
   id/name/size validation; atomicity (no partial catalog on failed upload);
-  dangling-entry recovery at boot.
+  dangling-entry recovery at boot; login/logout/me lifecycle; scrypt hash
+  round-trip; write-gating matrix (anonymous/user/admin x publish, delete
+  dataset, post comment, delete own/foreign comment); session persistence
+  across a server restart.
 - Client (vitest + testing-library, existing conventions):
   - Snapshot round-trip property: `LoadedVenue -> ZIP -> LoadedVenue`
     deep-equal including Map revival and `sourceProperties` fidelity.
@@ -246,11 +278,14 @@ interface Comment {
   - Publish dialog flow with mocked fetch (slug generation, overwrite
     warning, error surfacing).
   - Comments panel: list/post/delete with mocked fetch; pin capture wiring.
+  - Account control: sign-in success/failure, me-probe on boot, publish
+    visibility by role, comment composer gating.
   - Original attribute table: full column set, original order, null
     rendering, provenance exclusion.
-- e2e (Playwright, real server via `webServer`): publish a converted dataset
-  -> appears in gallery -> colleague opens it -> leaves a pinned comment ->
-  embed deep link renders chrome-free with the pin's level preselected.
+- e2e (Playwright, real server via `webServer`): sign in as the seeded
+  admin -> publish a converted dataset -> appears in gallery -> colleague
+  (second account) opens it -> leaves a pinned comment -> embed deep link
+  renders chrome-free with the pin's level preselected.
 
 ## 9. Deployment
 
@@ -266,7 +301,8 @@ interface Comment {
 - iOS/Android apps
 - Shapefile import (loose .shp/.dbf/.prj sets)
 - Comment threads, mentions, resolve/close workflow
-- Auth and per-dataset permissions
+- Per-dataset permissions, SSO/Windows-integrated auth, password reset and
+  account-management UI (v1 accounts are CLI-managed, write-gated only)
 - Turn-by-turn navigation/routing
 - Dataset version history (current: overwrite on republish)
 - Multi-dataset overlay/comparison
