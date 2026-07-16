@@ -9,7 +9,11 @@ export type ArchiveErrorCode =
   | "invalid_feature_collection"
   | "duplicate_feature_id"
   | "worker_failed"
-  | "fetch_failed";
+  | "fetch_failed"
+  | "invalid_geodatabase"
+  | "gdb_too_large"
+  | "gdb_conversion_failed"
+  | "snapshot_version_mismatch";
 
 export class ArchiveError extends Error {
   constructor(
@@ -37,4 +41,12 @@ export const archiveErrorCopy: Record<ArchiveErrorCode, string> = {
   worker_failed: "The venue could not be processed. Try the archive again.",
   fetch_failed:
     "The IMDF archive could not be downloaded. Check the link and the host\u2019s CORS settings.",
+  invalid_geodatabase:
+    "The selected files do not contain a readable Esri File Geodatabase.",
+  gdb_too_large:
+    "The selected GDB data exceeds the 10,000-file, 100 MiB archive, 200 MiB per-file, or 500 MiB processing limit.",
+  gdb_conversion_failed:
+    "The selected GDB layers could not be converted. Review the layer choices and source coordinate systems.",
+  snapshot_version_mismatch:
+    "This dataset was published with an unsupported format version. Ask the publisher to republish it.",
 };
