@@ -131,19 +131,21 @@ export class PlatformStore {
       }
     }
     for (const [id, group] of groups) {
-      // A clean live blob with no interrupted-op sidecars is trusted as-is.
-      if (group.sidecars.length === 0) {
-        continue;
-      }
       const livePath = path.join(dir, `${id}.zip`);
       const expected = catalogHash.get(id);
       if (expected === undefined) {
+        // Uncataloged: an orphaned first-time put (blob published before catalog commit)
+        // or committed-delete leftovers. Discard everything, sidecars or not.
         if (group.live) {
           await rm(livePath, { force: true });
         }
         for (const name of group.sidecars) {
           await rm(path.join(dir, name), { force: true });
         }
+        continue;
+      }
+      // A clean live blob for a cataloged id with no interrupted-op sidecars is trusted.
+      if (group.sidecars.length === 0) {
         continue;
       }
       const liveHash = group.live

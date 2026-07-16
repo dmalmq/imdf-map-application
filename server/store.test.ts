@@ -261,4 +261,17 @@ describe("PlatformStore", () => {
     expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
     expect(await reopened.listComments("tokyo-station")).toEqual([created]);
   });
+
+  it("removes an uncataloged live blob left by a first-time put crash before catalog commit", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    // Crash state: a second, never-committed dataset's blob was published with no catalog entry.
+    const ghost = path.join(dir, "blobs", "ghost.zip");
+    await writeFile(ghost, ZIP);
+    const reopened = await PlatformStore.open(dir);
+    expect(existsSync(ghost)).toBe(false);
+    expect(reopened.listCatalog().map((entry) => entry.id)).toEqual(["tokyo-station"]);
+    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
+  });
 });
