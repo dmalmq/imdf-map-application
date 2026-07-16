@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { LocaleCode } from "../imdf/types";
 import type { ThemeId } from "../theme/types";
@@ -11,6 +12,12 @@ const ui = {
   japanese: { ja: "日本語", en: "日本語" },
   english: { ja: "English", en: "English" },
   open: { ja: "IMDF ZIP を開く", en: "Open IMDF ZIP" },
+  gdbArchive: { ja: "GDB アーカイブを開く", en: "Open GDB archive(s)" },
+  gdbFolder: { ja: "GDB フォルダを開く", en: "Open GDB folder" },
+  gdbFolderUnsupported: {
+    ja: "このブラウザーはフォルダ選択に対応していません。各 .gdb を ZIP 化して「GDB アーカイブを開く」をご利用ください。",
+    en: "This browser cannot pick folders. Zip each .gdb and use Open GDB archive(s).",
+  },
 } as const;
 
 export interface ViewerMenuProps {
@@ -22,7 +29,11 @@ export interface ViewerMenuProps {
   onLocaleChange: (locale: LocaleCode) => void;
   onThemeChange: (themeId: ThemeId) => void;
   onOpenFile: () => void;
+  onOpenGdbArchives: () => void;
+  onOpenGdbFolder: () => void;
+  gdbFolderSupported?: boolean;
   onOpenChange: (open: boolean) => void;
+  accountSlot?: ReactNode;
 }
 
 export function ViewerMenu({
@@ -34,7 +45,11 @@ export function ViewerMenu({
   onLocaleChange,
   onThemeChange,
   onOpenFile,
+  onOpenGdbArchives,
+  onOpenGdbFolder,
+  gdbFolderSupported = true,
   onOpenChange,
+  accountSlot,
 }: ViewerMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -126,9 +141,32 @@ export function ViewerMenu({
               </div>
               <ThemeSwitcher themeId={themeId} locale={locale} onChange={onThemeChange} />
               {showFileControls ? (
-                <button type="button" className="viewer-menu__open" onClick={onOpenFile}>
-                  {ui.open[locale]}
-                </button>
+                <>
+                  <button type="button" className="viewer-menu__open" onClick={onOpenFile}>
+                    {ui.open[locale]}
+                  </button>
+                  <button
+                    type="button"
+                    className="viewer-menu__open"
+                    onClick={onOpenGdbArchives}
+                  >
+                    {ui.gdbArchive[locale]}
+                  </button>
+                  {gdbFolderSupported ? (
+                    <button
+                      type="button"
+                      className="viewer-menu__open"
+                      onClick={onOpenGdbFolder}
+                    >
+                      {ui.gdbFolder[locale]}
+                    </button>
+                  ) : (
+                    <p className="viewer-menu__hint">{ui.gdbFolderUnsupported[locale]}</p>
+                  )}
+                </>
+              ) : null}
+              {accountSlot !== undefined ? (
+                <div className="viewer-menu__account">{accountSlot}</div>
               ) : null}
             </div>,
             triggerRef.current?.closest(".app") ?? document.body,

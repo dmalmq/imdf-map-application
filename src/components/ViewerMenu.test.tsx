@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ViewerMenu } from "./ViewerMenu";
+import { AccountStatus } from "./AccountStatus";
 
 const baseProps = {
   venueName: "Test Station",
@@ -12,6 +13,8 @@ const baseProps = {
   onLocaleChange: () => {},
   onThemeChange: () => {},
   onOpenFile: () => {},
+  onOpenGdbArchives: () => {},
+  onOpenGdbFolder: () => {},
   onOpenChange: () => {},
 };
 
@@ -51,6 +54,29 @@ describe("ViewerMenu", () => {
     expect(screen.getByRole("button", { name: "Open IMDF ZIP" })).toBeTruthy();
   });
 
+  it("shows GDB archive/folder controls, gates them by file controls, and hides folder when unsupported", async () => {
+    const user = userEvent.setup();
+    const onOpenGdbArchives = vi.fn();
+    const onOpenGdbFolder = vi.fn();
+    const { rerender } = render(
+      <ViewerMenu {...baseProps} onOpenGdbArchives={onOpenGdbArchives} onOpenGdbFolder={onOpenGdbFolder} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Menu" }));
+    await user.click(screen.getByRole("button", { name: "Open GDB archive(s)" }));
+    expect(onOpenGdbArchives).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Open GDB folder" }));
+    expect(onOpenGdbFolder).toHaveBeenCalledTimes(1);
+
+    // The panel stays open across rerenders, so re-render props reflect live.
+    rerender(<ViewerMenu {...baseProps} gdbFolderSupported={false} />);
+    expect(screen.getByRole("button", { name: "Open GDB archive(s)" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open GDB folder" })).toBeNull();
+    expect(screen.getByText(/Zip each \.gdb and use Open GDB archive/i)).toBeTruthy();
+
+    rerender(<ViewerMenu {...baseProps} showFileControls={false} />);
+    expect(screen.queryByRole("button", { name: "Open GDB archive(s)" })).toBeNull();
+  });
+
   it("closes on Escape and outside click, restores focus, and reports opening", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
@@ -68,5 +94,47 @@ describe("ViewerMenu", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(trigger);
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("renders the account slot at the bottom of the open menu", async () => {
+    const user = userEvent.setup();
+    const onSignIn = vi.fn();
+    const { rerender } = render(
+      <ViewerMenu
+        {...baseProps}
+        locale="ja"
+        accountSlot={
+          <AccountStatus account={null} locale="ja" onSignIn={onSignIn} onSignOut={() => {}} />
+        }
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
+
+    const panel = screen.getByRole("dialog", { name: "ビューアーメニュー" });
+    const signInButton = within(panel).getByRole("button", { name: "サインイン" });
+    await user.click(signInButton);
+    expect(onSignIn).toHaveBeenCalledTimes(1);
+    // The account row is the last block in the menu panel.
+    expect(panel.lastElementChild?.className).toBe("viewer-menu__account");
+    expect(panel.lastElementChild?.contains(signInButton)).toBe(true);
+
+    const onSignOut = vi.fn();
+    rerender(
+      <ViewerMenu
+        {...baseProps}
+        locale="ja"
+        accountSlot={
+          <AccountStatus
+            account={{ username: "alice", role: "user" }}
+            locale="ja"
+            onSignIn={onSignIn}
+            onSignOut={onSignOut}
+          />
+        }
+      />,
+    );
+    expect(within(panel).getByText("alice (user)")).toBeTruthy();
+    await user.click(within(panel).getByRole("button", { name: "サインアウト" }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 });
