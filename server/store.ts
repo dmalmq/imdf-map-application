@@ -106,23 +106,6 @@ export class PlatformStore {
     }
   }
 
-  /** Best-effort removal of committed-delete comment tombstones for an id being (re)published. */
-  private async removeStaleCommentTombstones(id: string): Promise<void> {
-    const dir = path.join(this.dataDir, "comments");
-    const prefix = `${id}.json.tomb-`;
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      if (name.startsWith(prefix)) {
-        await rm(path.join(dir, name), { force: true }).catch(() => undefined);
-      }
-    }
-  }
-
   /**
    * Reconcile blob files against the persisted catalog after an interrupted put/delete.
    * The catalog contentHash is authoritative: a live blob that matches is kept and its
@@ -272,14 +255,23 @@ export class PlatformStore {
         contentHash: createHash("sha256").update(blob).digest("hex"),
       };
       const blobPath = this.blobPath(meta.id);
+      const commentsPath = this.commentsPath(meta.id);
+      // A create or reuse (id absent) starts with a durable empty comments file, written
+      // before the catalog commit, so boot recovery treats live comments as authoritative
+      // and discards any stale committed-delete tombstone regardless of cleanup success.
+      // A true overwrite (id present) keeps its existing comments untouched.
+      const isNew = !this.catalog.has(meta.id);
       // Preserve the prior blob so a failed catalog write can be rolled back to a
       // consistent (blob, catalog) pair rather than leaving the two disagreeing.
-      const backup = this.catalog.has(meta.id) ? `${blobPath}.bak-${randomUUID()}` : null;
+      const backup = isNew ? null : `${blobPath}.bak-${randomUUID()}`;
       if (backup) {
         await rename(blobPath, backup);
       }
       try {
         await this.atomicWrite(blobPath, blob);
+        if (isNew) {
+          await this.atomicWrite(commentsPath, JSON.stringify([], null, 2));
+        }
         const rows = [...this.catalog.values()].filter((entry) => entry.id !== meta.id);
         rows.push(stored);
         await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
@@ -290,6 +282,9 @@ export class PlatformStore {
         await rm(blobPath, { force: true });
         if (backup) {
           await rename(backup, blobPath);
+        }
+        if (isNew) {
+          await rm(commentsPath, { force: true });
         }
         throw error;
       }
@@ -302,10 +297,6 @@ export class PlatformStore {
           console.warn(`[store] failed to remove blob backup ${backup}: ${String(error)}`);
         });
       }
-      // A prior committed delete of this id may have left comment tombstones whose
-      // best-effort cleanup failed; drop them so a reused id cannot resurrect old
-      // comments on the next boot. Overwrites keep their live comments untouched.
-      await this.removeStaleCommentTombstones(meta.id);
       const { contentHash: _hash, ...entry } = stored;
       return entry;
     });

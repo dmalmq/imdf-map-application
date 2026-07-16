@@ -137,6 +137,7 @@ describe("PlatformStore", () => {
     expect(existsSync(store.blobPath("tokyo-station"))).toBe(false);
     expect(store.getEntry("tokyo-station")).toBeUndefined();
     expect(store.listCatalog()).toEqual([]);
+    expect(existsSync(path.join(dir, "comments", "tokyo-station.json"))).toBe(false);
   });
 
   it("rolls back an overwrite when catalog persistence fails, preserving the old blob and entry", async () => {
@@ -313,6 +314,24 @@ describe("PlatformStore", () => {
     }
     // Reuse the id in-process; the stale committed-delete comment tombstone must be cleared.
     await store.putDataset(META, ZIP);
+    const reopened = await PlatformStore.open(dir);
+    expect(await reopened.listComments("tokyo-station")).toEqual([]);
+  });
+
+  it("durably prevents comment resurrection when delete AND reuse cleanup both fail", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    await store.addComment("tokyo-station", { author: "alice", text: "old" });
+    // Keep every `.json` rm failing across the delete and the in-process reuse, so the fix
+    // cannot depend on any tombstone cleanup succeeding.
+    mockCtl.rejectRmSubstring = ".json";
+    try {
+      expect(await store.deleteDataset("tokyo-station")).toBe(true);
+      await store.putDataset(META, ZIP);
+    } finally {
+      mockCtl.rejectRmSubstring = null;
+    }
     const reopened = await PlatformStore.open(dir);
     expect(await reopened.listComments("tokyo-station")).toEqual([]);
   });
