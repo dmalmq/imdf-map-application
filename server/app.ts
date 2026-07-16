@@ -52,34 +52,34 @@ function sendError(res: ServerResponse, status: number, code: string, message: s
 }
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
-  const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
-  const declared = Number(req.headers["content-length"]);
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    req.resume();
-    reject(new BodyTooLarge());
-    return promise;
-  }
-  const chunks: Buffer[] = [];
-  let total = 0;
-  let tooLarge = false;
-  req.on("data", (chunk: Buffer) => {
-    if (tooLarge) return;
-    total += chunk.length;
-    if (total > maxBytes) {
-      tooLarge = true;
-      chunks.length = 0;
+  return new Promise<Buffer>((resolve, reject) => {
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      req.resume();
       reject(new BodyTooLarge());
       return;
     }
-    chunks.push(chunk);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let tooLarge = false;
+    req.on("data", (chunk: Buffer) => {
+      if (tooLarge) return;
+      total += chunk.length;
+      if (total > maxBytes) {
+        tooLarge = true;
+        chunks.length = 0;
+        reject(new BodyTooLarge());
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (!tooLarge) resolve(Buffer.concat(chunks));
+    });
+    req.on("error", (error) => {
+      if (!tooLarge) reject(error);
+    });
   });
-  req.on("end", () => {
-    if (!tooLarge) resolve(Buffer.concat(chunks));
-  });
-  req.on("error", (error) => {
-    if (!tooLarge) reject(error);
-  });
-  return promise;
 }
 
 function isZip(body: Buffer): boolean {
