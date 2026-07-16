@@ -122,18 +122,24 @@ export class PlatformStore {
         rows.push(stored);
         await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
       } catch (error) {
+        // Roll back to the prior (blob, catalog) pair. Remove the just-written blob
+        // first so restoring the backup cannot collide with Windows rename-replace
+        // semantics and strand the pair.
+        await rm(blobPath, { force: true });
         if (backup) {
           await rename(backup, blobPath);
-        } else {
-          await rm(blobPath, { force: true });
         }
         throw error;
       }
-      if (backup) {
-        await rm(backup, { force: true });
-      }
-      // Durable state now agrees; only then does the in-memory view advance.
+      // The catalog write above is the durable commit point; advance the in-memory
+      // view immediately so a failed backup cleanup cannot turn a committed put into
+      // a rejection. Backup removal is best-effort housekeeping only.
       this.catalog.set(meta.id, stored);
+      if (backup) {
+        await rm(backup, { force: true }).catch((error: unknown) => {
+          console.warn(`[store] failed to remove blob backup ${backup}: ${String(error)}`);
+        });
+      }
       const { contentHash: _hash, ...entry } = stored;
       return entry;
     });

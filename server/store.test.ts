@@ -1,11 +1,26 @@
 // @vitest-environment node
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PlatformStore } from "./store";
 import type { CatalogEntry } from "./types";
+import type { PathLike, RmOptions } from "node:fs";
+import * as NodeFsPromises from "node:fs/promises";
+
+const mockCtl = vi.hoisted(() => ({ failBackupRm: false }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFsPromises>();
+  return {
+    ...actual,
+    rm: (target: PathLike, options?: RmOptions): Promise<void> =>
+      mockCtl.failBackupRm && String(target).includes(".bak-")
+        ? Promise.reject(new Error("cleanup boom"))
+        : actual.rm(target, options),
+  };
+});
 
 async function tempDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "gis-store-"));
@@ -125,6 +140,7 @@ describe("PlatformStore", () => {
     await expect(store.putDataset({ ...META, name: "v2" }, Buffer.from([9, 9, 9]))).rejects.toThrow();
     expect(await readFile(store.blobPath("tokyo-station"))).toEqual(original);
     expect(store.getEntry("tokyo-station")?.name).toBe("東京駅");
+    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
   });
 
   it("does not mutate in-memory users or sessions when persistence fails", async () => {
@@ -140,5 +156,23 @@ describe("PlatformStore", () => {
     ).rejects.toThrow();
     expect(store.findUser("admin")).toBeUndefined();
     expect(store.findSession("t1")).toBeUndefined();
+  });
+
+  it("keeps an overwrite committed even when post-commit backup cleanup fails", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const NEW = Buffer.from([1, 2, 3, 4]);
+    mockCtl.failBackupRm = true;
+    try {
+      const entry = await store.putDataset({ ...META, name: "v2", featureCount: 42 }, NEW);
+      expect(entry.name).toBe("v2");
+    } finally {
+      mockCtl.failBackupRm = false;
+    }
+    expect(store.getEntry("tokyo-station")?.name).toBe("v2");
+    expect(store.getEntry("tokyo-station")?.featureCount).toBe(42);
+    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(NEW);
+    expect(store.listCatalog()[0]?.name).toBe("v2");
   });
 });
