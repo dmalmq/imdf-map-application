@@ -106,6 +106,23 @@ export class PlatformStore {
     }
   }
 
+  /** Best-effort removal of committed-delete comment tombstones for an id being (re)published. */
+  private async removeStaleCommentTombstones(id: string): Promise<void> {
+    const dir = path.join(this.dataDir, "comments");
+    const prefix = `${id}.json.tomb-`;
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (name.startsWith(prefix)) {
+        await rm(path.join(dir, name), { force: true }).catch(() => undefined);
+      }
+    }
+  }
+
   /**
    * Reconcile blob files against the persisted catalog after an interrupted put/delete.
    * The catalog contentHash is authoritative: a live blob that matches is kept and its
@@ -285,6 +302,10 @@ export class PlatformStore {
           console.warn(`[store] failed to remove blob backup ${backup}: ${String(error)}`);
         });
       }
+      // A prior committed delete of this id may have left comment tombstones whose
+      // best-effort cleanup failed; drop them so a reused id cannot resurrect old
+      // comments on the next boot. Overwrites keep their live comments untouched.
+      await this.removeStaleCommentTombstones(meta.id);
       const { contentHash: _hash, ...entry } = stored;
       return entry;
     });
@@ -303,8 +324,19 @@ export class PlatformStore {
       // Move blob and comments aside before the catalog commit so a commit failure can be
       // rolled back and a crash mid-delete leaves recoverable tombstones rather than a
       // committed entry with stale data (or comments that resurface when the id is reused).
-      const movedBlob = await this.renameIfExists(blobPath, blobTomb);
-      const movedComments = await this.renameIfExists(commentsPath, commentsTomb);
+      let movedBlob = false;
+      let movedComments = false;
+      try {
+        movedBlob = await this.renameIfExists(blobPath, blobTomb);
+        movedComments = await this.renameIfExists(commentsPath, commentsTomb);
+      } catch (error) {
+        // A comments move-aside failure must restore any already-staged blob before
+        // rejecting, so the dataset is left fully intact.
+        if (movedBlob) {
+          await rename(blobTomb, blobPath);
+        }
+        throw error;
+      }
       const rows = [...this.catalog.values()].filter((entry) => entry.id !== id);
       try {
         await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));

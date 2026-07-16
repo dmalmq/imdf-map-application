@@ -8,11 +8,15 @@ import { PlatformStore } from "./store";
 import type { CatalogEntry } from "./types";
 import type { PathLike, RmOptions } from "node:fs";
 
-const mockCtl = vi.hoisted(() => ({ rejectRmSubstring: null as string | null }));
+const mockCtl = vi.hoisted(() => ({
+  rejectRmSubstring: null as string | null,
+  rejectRenameSubstring: null as string | null,
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = (await importOriginal()) as {
     rm: (target: PathLike, options?: RmOptions) => Promise<void>;
+    rename: (from: PathLike, to: PathLike) => Promise<void>;
   } & Record<string, unknown>;
   return {
     ...actual,
@@ -20,6 +24,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       mockCtl.rejectRmSubstring !== null && String(target).includes(mockCtl.rejectRmSubstring)
         ? Promise.reject(new Error("cleanup boom"))
         : actual.rm(target, options),
+    rename: (from: PathLike, to: PathLike): Promise<void> =>
+      mockCtl.rejectRenameSubstring !== null && String(to).includes(mockCtl.rejectRenameSubstring)
+        ? Promise.reject(new Error("rename boom"))
+        : actual.rename(from, to),
   };
 });
 
@@ -273,5 +281,39 @@ describe("PlatformStore", () => {
     expect(existsSync(ghost)).toBe(false);
     expect(reopened.listCatalog().map((entry) => entry.id)).toEqual(["tokyo-station"]);
     expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
+  });
+
+  it("restores an already-staged blob when the comments move-aside fails during delete", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    await store.addComment("tokyo-station", { author: "alice", text: "keep" });
+    mockCtl.rejectRenameSubstring = ".json.tomb-";
+    try {
+      await expect(store.deleteDataset("tokyo-station")).rejects.toThrow();
+    } finally {
+      mockCtl.rejectRenameSubstring = null;
+    }
+    expect(store.getEntry("tokyo-station")?.name).toBe("東京駅");
+    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(ZIP);
+    expect(await store.listComments("tokyo-station")).toHaveLength(1);
+    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
+  });
+
+  it("does not resurrect comments after delete cleanup fails, the id is reused, then reopened", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    await store.addComment("tokyo-station", { author: "alice", text: "old" });
+    mockCtl.rejectRmSubstring = ".json";
+    try {
+      expect(await store.deleteDataset("tokyo-station")).toBe(true);
+    } finally {
+      mockCtl.rejectRmSubstring = null;
+    }
+    // Reuse the id in-process; the stale committed-delete comment tombstone must be cleared.
+    await store.putDataset(META, ZIP);
+    const reopened = await PlatformStore.open(dir);
+    expect(await reopened.listComments("tokyo-station")).toEqual([]);
   });
 });
