@@ -1,13 +1,9 @@
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
+import { CliUsageError, argValue, boundPort, promptPassword } from "./cli.js";
 import { createApp } from "./app.js";
 import { hashPassword } from "./auth.js";
 import { PlatformStore } from "./store.js";
 
-function argValue(args: string[], flag: string): string | null {
-  const index = args.indexOf(flag);
-  return index !== -1 && index + 1 < args.length ? (args[index + 1] ?? null) : null;
-}
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -25,9 +21,7 @@ async function main(): Promise<void> {
     }
     let password = argValue(args, "--password");
     if (password === null) {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      password = await rl.question(`Password for ${username}: `);
-      rl.close();
+      password = await promptPassword(username);
     }
     if (password.length < 4) {
       console.error("Password must be at least 4 characters.");
@@ -50,10 +44,18 @@ async function main(): Promise<void> {
   const store = await PlatformStore.open(dataDir);
   const server = createApp({ store, appDir: appArg === null ? null : path.resolve(appArg) });
   server.listen(port, () => {
+    const actualPort = boundPort(server.address());
     console.log(
-      `GIS dataset platform listening on http://127.0.0.1:${port} (data: ${dataDir})`,
+      `GIS dataset platform listening on http://127.0.0.1:${actualPort} (data: ${dataDir})`,
     );
   });
 }
 
-void main();
+void main().catch((error: unknown) => {
+  if (error instanceof CliUsageError) {
+    console.error(error.message);
+  } else {
+    console.error(error);
+  }
+  process.exitCode = 1;
+});

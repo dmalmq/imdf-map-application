@@ -1,0 +1,81 @@
+import type { Server } from "node:http";
+import { createInterface } from "node:readline/promises";
+
+export class CliUsageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CliUsageError";
+  }
+}
+
+export function argValue(args: string[], flag: string): string | null {
+  const index = args.indexOf(flag);
+  if (index === -1) return null;
+  const value = args[index + 1];
+  if (value === undefined || value === "" || value.startsWith("--")) {
+    throw new CliUsageError(`${flag} requires a value.`);
+  }
+  return value;
+}
+
+export async function promptPassword(
+  username: string,
+  input: NodeJS.ReadStream = process.stdin,
+  output: NodeJS.WritableStream = process.stdout,
+): Promise<string> {
+  const prompt = `Password for ${username}: `;
+  if (!input.isTTY || typeof input.setRawMode !== "function") {
+    const rl = createInterface({ input, output, terminal: false });
+    try {
+      return await rl.question(prompt);
+    } finally {
+      rl.close();
+    }
+  }
+
+  output.write(prompt);
+  const wasRaw = input.isRaw ?? false;
+  input.setRawMode(true);
+  input.setEncoding("utf8");
+  input.resume();
+
+  return new Promise<string>((resolve, reject) => {
+    let value = "";
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      input.off("data", onData);
+      input.setRawMode(wasRaw);
+      input.pause();
+      output.write("\n");
+      if (error === undefined) resolve(value);
+      else reject(error);
+    };
+    const onData = (chunk: string | Buffer) => {
+      for (const character of chunk.toString()) {
+        if (character === "\r" || character === "\n") {
+          finish();
+          return;
+        }
+        if (character === "\u0003") {
+          finish(new Error("Password prompt cancelled."));
+          return;
+        }
+        if (character === "\b" || character === "\u007f") {
+          value = Array.from(value).slice(0, -1).join("");
+        } else if (character >= " ") {
+          value += character;
+        }
+      }
+    };
+    input.on("data", onData);
+  });
+}
+
+export function boundPort(address: ReturnType<Server["address"]>): number {
+  if (address === null || typeof address === "string") {
+    throw new Error("Server has no TCP listening address.");
+  }
+  return address.port;
+}
