@@ -475,7 +475,18 @@ export function App() {
       runVenueLoad(
         `${datasetId}.zip`,
         async (signal) => {
-          const entries = await fetchCatalog(signal);
+          let entries;
+          try {
+            entries = await fetchCatalog(signal);
+          } catch (caught: unknown) {
+            if (isAbortError(caught)) {
+              throw caught;
+            }
+            throw new ArchiveError("fetch_failed", "Dataset catalog could not be fetched.", {
+              dataset: datasetId,
+              cause: caught instanceof Error ? caught.message : String(caught),
+            });
+          }
           const entry = entries.find((candidate) => candidate.id === datasetId);
           if (entry === undefined) {
             throw new ArchiveError("fetch_failed", "Dataset not found on the server.", {

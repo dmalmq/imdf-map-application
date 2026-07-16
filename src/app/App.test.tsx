@@ -1394,4 +1394,13 @@ describe("App dataset loading", () => {
     await userEvent.click(retry!);
     expect(await screen.findByTestId("indoor-map-stub")).toBeTruthy();
   });
+
+  it("classifies catalog transport failures as fetch failures", async () => {
+    window.history.replaceState(null, "", "/?dataset=tokyo");
+    fetchCatalogMock.mockRejectedValueOnce(new TypeError("network down"));
+    render(<App />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(archiveErrorCopy.fetch_failed);
+    expect(alert.textContent).not.toContain(archiveErrorCopy.worker_failed);
+  });
 });
