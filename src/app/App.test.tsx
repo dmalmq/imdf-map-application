@@ -191,6 +191,17 @@ vi.mock("../map/IndoorMap", () => ({
         >
           Clear map selection
         </button>
+        {props.onMapClick !== undefined ? (
+          <button
+            type="button"
+            data-testid="map-click-proxy"
+            onClick={() => {
+              props.onMapClick?.([139.76, 35.68]);
+            }}
+          >
+            map click
+          </button>
+        ) : null}
       </div>
     );
   },
@@ -1576,5 +1587,85 @@ describe("App publish flow", () => {
     render(<App />);
     await screen.findByTestId("indoor-map-stub");
     expect(screen.queryByRole("button", { name: "公開" })).toBeNull();
+  });
+});
+
+describe("App comments", () => {
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  async function openDataset(): Promise<void> {
+    window.history.replaceState(null, "", "/?dataset=tokyo");
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchMeMock.mockResolvedValueOnce({ username: "alice", role: "user" });
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await screen.findByTestId("indoor-map-stub");
+  }
+
+  it("opens the panel, arms a pin, captures a map click, and posts", async () => {
+    fetchCommentsMock.mockResolvedValue([]);
+    postCommentMock.mockResolvedValue({
+      id: "c1",
+      author: "alice",
+      text: "x",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    });
+    await openDataset();
+    await userEvent.click(screen.getByRole("button", { name: "コメント" }));
+    await userEvent.click(await screen.findByRole("button", { name: "地図にピンを打つ" }));
+    await userEvent.click(await screen.findByTestId("map-click-proxy"));
+    await userEvent.type(screen.getByRole("textbox", { name: "コメント" }), "ここが狭い");
+    await userEvent.click(screen.getByRole("button", { name: "投稿" }));
+    await waitFor(() => {
+      expect(postCommentMock).toHaveBeenCalledWith(
+        "tokyo",
+        expect.objectContaining({
+          text: "ここが狭い",
+          levelId: LEVEL_1F.id,
+          lngLat: [139.76, 35.68],
+        }),
+      );
+    });
+  });
+
+  it("hides the comments toggle for local files and in embed mode", async () => {
+    probeCatalogMock.mockResolvedValueOnce([]);
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+    const local = render(<App />);
+    await uploadViaHiddenInput(zipFile("local.zip"));
+    await screen.findByTestId("indoor-map-stub");
+    expect(screen.queryByRole("button", { name: "コメント" })).toBeNull();
+    local.unmount();
+
+    window.history.replaceState(null, "", "/?dataset=tokyo&embed=1");
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await screen.findByTestId("indoor-map-stub");
+    expect(screen.queryByRole("button", { name: "コメント" })).toBeNull();
+  });
+
+  it("keeps dataset identity when opening a gallery card so comments are available", async () => {
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /東京駅/ }));
+    await screen.findByTestId("indoor-map-stub");
+    expect(screen.getByRole("button", { name: "コメント" })).toBeTruthy();
+  });
+
+  it("opens sign-in from a signed-out comments panel", async () => {
+    fetchMeMock.mockResolvedValueOnce(null);
+    await openDataset();
+    await userEvent.click(screen.getByRole("button", { name: "コメント" }));
+    await userEvent.click(await screen.findByRole("button", { name: "サインインしてコメント" }));
+    expect(screen.getByLabelText("アカウントにサインイン")).toBeTruthy();
   });
 });

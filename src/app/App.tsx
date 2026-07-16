@@ -13,6 +13,7 @@ import {
 import { FloatingSearch } from "../components/FloatingSearch";
 import { AccountStatus } from "../components/AccountStatus";
 import { DatasetGallery } from "../components/DatasetGallery";
+import { CommentsPanel } from "../components/CommentsPanel";
 import { PublishDialog } from "../components/PublishDialog";
 import { SignInDialog } from "../components/SignInDialog";
 import { SelectedFeatureSheet } from "../components/SelectedFeatureSheet";
@@ -33,7 +34,7 @@ import {
   logout,
   probeCatalog,
 } from "../platform/catalogClient";
-import type { AccountInfo, CatalogEntry } from "../platform/types";
+import type { AccountInfo, CatalogEntry, CommentRecord } from "../platform/types";
 import { buildGdbVenue, suggestGdbMapping } from "../gdb/gdbMapping";
 import {
   createGdbImportSession,
@@ -70,6 +71,7 @@ const ui = {
   openGdbArchive: { ja: "GDB アーカイブを開く", en: "Open GDB archive(s)" },
   openGdbFolder: { ja: "GDB フォルダを開く", en: "Open GDB folder" },
   publish: { ja: "公開", en: "Publish" },
+  comments: { ja: "コメント", en: "Comments" },
 } as const;
 
 /** Compact sheet floats above the bottom search bar (CSS `bottom: 72px`). */
@@ -189,6 +191,7 @@ export function App() {
   const gdbFolderInputRef = useRef<HTMLInputElement>(null);
   const gdbSessionRef = useRef<GdbImportSession | null>(null);
   const lastImdfFileRef = useRef<File | null>(null);
+  const flyTokenRef = useRef(0);
   /**
    * Post-review focus once the dialog unmounts:
    * - `"map"` → `.maplibregl-canvas`
@@ -213,6 +216,16 @@ export function App() {
   const [signInOpen, setSignInOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [localVenueKind, setLocalVenueKind] = useState<"imdf" | "gdb" | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [pinArmed, setPinArmed] = useState(false);
+  const [pinDraft, setPinDraft] = useState<{
+    levelId: string;
+    lngLat: [number, number];
+  } | null>(null);
+  const [flyTarget, setFlyTarget] = useState<{
+    token: number;
+    lngLat: [number, number];
+  } | null>(null);
   /**
    * The published dataset currently owning the viewer, from `?dataset=` or a
    * gallery card. Local IMDF/GDB/src loads clear it; the landing gallery is
@@ -582,6 +595,12 @@ export function App() {
     };
   }, [embed]);
 
+  useEffect(() => {
+    setCommentsOpen(false);
+    setPinArmed(false);
+    setPinDraft(null);
+  }, [activeDatasetId]);
+
   // The folder input needs the non-standard `webkitdirectory` attribute set
   // imperatively so a parent containing several `.gdb` folders can be chosen.
   useEffect(() => {
@@ -719,6 +738,37 @@ export function App() {
 
   const onMapSelectFeature = useCallback((featureId: string | null) => {
     dispatch({ type: "select_feature", featureId });
+  }, []);
+
+  const onCommentMapClick = useCallback(
+    (lngLat: [number, number]) => {
+      if (!pinArmed || venueState === null) {
+        return;
+      }
+      setPinDraft({ levelId: venueState.selectedLevelId, lngLat });
+      setPinArmed(false);
+    },
+    [pinArmed, venueState],
+  );
+
+  const focusComment = useCallback((comment: CommentRecord) => {
+    if (comment.featureId !== undefined) {
+      dispatch(
+        comment.levelId === undefined
+          ? { type: "select_feature", featureId: comment.featureId }
+          : {
+              type: "select_feature",
+              featureId: comment.featureId,
+              levelId: comment.levelId,
+            },
+      );
+    } else if (comment.levelId !== undefined) {
+      dispatch({ type: "select_level", levelId: comment.levelId });
+    }
+    if (comment.lngLat !== undefined) {
+      flyTokenRef.current += 1;
+      setFlyTarget({ token: flyTokenRef.current, lngLat: comment.lngLat });
+    }
   }, []);
 
   const onMapDragOver = useCallback((event: DragEvent) => {
@@ -917,7 +967,31 @@ export function App() {
                   compact && sheetHeight > 0 ? sheetHeight + SHEET_BOTTOM_CLEARANCE : 0
                 }
                 onSelectFeature={onMapSelectFeature}
+                flyTo={flyTarget}
+                {...(commentsOpen && pinArmed ? { onMapClick: onCommentMapClick } : {})}
               />
+              {!embed && commentsOpen && activeDatasetId !== null ? (
+                <CommentsPanel
+                  datasetId={activeDatasetId}
+                  account={account}
+                  locale={locale}
+                  pinDraft={pinDraft}
+                  selectedFeatureId={venueState.selectedFeatureId}
+                  pinArmed={pinArmed}
+                  onClearPin={() => {
+                    setPinDraft(null);
+                    setPinArmed(false);
+                  }}
+                  onArmPin={() => {
+                    setPinDraft(null);
+                    setPinArmed(true);
+                  }}
+                  onRequestSignIn={() => {
+                    setSignInOpen(true);
+                  }}
+                  onFocusComment={focusComment}
+                />
+              ) : null}
               {compact && selectedContent !== null && venueState.selectedFeatureId !== null ? (
                 <SelectedFeatureSheet
                   content={selectedContent}
@@ -1033,6 +1107,21 @@ export function App() {
                 }}
               >
                 {ui.publish[locale]}
+              </button>
+            ) : null}
+            {state.status === "ready" && activeDatasetId !== null ? (
+              <button
+                type="button"
+                className="account-status__button"
+                aria-pressed={commentsOpen}
+                onClick={() => {
+                  if (commentsOpen) {
+                    setPinArmed(false);
+                  }
+                  setCommentsOpen(!commentsOpen);
+                }}
+              >
+                {ui.comments[locale]}
               </button>
             ) : null}
           </div>
