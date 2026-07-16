@@ -294,11 +294,11 @@ vi.mock("../components/GdbImportDialog", async (importOriginal) => {
 });
 
 import type * as CatalogClientModule from "../platform/catalogClient";
-import type { CatalogEntry } from "../platform/types";
+import type { AccountInfo, CatalogEntry } from "../platform/types";
 
 const probeCatalogMock = vi.fn(async (): Promise<CatalogEntry[] | null> => null);
 const fetchCatalogMock = vi.fn(async (): Promise<CatalogEntry[]> => []);
-const fetchMeMock = vi.fn(async () => null);
+const fetchMeMock = vi.fn(async (): Promise<AccountInfo | null> => null);
 const publishDatasetMock = vi.fn();
 const fetchCommentsMock = vi.fn(async (_datasetId: string) => []);
 const postCommentMock = vi.fn();
@@ -1402,5 +1402,141 @@ describe("App dataset loading", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(archiveErrorCopy.fetch_failed);
     expect(alert.textContent).not.toContain(archiveErrorCopy.worker_failed);
+  });
+});
+
+describe("App platform landing", () => {
+  beforeEach(() => {
+    loadImdfArchiveMock.mockReset();
+    fetchImdfFileMock.mockReset();
+    readVenueSnapshotMock.mockReset();
+    fetchCatalogMock.mockReset();
+    probeCatalogMock.mockReset();
+    fetchMeMock.mockReset();
+    clientLogoutMock.mockClear();
+    createGdbImportSessionMock.mockReset();
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("shows the gallery when the server probe succeeds and opens a dataset in place", async () => {
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    const card = await screen.findByRole("button", { name: /東京駅/ });
+    // The publisher's local-open controls stay available beside the gallery.
+    expect(screen.getByRole("button", { name: "IMDF ZIP を開く" })).toBeTruthy();
+    await userEvent.click(card);
+    expect(await screen.findByTestId("indoor-map-stub")).toBeTruthy();
+    expect(window.location.search).toContain("dataset=tokyo");
+    expect(screen.queryByText("データセット")).toBeNull();
+  });
+
+  it("falls back to the plain dropzone landing when the probe fails", async () => {
+    probeCatalogMock.mockResolvedValueOnce(null);
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "IMDF ZIP を開く" })).toBeTruthy();
+    expect(screen.queryByText("データセット")).toBeNull();
+  });
+
+  it("shows the account row in the viewer menu and reflects /api/me state", async () => {
+    window.history.replaceState(null, "", "/?dataset=tokyo");
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchMeMock.mockResolvedValueOnce({ username: "admin", role: "admin" });
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await screen.findByTestId("indoor-map-stub");
+    await userEvent.click(screen.getByRole("button", { name: "メニュー" }));
+    expect(await screen.findByText(/admin \(admin\)/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "サインアウト" })).toBeTruthy();
+  });
+
+  it("signs out from the menu and reopens the sign-in dialog", async () => {
+    window.history.replaceState(null, "", "/?dataset=tokyo");
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchMeMock.mockResolvedValueOnce({ username: "admin", role: "admin" });
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await screen.findByTestId("indoor-map-stub");
+    await userEvent.click(screen.getByRole("button", { name: "メニュー" }));
+    await userEvent.click(await screen.findByRole("button", { name: "サインアウト" }));
+    expect(clientLogoutMock).toHaveBeenCalledTimes(1);
+    const signIn = await screen.findByRole("button", { name: "サインイン" });
+    expect(screen.queryByText(/admin \(admin\)/)).toBeNull();
+    await userEvent.click(signIn);
+    expect(
+      await screen.findByRole("heading", { name: "アカウントにサインイン" }),
+    ).toBeTruthy();
+  });
+
+  it("suppresses the gallery and account chrome in embed mode", async () => {
+    window.history.replaceState(null, "", "/?dataset=tokyo&embed=1");
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await screen.findByTestId("indoor-map-stub");
+    expect(probeCatalogMock).not.toHaveBeenCalled();
+    expect(fetchMeMock).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "メニュー" }));
+    expect(screen.queryByRole("button", { name: "サインイン" })).toBeNull();
+    expect(screen.queryByText("データセット")).toBeNull();
+  });
+
+  it("records the opened dataset as the active identity before it finishes loading", async () => {
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    const download = deferred<File>();
+    fetchImdfFileMock.mockReturnValue(download.promise);
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /東京駅/ }));
+    // The clicked id becomes the active dataset immediately: the gallery leaves
+    // the landing while the download is still pending.
+    expect(screen.queryByText("データセット")).toBeNull();
+    expect(window.location.search).toContain("dataset=tokyo");
+    download.resolve(zipFile("tokyo.zip"));
+    expect(await screen.findByTestId("indoor-map-stub")).toBeTruthy();
+  });
+
+  it("clears the active dataset for local IMDF imports so the gallery returns", async () => {
+    window.history.replaceState(null, "", "/?dataset=tokyo");
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchCatalogMock.mockRejectedValueOnce(new TypeError("offline"));
+    render(<App />);
+    // The failed deep-linked dataset keeps its id active: no gallery on the banner.
+    await screen.findByRole("alert");
+    expect(screen.queryByText("データセット")).toBeNull();
+    const load = deferred<LoadedVenue>();
+    loadImdfArchiveMock.mockReturnValue(load.promise);
+    await uploadViaHiddenInput(zipFile("local.zip"));
+    // A local import clears the active dataset, so the landing gallery returns.
+    expect(await screen.findByText("データセット")).toBeTruthy();
+    load.resolve(buildMinimalVenue());
+    expect(await screen.findByTestId("indoor-map-stub")).toBeTruthy();
+  });
+
+  it("clears the active dataset for GDB imports", async () => {
+    window.history.replaceState(null, "", "/?dataset=tokyo");
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchCatalogMock.mockRejectedValueOnce(new TypeError("offline"));
+    render(<App />);
+    await screen.findByRole("alert");
+    expect(screen.queryByText("データセット")).toBeNull();
+    const inspection = deferred<GdbInspection>();
+    createGdbImportSessionMock.mockReturnValue(
+      makeSession({ inspect: vi.fn(() => inspection.promise) }),
+    );
+    await userEvent.upload(gdbArchiveInput(), zipFile("venue.gdb.zip"));
+    // The pending GDB attempt cleared the active dataset: the gallery returns.
+    expect(await screen.findByText("データセット")).toBeTruthy();
   });
 });

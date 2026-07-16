@@ -11,6 +11,9 @@ import {
   type RefObject,
 } from "react";
 import { FloatingSearch } from "../components/FloatingSearch";
+import { AccountStatus } from "../components/AccountStatus";
+import { DatasetGallery } from "../components/DatasetGallery";
+import { SignInDialog } from "../components/SignInDialog";
 import { SelectedFeatureSheet } from "../components/SelectedFeatureSheet";
 import { resolveSelectedFeatureContent } from "../components/resolveSelectedFeatureContent";
 import { ImdfDropzone } from "../components/ImdfDropzone";
@@ -22,7 +25,14 @@ import { ArchiveError } from "../errors/ArchiveError";
 import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
 import { loadImdfArchive } from "../imdf/loadImdfArchive";
 import { readVenueSnapshot } from "../imdf/venueSnapshot";
-import { datasetBlobUrl, fetchCatalog } from "../platform/catalogClient";
+import {
+  datasetBlobUrl,
+  fetchCatalog,
+  fetchMe,
+  logout,
+  probeCatalog,
+} from "../platform/catalogClient";
+import type { AccountInfo, CatalogEntry } from "../platform/types";
 import { buildGdbVenue, suggestGdbMapping } from "../gdb/gdbMapping";
 import {
   createGdbImportSession,
@@ -195,6 +205,15 @@ export function App() {
   } | null>(null);
   const [gdbError, setGdbError] = useState<ArchiveError | null>(null);
   const [gdbBusy, setGdbBusy] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogEntry[] | null>(null);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
+  /**
+   * The published dataset currently owning the viewer, from `?dataset=` or a
+   * gallery card. Local IMDF/GDB/src loads clear it; the landing gallery is
+   * eligible only while it is null. Task 13 reads it for dataset comments.
+   */
+  const [activeDatasetId, setActiveDatasetId] = useState<string | null>(params.dataset);
   const gdbFolderSupported = useMemo(
     () => typeof document !== "undefined" && "webkitdirectory" in document.createElement("input"),
     [],
@@ -313,6 +332,7 @@ export function App() {
   const handleFile = useCallback(
     (file: File) => {
       lastAttemptKindRef.current = "imdf";
+      setActiveDatasetId(null);
       runVenueLoad(file.name, (signal) => loadImdfArchive(file, signal));
     },
     [runVenueLoad],
@@ -321,6 +341,7 @@ export function App() {
   const runGdbImport = useCallback(
     (mode: "directory" | "archive", files: readonly File[]) => {
       lastAttemptKindRef.current = mode === "directory" ? "gdb-folder" : "gdb-archive";
+      setActiveDatasetId(null);
       abortRef.current?.abort();
       abortRef.current = null;
       disposeGdbSession();
@@ -462,6 +483,7 @@ export function App() {
     }
     const src = params.src;
     lastAttemptKindRef.current = "src";
+    setActiveDatasetId(null);
     runVenueLoad(
       fileNameFromSrc(src),
       (signal) => fetchImdfFile(src, signal).then((file) => loadImdfArchive(file, signal)),
@@ -472,6 +494,7 @@ export function App() {
   const loadDatasetById = useCallback(
     (datasetId: string) => {
       lastAttemptKindRef.current = "dataset";
+      setActiveDatasetId(datasetId);
       runVenueLoad(
         `${datasetId}.zip`,
         async (signal) => {
@@ -502,6 +525,14 @@ export function App() {
     [params.level, runVenueLoad],
   );
 
+  const openDataset = useCallback(
+    (id: string) => {
+      window.history.pushState(null, "", `/?dataset=${encodeURIComponent(id)}`);
+      loadDatasetById(id);
+    },
+    [loadDatasetById],
+  );
+
   useEffect(() => {
     loadFromSrc();
   }, [loadFromSrc]);
@@ -511,6 +542,32 @@ export function App() {
       loadDatasetById(params.dataset);
     }
   }, [params.dataset, loadDatasetById]);
+
+  // One mount-time availability probe plus the account fetch; embed keeps the
+  // viewer free of platform chrome entirely.
+  useEffect(() => {
+    if (embed) {
+      return;
+    }
+    let cancelled = false;
+    void probeCatalog().then((entries) => {
+      if (!cancelled) {
+        setCatalog(entries);
+      }
+    });
+    void fetchMe()
+      .then((me) => {
+        if (!cancelled) {
+          setAccount(me);
+        }
+      })
+      .catch(() => {
+        /* signed-out default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [embed]);
 
   // The folder input needs the non-standard `webkitdirectory` attribute set
   // imperatively so a parent containing several `.gdb` folders can be chosen.
@@ -805,6 +862,24 @@ export function App() {
                 onOpenGdbFolder={openGdbFolder}
                 gdbFolderSupported={gdbFolderSupported}
                 onOpenChange={onMenuOpenChange}
+                accountSlot={
+                  !embed && catalog !== null ? (
+                    <AccountStatus
+                      account={account}
+                      locale={locale}
+                      onSignIn={() => {
+                        setSignInOpen(true);
+                      }}
+                      onSignOut={() => {
+                        void logout()
+                          .catch(() => undefined)
+                          .then(() => {
+                            setAccount(null);
+                          });
+                      }}
+                    />
+                  ) : undefined
+                }
               />
               <div className="map-stage__levels">
                 <LevelSwitcher
@@ -867,17 +942,22 @@ export function App() {
           ) : null}
 
           {showEmptyDropzone ? (
-            <ImdfDropzone
-              locale={locale}
-              status={state.status === "loading" ? "loading" : "empty"}
-              {...(state.status === "loading" ? { fileName: state.fileName } : {})}
-              variant="empty"
-              onFiles={handleFiles}
-              onOpenPicker={openPicker}
-              onOpenGdbArchives={openGdbArchives}
-              onOpenGdbFolder={openGdbFolder}
-              gdbFolderSupported={gdbFolderSupported}
-            />
+            <>
+              {catalog !== null && activeDatasetId === null ? (
+                <DatasetGallery entries={catalog} locale={locale} onOpen={openDataset} />
+              ) : null}
+              <ImdfDropzone
+                locale={locale}
+                status={state.status === "loading" ? "loading" : "empty"}
+                {...(state.status === "loading" ? { fileName: state.fileName } : {})}
+                variant="empty"
+                onFiles={handleFiles}
+                onOpenPicker={openPicker}
+                onOpenGdbArchives={openGdbArchives}
+                onOpenGdbFolder={openGdbFolder}
+                gdbFolderSupported={gdbFolderSupported}
+              />
+            </>
           ) : null}
 
           {showEmbedLoading ? (
@@ -907,6 +987,20 @@ export function App() {
             />
           ) : null}
         </main>
+
+        {!embed && catalog !== null ? (
+          <SignInDialog
+            open={signInOpen}
+            locale={locale}
+            onClose={() => {
+              setSignInOpen(false);
+            }}
+            onSignedIn={(signedIn) => {
+              setAccount(signedIn);
+              setSignInOpen(false);
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );

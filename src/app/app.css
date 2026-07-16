@@ -1237,3 +1237,84 @@ button {
   background: var(--color-accent-soft);
   color: var(--color-accent);
 }
+
+.dataset-gallery {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 8px;
+}
+
+.dataset-gallery__heading {
+  font-size: 18px;
+  margin: 0 0 12px;
+}
+
+.dataset-gallery__empty {
+  color: var(--color-muted);
+}
+
+.dataset-gallery__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.dataset-gallery__card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-panel);
+  cursor: pointer;
+  text-align: left;
+}
+
+.dataset-gallery__card:hover {
+  border-color: var(--color-accent);
+}
+
+.dataset-gallery__kind {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+
+.dataset-gallery__name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dataset-gallery__meta {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+/* Platform landing: with the gallery present the stage scrolls as a column and
+   the local-import card flows below instead of covering the gallery. */
+.map-stage:has(.dataset-gallery) {
+  overflow-y: auto;
+}
+
+.map-stage:has(.dataset-gallery) .imdf-dropzone--empty {
+  position: static;
+  inset: auto;
+  z-index: auto;
+}
+
+.platform-bar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
