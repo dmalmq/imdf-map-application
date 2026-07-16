@@ -242,4 +242,37 @@ describe("venueSnapshot", () => {
     });
   });
 
+  it("rejects encrypted snapshots and stops after 101 entries", async () => {
+    const encryptedWriter = new ZipWriter(new BlobWriter("application/zip"));
+    await encryptedWriter.add("snapshot.json", new TextReader("{}"));
+    const encryptedBytes = new Uint8Array(
+      await (await encryptedWriter.close()).arrayBuffer(),
+    );
+    for (let index = 0; index <= encryptedBytes.length - 10; index += 1) {
+      const local =
+        encryptedBytes[index] === 0x50 &&
+        encryptedBytes[index + 1] === 0x4b &&
+        encryptedBytes[index + 2] === 0x03 &&
+        encryptedBytes[index + 3] === 0x04;
+      const central =
+        encryptedBytes[index] === 0x50 &&
+        encryptedBytes[index + 1] === 0x4b &&
+        encryptedBytes[index + 2] === 0x01 &&
+        encryptedBytes[index + 3] === 0x02;
+      if (local) encryptedBytes[index + 6] = (encryptedBytes[index + 6] ?? 0) | 1;
+      if (central) encryptedBytes[index + 8] = (encryptedBytes[index + 8] ?? 0) | 1;
+    }
+    await expect(readVenueSnapshot(new Blob([encryptedBytes]))).rejects.toMatchObject({
+      code: "invalid_archive",
+    });
+
+    const crowdedWriter = new ZipWriter(new BlobWriter("application/zip"));
+    for (let index = 0; index < 101; index += 1) {
+      await crowdedWriter.add(`entry-${index}.json`, new TextReader("{}"));
+    }
+    await expect(readVenueSnapshot(await crowdedWriter.close())).rejects.toMatchObject({
+      code: "archive_too_large",
+    });
+  });
+
 });

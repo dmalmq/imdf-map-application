@@ -7,6 +7,7 @@ import {
   ZipWriter,
   configure,
 } from "@zip.js/zip.js";
+import type { Entry } from "@zip.js/zip.js";
 import { ArchiveError } from "../errors/ArchiveError";
 import type {
   BoundsTuple,
@@ -282,9 +283,12 @@ export async function readVenueSnapshot(data: Blob): Promise<LoadedVenue> {
   });
   let text: string;
   try {
-    const entries = await reader.getEntries();
-    if (entries.length > MAX_SNAPSHOT_ENTRIES) {
-      throw new ArchiveError("archive_too_large", "The dataset bundle has too many entries.");
+    const entries: Entry[] = [];
+    for await (const entry of reader.getEntriesGenerator()) {
+      entries.push(entry);
+      if (entries.length > MAX_SNAPSHOT_ENTRIES) {
+        throw new ArchiveError("archive_too_large", "The dataset bundle has too many entries.");
+      }
     }
     const matches = entries.filter((entry) => entry.filename === SNAPSHOT_ENTRY);
     if (matches.length === 0) {
@@ -300,7 +304,10 @@ export async function readVenueSnapshot(data: Blob): Promise<LoadedVenue> {
         "The dataset bundle must contain exactly one snapshot.json file.",
       );
     }
-    if (entry.encrypted || entry.uncompressedSize > MAX_SNAPSHOT_BYTES) {
+    if (entry.encrypted) {
+      throw new ArchiveError("invalid_archive", "Encrypted dataset snapshots are not supported.");
+    }
+    if (entry.uncompressedSize > MAX_SNAPSHOT_BYTES) {
       throw new ArchiveError("archive_too_large", "The dataset snapshot exceeds 600 MiB.");
     }
     text = await entry.getData(new TextWriter());
