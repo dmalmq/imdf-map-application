@@ -107,6 +107,9 @@ export function CommentsPanel({
     setComments(null);
     setDeleteError(false);
     setPostError(null);
+    setText("");
+    setAttachFeature(false);
+    setBusy(false);
     reload();
     return () => {
       disposedRef.current = true;

@@ -208,6 +208,30 @@ describe("CommentsPanel", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
   });
 
+
+  it("resets a pending composer when the dataset changes", async () => {
+    fetchCommentsMock.mockResolvedValue([]);
+    let resolvePost!: (comment: CommentRecord) => void;
+    postCommentMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePost = resolve;
+      }),
+    );
+    const p = props();
+    const { rerender } = render(<CommentsPanel {...p} />);
+    await userEvent.type(await screen.findByLabelText("Comment"), "old draft");
+    await userEvent.click(screen.getByRole("button", { name: "Post" }));
+    rerender(<CommentsPanel {...p} datasetId="osaka" />);
+    await screen.findByText("No comments yet.");
+    expect((screen.getByLabelText("Comment") as HTMLTextAreaElement).value).toBe("");
+    await userEvent.type(screen.getByLabelText("Comment"), "new draft");
+    expect((screen.getByRole("button", { name: "Post" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    resolvePost(OLD);
+    await Promise.resolve();
+    expect(p.onClearPin).not.toHaveBeenCalled();
+  });
   it("aborts the in-flight load on unmount", async () => {
     let resolveLoad!: (rows: CommentRecord[]) => void;
     fetchCommentsMock.mockImplementationOnce(
