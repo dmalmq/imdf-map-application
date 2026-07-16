@@ -63,4 +63,14 @@ describe("parseViewerParams", () => {
     expect(parseViewerParams("?theme=toString", BASE).themeId).toBeNull();
     expect(parseViewerParams("?theme=__proto__", BASE).themeId).toBeNull();
   });
+
+  it("accepts valid dataset ids and rejects invalid ones", () => {
+    expect(parseViewerParams("?dataset=tokyo-station", BASE).dataset).toBe("tokyo-station");
+    expect(parseViewerParams("?dataset=a", BASE).dataset).toBe("a");
+    expect(parseViewerParams("?dataset=Tokyo", BASE).dataset).toBeNull();
+    expect(parseViewerParams("?dataset=-bad", BASE).dataset).toBeNull();
+    expect(parseViewerParams("?dataset=", BASE).dataset).toBeNull();
+    expect(parseViewerParams("", BASE).dataset).toBeNull();
+    expect(parseViewerParams(`?dataset=${"a".repeat(65)}`, BASE).dataset).toBeNull();
+  });
 });

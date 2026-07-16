@@ -4,6 +4,7 @@ import type { ThemeId } from "../theme/types";
 
 export interface ViewerParams {
   src: string | null;
+  dataset: string | null;
   level: string | null;
   embed: boolean;
   allowOpen: boolean;
@@ -23,9 +24,13 @@ function safeSrc(raw: string | null, base?: string): string | null {
   }
 }
 
+const DATASET_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 /** Parses the viewer's deep-link query params; invalid values degrade to absent. */
 export function parseViewerParams(search: string, base?: string): ViewerParams {
   const params = new URLSearchParams(search);
+  const datasetRaw = params.get("dataset");
+  const dataset = datasetRaw !== null && DATASET_ID_RE.test(datasetRaw) ? datasetRaw : null;
 
   const levelRaw = params.get("level");
   const level = levelRaw !== null && levelRaw.trim() !== "" ? levelRaw.trim() : null;
@@ -42,5 +47,5 @@ export function parseViewerParams(search: string, base?: string): ViewerParams {
   const themeId: ThemeId | null =
     themeRaw !== null && Object.hasOwn(themes, themeRaw) ? (themeRaw as ThemeId) : null;
 
-  return { src: safeSrc(params.get("src"), base), level, embed, allowOpen, locale, themeId };
+  return { src: safeSrc(params.get("src"), base), dataset, level, embed, allowOpen, locale, themeId };
 }
