@@ -1540,3 +1540,41 @@ describe("App platform landing", () => {
     expect(await screen.findByText("データセット")).toBeTruthy();
   });
 });
+
+describe("App publish flow", () => {
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  async function loadLocalImdf(): Promise<void> {
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await uploadViaHiddenInput(zipFile("minimal.zip"));
+    await screen.findByTestId("indoor-map-stub");
+  }
+
+  it("shows Publish only for admins with a locally loaded venue", async () => {
+    probeCatalogMock.mockResolvedValueOnce([]);
+    fetchMeMock.mockResolvedValueOnce({ username: "admin", role: "admin" });
+    await loadLocalImdf();
+    expect(await screen.findByRole("button", { name: "公開" })).toBeTruthy();
+  });
+
+  it("hides Publish for signed-out viewers with a local venue", async () => {
+    probeCatalogMock.mockResolvedValueOnce([]);
+    await loadLocalImdf();
+    expect(screen.queryByRole("button", { name: "公開" })).toBeNull();
+  });
+
+  it("hides Publish for dataset-loaded venues even as admin", async () => {
+    window.history.replaceState(null, "", "/?dataset=tokyo");
+    probeCatalogMock.mockResolvedValueOnce([CATALOG_SNAPSHOT_ENTRY]);
+    fetchMeMock.mockResolvedValueOnce({ username: "admin", role: "admin" });
+    fetchCatalogMock.mockResolvedValue([CATALOG_SNAPSHOT_ENTRY]);
+    fetchImdfFileMock.mockResolvedValue(zipFile("tokyo.zip"));
+    readVenueSnapshotMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    await screen.findByTestId("indoor-map-stub");
+    expect(screen.queryByRole("button", { name: "公開" })).toBeNull();
+  });
+});

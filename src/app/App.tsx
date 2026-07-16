@@ -13,6 +13,7 @@ import {
 import { FloatingSearch } from "../components/FloatingSearch";
 import { AccountStatus } from "../components/AccountStatus";
 import { DatasetGallery } from "../components/DatasetGallery";
+import { PublishDialog } from "../components/PublishDialog";
 import { SignInDialog } from "../components/SignInDialog";
 import { SelectedFeatureSheet } from "../components/SelectedFeatureSheet";
 import { resolveSelectedFeatureContent } from "../components/resolveSelectedFeatureContent";
@@ -68,6 +69,7 @@ const ui = {
   reviewing: { ja: "GDB レイヤーマッピングを確認", en: "Review GDB layer mappings" },
   openGdbArchive: { ja: "GDB アーカイブを開く", en: "Open GDB archive(s)" },
   openGdbFolder: { ja: "GDB フォルダを開く", en: "Open GDB folder" },
+  publish: { ja: "公開", en: "Publish" },
 } as const;
 
 /** Compact sheet floats above the bottom search bar (CSS `bottom: 72px`). */
@@ -186,6 +188,7 @@ export function App() {
   const gdbArchiveInputRef = useRef<HTMLInputElement>(null);
   const gdbFolderInputRef = useRef<HTMLInputElement>(null);
   const gdbSessionRef = useRef<GdbImportSession | null>(null);
+  const lastImdfFileRef = useRef<File | null>(null);
   /**
    * Post-review focus once the dialog unmounts:
    * - `"map"` → `.maplibregl-canvas`
@@ -208,6 +211,8 @@ export function App() {
   const [catalog, setCatalog] = useState<CatalogEntry[] | null>(null);
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [localVenueKind, setLocalVenueKind] = useState<"imdf" | "gdb" | null>(null);
   /**
    * The published dataset currently owning the viewer, from `?dataset=` or a
    * gallery card. Local IMDF/GDB/src loads clear it; the landing gallery is
@@ -332,6 +337,8 @@ export function App() {
   const handleFile = useCallback(
     (file: File) => {
       lastAttemptKindRef.current = "imdf";
+      lastImdfFileRef.current = file;
+      setLocalVenueKind("imdf");
       setActiveDatasetId(null);
       runVenueLoad(file.name, (signal) => loadImdfArchive(file, signal));
     },
@@ -438,6 +445,8 @@ export function App() {
           // Successful conversion: park keyboard focus on the live map canvas.
           postGdbFocusRef.current = "map";
           disposeGdbSession();
+          lastImdfFileRef.current = null;
+          setLocalVenueKind("gdb");
           dispatch({ type: "load_succeeded", fileName, venue });
         })
         .catch((error: unknown) => {
@@ -483,6 +492,8 @@ export function App() {
     }
     const src = params.src;
     lastAttemptKindRef.current = "src";
+    lastImdfFileRef.current = null;
+    setLocalVenueKind(null);
     setActiveDatasetId(null);
     runVenueLoad(
       fileNameFromSrc(src),
@@ -494,6 +505,8 @@ export function App() {
   const loadDatasetById = useCallback(
     (datasetId: string) => {
       lastAttemptKindRef.current = "dataset";
+      lastImdfFileRef.current = null;
+      setLocalVenueKind(null);
       setActiveDatasetId(datasetId);
       runVenueLoad(
         `${datasetId}.zip`,
@@ -986,7 +999,44 @@ export function App() {
               onCancel={onGdbCancel}
             />
           ) : null}
+          {publishOpen && state.status === "ready" && localVenueKind !== null ? (
+            <PublishDialog
+              venue={state.loadedVenue}
+              defaultName={venueName ?? state.fileName}
+              sourceName={state.fileName}
+              kind={localVenueKind === "imdf" ? "imdf" : "venue-snapshot"}
+              imdfFile={lastImdfFileRef.current}
+              existingIds={(catalog ?? []).map((entry) => entry.id)}
+              locale={locale}
+              onClose={() => {
+                setPublishOpen(false);
+              }}
+              onPublished={() => {
+                void fetchCatalog()
+                  .then(setCatalog)
+                  .catch(() => {
+                    /* catalog refresh is best-effort */
+                  });
+              }}
+            />
+          ) : null}
         </main>
+
+        {!embed && catalog !== null ? (
+          <div className="platform-bar">
+            {state.status === "ready" && localVenueKind !== null && account?.role === "admin" ? (
+              <button
+                type="button"
+                className="account-status__button"
+                onClick={() => {
+                  setPublishOpen(true);
+                }}
+              >
+                {ui.publish[locale]}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {!embed && catalog !== null ? (
           <SignInDialog
