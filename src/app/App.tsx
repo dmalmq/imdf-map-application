@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -13,16 +14,26 @@ import { FloatingSearch } from "../components/FloatingSearch";
 import { SelectedFeatureSheet } from "../components/SelectedFeatureSheet";
 import { resolveSelectedFeatureContent } from "../components/resolveSelectedFeatureContent";
 import { ImdfDropzone } from "../components/ImdfDropzone";
+import { GdbImportDialog } from "../components/GdbImportDialog";
 import { LevelSwitcher } from "../components/LevelSwitcher";
 import { ViewerMenu } from "../components/ViewerMenu";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { ArchiveError } from "../errors/ArchiveError";
 import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
 import { loadImdfArchive } from "../imdf/loadImdfArchive";
+import { readVenueSnapshot } from "../imdf/venueSnapshot";
+import { datasetBlobUrl, fetchCatalog } from "../platform/catalogClient";
+import { buildGdbVenue, suggestGdbMapping } from "../gdb/gdbMapping";
+import {
+  createGdbImportSession,
+  gdbSelectionName,
+  type GdbImportSession,
+} from "../gdb/loadGdb";
+import type { GdbInspection, GdbMappingPlan } from "../gdb/types";
 import { localizedLabel } from "../imdf/localize";
-import type { SearchResult } from "../imdf/types";
+import type { LoadedVenue, SearchResult } from "../imdf/types";
 import { IndoorMap } from "../map/IndoorMap";
-import { collectMarkerFeatures } from "../map/useFeatureMarkers";
+import { countFloorMarkerMatches } from "../map/useFeatureMarkers";
 import { searchVenue } from "../search/searchVenue";
 import {
   initialViewerState,
@@ -44,6 +55,9 @@ const ui = {
   ready: { ja: "会場を読み込みました", en: "Venue loaded" },
   error: { ja: "読み込みエラー", en: "Load error" },
   empty: { ja: "会場が未読み込みです", en: "No venue loaded" },
+  reviewing: { ja: "GDB レイヤーマッピングを確認", en: "Review GDB layer mappings" },
+  openGdbArchive: { ja: "GDB アーカイブを開く", en: "Open GDB archive(s)" },
+  openGdbFolder: { ja: "GDB フォルダを開く", en: "Open GDB folder" },
 } as const;
 
 /** Compact sheet floats above the bottom search bar (CSS `bottom: 72px`). */
@@ -120,7 +134,10 @@ function activeVenue(state: ViewerState): ReadyVenueState | null {
       searchCategory: state.searchCategory,
     };
   }
-  if ((state.status === "loading" || state.status === "error") && state.previous) {
+  if (
+    (state.status === "loading" || state.status === "reviewing" || state.status === "error") &&
+    state.previous
+  ) {
     return state.previous;
   }
   return null;
@@ -131,6 +148,8 @@ function liveMessage(state: ViewerState): string {
   switch (state.status) {
     case "loading":
       return `${ui.loading[locale]}: ${state.fileName}`;
+    case "reviewing":
+      return `${ui.reviewing[locale]}: ${state.fileName}`;
     case "ready":
       return `${ui.ready[locale]}: ${state.fileName}`;
     case "error":
@@ -150,13 +169,36 @@ export function App() {
   }));
   const attemptTokenRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const lastAttemptKindRef = useRef<"src" | "dataset" | "imdf" | "gdb-archive" | "gdb-folder">(
+    params.dataset !== null ? "dataset" : params.src !== null ? "src" : "imdf",
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const gdbArchiveInputRef = useRef<HTMLInputElement>(null);
+  const gdbFolderInputRef = useRef<HTMLInputElement>(null);
+  const gdbSessionRef = useRef<GdbImportSession | null>(null);
+  /**
+   * Post-review focus once the dialog unmounts:
+   * - `"map"` → `.maplibregl-canvas`
+   * - `"auto"` → map when a venue is visible, else the matching GDB open control
+   */
+  const postGdbFocusRef = useRef<"map" | "auto" | null>(null);
   const appRootRef = useRef<HTMLDivElement>(null);
   const compact = useCompactLayout(appRootRef);
   const [mapDragActive, setMapDragActive] = useState(false);
   const [searchKey, setSearchKey] = useState(0);
   const [menuKey, setMenuKey] = useState(0);
   const [sheetHeight, setSheetHeight] = useState(0);
+  const [gdbReview, setGdbReview] = useState<{
+    inspection: GdbInspection;
+    initialPlan: GdbMappingPlan;
+    fileName: string;
+  } | null>(null);
+  const [gdbError, setGdbError] = useState<ArchiveError | null>(null);
+  const [gdbBusy, setGdbBusy] = useState(false);
+  const gdbFolderSupported = useMemo(
+    () => typeof document !== "undefined" && "webkitdirectory" in document.createElement("input"),
+    [],
+  );
 
   const theme = themes[state.themeId];
   const locale = state.locale;
@@ -176,12 +218,11 @@ export function App() {
 
   const currentFloorMatchCount = useMemo(() => {
     if (!venueState) return 0;
-    return collectMarkerFeatures(
+    return countFloorMarkerMatches(
       venueState.loadedVenue,
       venueState.selectedLevelId,
-      venueState.selectedFeatureId,
       venueState.searchCategory,
-    ).length;
+    );
   }, [venueState]);
 
   const selectedContent = useMemo(() => {
@@ -216,9 +257,22 @@ export function App() {
     return localizedLabel(level.label, locale, level.id, venueState.loadedVenue.manifest.language);
   }, [venueState, locale]);
 
-  const runLoad = useCallback(
-    (fileName: string, getFile: (signal: AbortSignal) => Promise<File>, requestedLevel?: string) => {
+  const disposeGdbSession = useCallback(() => {
+    gdbSessionRef.current?.dispose();
+    gdbSessionRef.current = null;
+  }, []);
+
+  const runVenueLoad = useCallback(
+    (
+      fileName: string,
+      load: (signal: AbortSignal) => Promise<LoadedVenue>,
+      requestedLevel?: string,
+    ) => {
       abortRef.current?.abort();
+      disposeGdbSession();
+      setGdbReview(null);
+      setGdbError(null);
+      setGdbBusy(false);
       const controller = new AbortController();
       abortRef.current = controller;
       const token = attemptTokenRef.current + 1;
@@ -226,8 +280,7 @@ export function App() {
 
       dispatch({ type: "load_started", fileName });
 
-      void getFile(controller.signal)
-        .then((file) => loadImdfArchive(file, controller.signal))
+      void load(controller.signal)
         .then((venue) => {
           if (token !== attemptTokenRef.current) {
             return;
@@ -254,37 +307,326 @@ export function App() {
           }
         });
     },
-    [],
+    [disposeGdbSession],
   );
 
   const handleFile = useCallback(
     (file: File) => {
-      runLoad(file.name, () => Promise.resolve(file));
+      lastAttemptKindRef.current = "imdf";
+      runVenueLoad(file.name, (signal) => loadImdfArchive(file, signal));
     },
-    [runLoad],
+    [runVenueLoad],
   );
 
+  const runGdbImport = useCallback(
+    (mode: "directory" | "archive", files: readonly File[]) => {
+      lastAttemptKindRef.current = mode === "directory" ? "gdb-folder" : "gdb-archive";
+      abortRef.current?.abort();
+      abortRef.current = null;
+      disposeGdbSession();
+      setGdbReview(null);
+      setGdbError(null);
+      setGdbBusy(false);
+      const token = attemptTokenRef.current + 1;
+      attemptTokenRef.current = token;
+      const fileName = gdbSelectionName(files);
+
+      // Announce the attempt before constructing the worker so a synchronous
+      // factory/Worker failure lands on a matching in-flight load and preserves
+      // the previous venue via load_failed.
+      dispatch({ type: "load_started", fileName });
+      let session: GdbImportSession;
+      try {
+        session = createGdbImportSession(mode, files);
+      } catch (error) {
+        postGdbFocusRef.current = "auto";
+        dispatch({ type: "load_failed", fileName, error: toArchiveError(error) });
+        return;
+      }
+      gdbSessionRef.current = session;
+
+      void session
+        .inspect()
+        .then((inspection) => {
+          if (token !== attemptTokenRef.current) {
+            return;
+          }
+          setGdbReview({ inspection, initialPlan: suggestGdbMapping(inspection), fileName });
+          dispatch({ type: "load_review_started", fileName });
+        })
+        .catch((error: unknown) => {
+          if (token !== attemptTokenRef.current) {
+            return;
+          }
+          if (isAbortError(error)) {
+            return;
+          }
+          disposeGdbSession();
+          postGdbFocusRef.current = "auto";
+          dispatch({ type: "load_failed", fileName, error: toArchiveError(error) });
+        });
+    },
+    [disposeGdbSession],
+  );
+
+  // Route a file selection or accepted drop: a single non-`.gdb.zip` archive is
+  // the existing IMDF path; one-or-more `.gdb.zip` files are a GDB archive
+  // import. Any other mixture is ignored.
+  const handleFiles = useCallback(
+    (files: readonly File[]) => {
+      if (files.length === 0) {
+        return;
+      }
+      const [only] = files;
+      if (
+        files.length === 1 &&
+        only!.name.toLowerCase().endsWith(".zip") &&
+        !only!.name.toLowerCase().endsWith(".gdb.zip")
+      ) {
+        handleFile(only!);
+        return;
+      }
+      if (files.every((file) => file.name.toLowerCase().endsWith(".gdb.zip"))) {
+        runGdbImport("archive", files);
+      }
+    },
+    [handleFile, runGdbImport],
+  );
+
+  const onGdbImport = useCallback(
+    (plan: GdbMappingPlan) => {
+      const session = gdbSessionRef.current;
+      const review = gdbReview;
+      if (session === null || review === null) {
+        return;
+      }
+      const token = attemptTokenRef.current;
+      const fileName = review.fileName;
+      setGdbBusy(true);
+      setGdbError(null);
+
+      void session
+        .convert(plan)
+        .then((conversion) => {
+          if (token !== attemptTokenRef.current) {
+            return;
+          }
+          const venue = buildGdbVenue(conversion, plan);
+          setGdbBusy(false);
+          setGdbReview(null);
+          // Successful conversion: park keyboard focus on the live map canvas.
+          postGdbFocusRef.current = "map";
+          disposeGdbSession();
+          dispatch({ type: "load_succeeded", fileName, venue });
+        })
+        .catch((error: unknown) => {
+          if (token !== attemptTokenRef.current) {
+            return;
+          }
+          if (isAbortError(error)) {
+            return;
+          }
+          const archiveError = toArchiveError(error);
+          setGdbBusy(false);
+          // A genuine worker fault is fatal; a recoverable conversion/build
+          // failure keeps the dialog mounted so manual choices survive a retry.
+          if (archiveError.code === "worker_failed") {
+            setGdbReview(null);
+            disposeGdbSession();
+            postGdbFocusRef.current = "auto";
+            dispatch({ type: "load_failed", fileName, error: archiveError });
+          } else {
+            setGdbError(archiveError);
+          }
+        });
+    },
+    [gdbReview, disposeGdbSession],
+  );
+
+  const onGdbCancel = useCallback(() => {
+    const fileName = gdbReview?.fileName ?? "";
+    // Invalidate any in-flight convert so a late response cannot revive review.
+    attemptTokenRef.current += 1;
+    disposeGdbSession();
+    setGdbReview(null);
+    setGdbError(null);
+    setGdbBusy(false);
+    // Cancel: map when a previous venue reappears, else the remounted GDB open control.
+    postGdbFocusRef.current = "auto";
+    dispatch({ type: "load_cancelled", fileName });
+  }, [gdbReview, disposeGdbSession]);
+
   const loadFromSrc = useCallback(() => {
-    if (params.src === null) {
+    if (params.src === null || params.dataset !== null) {
       return;
     }
     const src = params.src;
-    runLoad(fileNameFromSrc(src), (signal) => fetchImdfFile(src, signal), params.level ?? undefined);
-  }, [runLoad, params]);
+    lastAttemptKindRef.current = "src";
+    runVenueLoad(
+      fileNameFromSrc(src),
+      (signal) => fetchImdfFile(src, signal).then((file) => loadImdfArchive(file, signal)),
+      params.level ?? undefined,
+    );
+  }, [runVenueLoad, params]);
+
+  const loadDatasetById = useCallback(
+    (datasetId: string) => {
+      lastAttemptKindRef.current = "dataset";
+      runVenueLoad(
+        `${datasetId}.zip`,
+        async (signal) => {
+          const entries = await fetchCatalog(signal);
+          const entry = entries.find((candidate) => candidate.id === datasetId);
+          if (entry === undefined) {
+            throw new ArchiveError("fetch_failed", "Dataset not found on the server.", {
+              dataset: datasetId,
+            });
+          }
+          const file = await fetchImdfFile(datasetBlobUrl(datasetId), signal);
+          return entry.kind === "imdf" ? loadImdfArchive(file, signal) : readVenueSnapshot(file);
+        },
+        params.level ?? undefined,
+      );
+    },
+    [params.level, runVenueLoad],
+  );
 
   useEffect(() => {
     loadFromSrc();
   }, [loadFromSrc]);
 
   useEffect(() => {
+    if (params.dataset !== null) {
+      loadDatasetById(params.dataset);
+    }
+  }, [params.dataset, loadDatasetById]);
+
+  // The folder input needs the non-standard `webkitdirectory` attribute set
+  // imperatively so a parent containing several `.gdb` folders can be chosen.
+  useEffect(() => {
+    const input = gdbFolderInputRef.current;
+    if (input !== null && gdbFolderSupported) {
+      input.setAttribute("webkitdirectory", "");
+    }
+  }, [gdbFolderSupported]);
+
+  useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      gdbSessionRef.current?.dispose();
+      gdbSessionRef.current = null;
     };
   }, []);
+
+  // After review ends, restore keyboard focus to an intentional live control.
+  // Cancel/fatal use "auto" (map if a venue is visible, else the matching GDB
+  // open button). Successful conversion always targets the map canvas.
+  useLayoutEffect(() => {
+    const intent = postGdbFocusRef.current;
+    if (intent === null) {
+      return;
+    }
+    if (state.status === "reviewing" || gdbReview !== null) {
+      return;
+    }
+    postGdbFocusRef.current = null;
+
+    const focusCanvas = (target: HTMLCanvasElement) => {
+      if (!target.hasAttribute("tabindex")) {
+        target.tabIndex = 0;
+      }
+      target.focus({ preventScroll: true });
+    };
+    const retryMapFocus = () => {
+      postGdbFocusRef.current = "map";
+      const focusAfterPaint = (retryWhenMissing: boolean) => {
+        if (
+          postGdbFocusRef.current !== "map" ||
+          document.querySelector("dialog[open]") !== null
+        ) {
+          return;
+        }
+        const late = document.querySelector<HTMLCanvasElement>(".maplibregl-canvas");
+        if (late === null && retryWhenMissing) {
+          requestAnimationFrame(() => focusAfterPaint(false));
+          return;
+        }
+        postGdbFocusRef.current = null;
+        if (late !== null) {
+          focusCanvas(late);
+        }
+      };
+      requestAnimationFrame(() => focusAfterPaint(true));
+    };
+
+    const canvas = document.querySelector<HTMLCanvasElement>(".maplibregl-canvas");
+    const preferMap = intent === "map" || venueState !== null;
+    if (preferMap && canvas !== null) {
+      focusCanvas(canvas);
+      // Native modal teardown can restore the old focus after this layout pass.
+      retryMapFocus();
+      return;
+    }
+    if (intent === "map") {
+      // Map not mounted on this commit yet; retry once after paint.
+      retryMapFocus();
+      return;
+    }
+
+    const kind = lastAttemptKindRef.current;
+    const name =
+      kind === "gdb-folder"
+        ? ui.openGdbFolder[locale]
+        : kind === "gdb-archive"
+          ? ui.openGdbArchive[locale]
+          : null;
+    if (name !== null) {
+      const button = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (el) => el.textContent?.trim() === name,
+      );
+      if (button !== undefined) {
+        button.focus();
+        return;
+      }
+    }
+    document
+      .querySelector<HTMLButtonElement>(".viewer-notice--error .viewer-notice__retry")
+      ?.focus();
+  }, [state.status, gdbReview, locale, venueState]);
 
   const openPicker = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  const openGdbArchives = useCallback(() => {
+    gdbArchiveInputRef.current?.click();
+  }, []);
+
+  const openGdbFolder = useCallback(() => {
+    gdbFolderInputRef.current?.click();
+  }, []);
+
+  const onRetry = useCallback(() => {
+    switch (lastAttemptKindRef.current) {
+      case "dataset":
+        if (params.dataset !== null) {
+          loadDatasetById(params.dataset);
+        }
+        break;
+      case "src":
+        loadFromSrc();
+        break;
+      case "gdb-archive":
+        gdbArchiveInputRef.current?.click();
+        break;
+      case "gdb-folder":
+        gdbFolderInputRef.current?.click();
+        break;
+      default:
+        fileInputRef.current?.click();
+        break;
+    }
+  }, [loadFromSrc, loadDatasetById, params.dataset]);
 
   const onSelectResult = useCallback((result: SearchResult) => {
     if (result.levelId === null) {
@@ -315,12 +657,15 @@ export function App() {
     (event: DragEvent) => {
       event.preventDefault();
       setMapDragActive(false);
-      const file = event.dataTransfer.files[0];
-      if (file && file.name.toLowerCase().endsWith(".zip")) {
-        handleFile(file);
+      const files = Array.from(event.dataTransfer.files);
+      const [only] = files;
+      if (files.length === 1 && only!.name.toLowerCase().endsWith(".zip")) {
+        handleFiles(files);
+      } else if (files.length > 0 && files.every((f) => f.name.toLowerCase().endsWith(".gdb.zip"))) {
+        handleFiles(files);
       }
     },
-    [handleFile],
+    [handleFiles],
   );
 
   const onSearchOpenChange = useCallback((open: boolean) => {
@@ -342,7 +687,6 @@ export function App() {
     mapDragActive &&
     !embed &&
     (state.status === "ready" || (state.status === "loading" && Boolean(state.previous)));
-  const onRetry = params.src !== null ? loadFromSrc : openPicker;
 
   return (
     <div ref={appRootRef} className={compact ? "app app--compact" : "app"} style={themeStyle(state.themeId)}>
@@ -355,6 +699,8 @@ export function App() {
         className="imdf-dropzone__input"
         type="file"
         accept=".zip,application/zip"
+        tabIndex={-1}
+        aria-hidden="true"
         aria-label={ui.openZip[locale]}
         onChange={(event) => {
           const file = event.target.files?.[0];
@@ -364,6 +710,43 @@ export function App() {
           event.target.value = "";
         }}
       />
+
+      <input
+        ref={gdbArchiveInputRef}
+        className="imdf-dropzone__input"
+        type="file"
+        accept=".zip,.gdb.zip,application/zip"
+        multiple
+        tabIndex={-1}
+        aria-hidden="true"
+        aria-label={ui.openGdbArchive[locale]}
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0) {
+            runGdbImport("archive", files);
+          }
+          event.target.value = "";
+        }}
+      />
+
+      {gdbFolderSupported ? (
+        <input
+          ref={gdbFolderInputRef}
+          className="imdf-dropzone__input"
+          type="file"
+          multiple
+          tabIndex={-1}
+          aria-hidden="true"
+          aria-label={ui.openGdbFolder[locale]}
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            if (files.length > 0) {
+              runGdbImport("directory", files);
+            }
+            event.target.value = "";
+          }}
+        />
+      ) : null}
 
 
       <div className="app__body">
@@ -407,6 +790,9 @@ export function App() {
                   dispatch({ type: "set_theme", themeId });
                 }}
                 onOpenFile={openPicker}
+                onOpenGdbArchives={openGdbArchives}
+                onOpenGdbFolder={openGdbFolder}
+                gdbFolderSupported={gdbFolderSupported}
                 onOpenChange={onMenuOpenChange}
               />
               <div className="map-stage__levels">
@@ -459,8 +845,11 @@ export function App() {
                   status={state.status === "loading" ? "loading" : "ready"}
                   {...(state.status === "loading" ? { fileName: state.fileName } : {})}
                   variant="overlay"
-                  onFile={handleFile}
+                  onFiles={handleFiles}
                   onOpenPicker={openPicker}
+                  onOpenGdbArchives={openGdbArchives}
+                  onOpenGdbFolder={openGdbFolder}
+                  gdbFolderSupported={gdbFolderSupported}
                 />
               ) : null}
             </>
@@ -472,8 +861,11 @@ export function App() {
               status={state.status === "loading" ? "loading" : "empty"}
               {...(state.status === "loading" ? { fileName: state.fileName } : {})}
               variant="empty"
-              onFile={handleFile}
+              onFiles={handleFiles}
               onOpenPicker={openPicker}
+              onOpenGdbArchives={openGdbArchives}
+              onOpenGdbFolder={openGdbFolder}
+              gdbFolderSupported={gdbFolderSupported}
             />
           ) : null}
 
@@ -490,6 +882,18 @@ export function App() {
             <div className="map-stage__error">
               <ViewerErrorNotice error={state.error} locale={locale} onRetry={onRetry} />
             </div>
+          ) : null}
+
+          {gdbReview !== null && state.status === "reviewing" ? (
+            <GdbImportDialog
+              inspection={gdbReview.inspection}
+              initialPlan={gdbReview.initialPlan}
+              locale={locale}
+              busy={gdbBusy}
+              error={gdbError}
+              onImport={onGdbImport}
+              onCancel={onGdbCancel}
+            />
           ) : null}
         </main>
       </div>
