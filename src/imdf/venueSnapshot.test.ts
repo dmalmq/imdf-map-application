@@ -49,6 +49,23 @@ async function snapshotBlob(snapshot: unknown): Promise<Blob> {
   return writer.close();
 }
 
+async function snapshotPayload(blob: Blob): Promise<Record<string, unknown>> {
+  const reader = new ZipReader(new BlobReader(blob));
+  try {
+    const [entry] = await reader.getEntries();
+    if (entry === undefined || entry.directory) {
+      throw new Error("snapshot.json missing from generated snapshot");
+    }
+    const parsed = JSON.parse(await entry.getData(new TextWriter())) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("snapshot.json did not contain an object");
+    }
+    return parsed as Record<string, unknown>;
+  } finally {
+    await reader.close();
+  }
+}
+
 describe("venueSnapshot", () => {
   it("round-trips a LoadedVenue byte-for-byte including Maps and sourceProperties", async () => {
     const venue = await loadFixtureVenue();
@@ -168,6 +185,61 @@ describe("venueSnapshot", () => {
       },
     });
     await expect(readVenueSnapshot(bad)).rejects.toMatchObject({ code: "invalid_archive" });
+  });
+
+  it("rejects shallow LoadedVenue objects and duplicate map keys", async () => {
+    const shallow = await snapshotBlob({
+      schemaVersion: 1,
+      kind: "venue-snapshot",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      sourceName: "x.gdb",
+      venue: {
+        manifest: {},
+        venue: {},
+        levels: [{}],
+        featuresById: [],
+        renderFeaturesByLevel: [["ordinal:0", {}]],
+        searchEntries: [{}],
+        boundsByLevel: [],
+        enrichmentByFeatureId: [],
+        warnings: [{}],
+      },
+    });
+    await expect(readVenueSnapshot(shallow)).rejects.toMatchObject({ code: "invalid_archive" });
+
+    const payload = await snapshotPayload(
+      await writeVenueSnapshot(await loadFixtureVenue(), "x.gdb"),
+    );
+    const serialized = payload["venue"];
+    if (typeof serialized !== "object" || serialized === null || Array.isArray(serialized)) {
+      throw new Error("generated venue missing");
+    }
+    const features = (serialized as Record<string, unknown>)["featuresById"];
+    if (!Array.isArray(features) || features[0] === undefined) {
+      throw new Error("generated features missing");
+    }
+    features.push(features[0]);
+    await expect(readVenueSnapshot(await snapshotBlob(payload))).rejects.toMatchObject({
+      code: "invalid_archive",
+    });
+  });
+
+  it("enforces snapshot byte and source-name limits", async () => {
+    class OversizeBlob extends Blob {
+      override get size(): number {
+        return 600 * 1024 * 1024 + 1;
+      }
+    }
+    await expect(readVenueSnapshot(new OversizeBlob())).rejects.toMatchObject({
+      code: "archive_too_large",
+    });
+    const venue = await loadFixtureVenue();
+    await expect(writeVenueSnapshot(venue, "")).rejects.toMatchObject({
+      code: "invalid_archive",
+    });
+    await expect(writeVenueSnapshot(venue, "x".repeat(201))).rejects.toMatchObject({
+      code: "invalid_archive",
+    });
   });
 
 });
