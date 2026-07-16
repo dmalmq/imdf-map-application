@@ -4,11 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SignInDialog } from "./SignInDialog";
 
 const loginMock = vi.fn();
-const logoutMock = vi.fn(async () => {});
 
 vi.mock("../platform/catalogClient", () => ({
   login: (...args: unknown[]) => loginMock(...args),
-  logout: () => logoutMock(),
 }));
 
 afterEach(() => {
@@ -79,7 +77,9 @@ describe("SignInDialog", () => {
     );
     const onClose = vi.fn();
     const onSignedIn = vi.fn();
-    render(<SignInDialog open locale="en" onClose={onClose} onSignedIn={onSignedIn} />);
+    const { rerender } = render(
+      <SignInDialog open locale="en" onClose={onClose} onSignedIn={onSignedIn} />,
+    );
     await userEvent.type(screen.getByLabelText("Username"), "admin");
     await userEvent.type(screen.getByLabelText("Password"), "pw");
     await userEvent.click(screen.getByRole("button", { name: "Submit" }));
@@ -87,10 +87,11 @@ describe("SignInDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     const signal = loginMock.mock.calls[0]?.[2] as AbortSignal;
     expect(signal.aborted).toBe(true);
+    rerender(<SignInDialog open={false} locale="en" onClose={onClose} onSignedIn={onSignedIn} />);
+    rerender(<SignInDialog open locale="en" onClose={onClose} onSignedIn={onSignedIn} />);
+    expect((screen.getByLabelText("Username") as HTMLInputElement).disabled).toBe(false);
     resolveLogin({ username: "admin", role: "admin" });
-    await waitFor(() => {
-      expect(logoutMock).toHaveBeenCalledTimes(1);
-    });
+    await Promise.resolve();
     expect(onSignedIn).not.toHaveBeenCalled();
   });
 });

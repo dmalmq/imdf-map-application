@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { LocaleCode } from "../imdf/types";
-import { login, logout } from "../platform/catalogClient";
+import { login } from "../platform/catalogClient";
 import type { AccountInfo } from "../platform/types";
 
 const ui = {
@@ -36,6 +36,8 @@ export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialog
     if (!open) {
       attemptRef.current += 1;
       abortRef.current?.abort();
+      abortRef.current = null;
+      setBusy(false);
       return;
     }
     setError(null);
@@ -63,6 +65,8 @@ export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialog
   const requestClose = () => {
     attemptRef.current += 1;
     abortRef.current?.abort();
+    abortRef.current = null;
+    setBusy(false);
     onClose();
   };
 
@@ -100,9 +104,6 @@ export function SignInDialog({ open, locale, onClose, onSignedIn }: SignInDialog
     )
       .then((account) => {
         if (attempt !== attemptRef.current) {
-          void logout().catch(() => {
-            /* stale session cleanup is best-effort */
-          });
           return;
         }
         onSignedIn(account);
