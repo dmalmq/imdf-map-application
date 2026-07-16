@@ -5,7 +5,7 @@ import type { CatalogEntry, CommentRecord, SessionRecord, UserRecord } from "./t
 
 export const DATASET_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-/** Catalog row as persisted; contentHash backs the blob ETag and never leaves the server. */
+/** Catalog row as persisted; contentHash names the immutable blob generation and never leaves the server. */
 export interface StoredCatalogEntry extends CatalogEntry {
   contentHash: string;
 }
@@ -37,11 +37,22 @@ export class PlatformStore {
     await mkdir(path.join(dataDir, "blobs"), { recursive: true });
     await mkdir(path.join(dataDir, "comments"), { recursive: true });
     const rows = await readJsonFile<StoredCatalogEntry[]>(store.file("catalog.json"), []);
-    await store.recoverBlobs(new Map(rows.map((row) => [row.id, row.contentHash])));
+    // The catalog + contentHash is authoritative. Every blob file that is not the
+    // referenced generation of a cataloged dataset (superseded generations, orphaned
+    // writes from an interrupted put/delete, temp files) is unreferenced and removed.
+    const blobDir = path.join(dataDir, "blobs");
+    const referenced = new Set(rows.map((row) => `${row.id}.${row.contentHash}.zip`));
+    const present = new Set<string>();
+    for (const name of await readdir(blobDir)) {
+      if (referenced.has(name)) {
+        present.add(name);
+      } else {
+        await rm(path.join(blobDir, name), { force: true });
+      }
+    }
     await store.recoverComments(new Set(rows.map((row) => row.id)));
-    const blobs = new Set(await readdir(path.join(dataDir, "blobs")));
     for (const row of rows) {
-      if (blobs.has(`${row.id}.zip`)) {
+      if (present.has(`${row.id}.${row.contentHash}.zip`)) {
         store.catalog.set(row.id, row);
       } else {
         console.warn(`[store] dropping catalog entry without blob: ${row.id}`);
@@ -67,9 +78,34 @@ export class PlatformStore {
     }
   }
 
+  /** Immutable, content-addressed path of one blob generation. */
+  private blobFile(id: string, contentHash: string): string {
+    return path.join(this.dataDir, "blobs", `${id}.${contentHash}.zip`);
+  }
+
+  /** Path of the current generation of a dataset's blob. Throws if the id is unknown. */
   blobPath(id: string): string {
     this.assertDatasetId(id);
-    return path.join(this.dataDir, "blobs", `${id}.zip`);
+    const entry = this.catalog.get(id);
+    if (!entry) {
+      throw new Error(`unknown dataset: ${JSON.stringify(id)}`);
+    }
+    return this.blobFile(id, entry.contentHash);
+  }
+
+  /**
+   * Capture one dataset's catalog entry and the content-addressed path derived from that
+   * exact contentHash as a single immutable pair. A concurrent put/delete never mutates the
+   * captured generation, so the returned entry.contentHash always matches the bytes at path.
+   * Concurrency-sensitive readers (HTTP downloads) must use this instead of blobPath(id).
+   */
+  getBlobSnapshot(id: string): { entry: StoredCatalogEntry; path: string } | undefined {
+    this.assertDatasetId(id);
+    const entry = this.catalog.get(id);
+    if (!entry) {
+      return undefined;
+    }
+    return { entry, path: this.blobFile(id, entry.contentHash) };
   }
 
   private commentsPath(id: string): string {
@@ -93,144 +129,21 @@ export class PlatformStore {
     await rename(tmp, file);
   }
 
-  /** Rename src to dest, treating a missing src as a no-op. Returns whether it moved. */
-  private async renameIfExists(src: string, dest: string): Promise<boolean> {
-    try {
-      await rename(src, dest);
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return false;
-      }
-      throw error;
-    }
-  }
-
   /**
-   * Reconcile blob files against the persisted catalog after an interrupted put/delete.
-   * The catalog contentHash is authoritative: a live blob that matches is kept and its
-   * `.bak-*`/`.tomb-*`/`.tmp-*` sidecars cleaned; otherwise the first sidecar whose hash
-   * matches is restored. Files for ids no longer in the catalog are discarded.
-   */
-  private async recoverBlobs(catalogHash: Map<string, string>): Promise<void> {
-    const dir = path.join(this.dataDir, "blobs");
-    const groups = new Map<string, { live: boolean; sidecars: string[] }>();
-    for (const name of await readdir(dir)) {
-      const sidecar = /^(.+)\.zip\.(?:bak|tomb|tmp)-/.exec(name);
-      const live = /^(.+)\.zip$/.exec(name);
-      if (sidecar) {
-        const id = sidecar[1] as string;
-        const group = groups.get(id) ?? { live: false, sidecars: [] };
-        group.sidecars.push(name);
-        groups.set(id, group);
-      } else if (live) {
-        const id = live[1] as string;
-        const group = groups.get(id) ?? { live: false, sidecars: [] };
-        group.live = true;
-        groups.set(id, group);
-      }
-    }
-    for (const [id, group] of groups) {
-      const livePath = path.join(dir, `${id}.zip`);
-      const expected = catalogHash.get(id);
-      if (expected === undefined) {
-        // Uncataloged: an orphaned first-time put (blob published before catalog commit)
-        // or committed-delete leftovers. Discard everything, sidecars or not.
-        if (group.live) {
-          await rm(livePath, { force: true });
-        }
-        for (const name of group.sidecars) {
-          await rm(path.join(dir, name), { force: true });
-        }
-        continue;
-      }
-      // A clean live blob for a cataloged id with no interrupted-op sidecars is trusted.
-      if (group.sidecars.length === 0) {
-        continue;
-      }
-      const liveHash = group.live
-        ? createHash("sha256").update(await readFile(livePath)).digest("hex")
-        : null;
-      if (liveHash === expected) {
-        for (const name of group.sidecars) {
-          await rm(path.join(dir, name), { force: true });
-        }
-        continue;
-      }
-      let restored = false;
-      for (const name of group.sidecars) {
-        const sidecarPath = path.join(dir, name);
-        if (
-          !restored &&
-          createHash("sha256").update(await readFile(sidecarPath)).digest("hex") === expected
-        ) {
-          if (group.live) {
-            await rm(livePath, { force: true });
-          }
-          await rename(sidecarPath, livePath);
-          restored = true;
-        } else {
-          await rm(sidecarPath, { force: true });
-        }
-      }
-      if (!restored && group.live) {
-        await rm(livePath, { force: true });
-      }
-    }
-  }
-
-  /**
-   * Reconcile comment files after an interrupted delete. For a still-cataloged id a
-   * pre-commit delete tombstone is restored when the live file is gone; for an id no
-   * longer in the catalog every file is discarded so old comments cannot reappear when
-   * the id is reused. Partial `.tmp-*` writes are always dropped.
+   * Reconcile comment files against the persisted catalog. Comment files for ids no longer
+   * cataloged are removed so old comments cannot resurface if the id is reused; partial
+   * `.tmp-*` writes and any other stray file are dropped. Live comments of a cataloged id
+   * are authoritative and kept.
    */
   private async recoverComments(catalogIds: Set<string>): Promise<void> {
     const dir = path.join(this.dataDir, "comments");
-    const groups = new Map<string, { live: boolean; tombstones: string[]; scratch: string[] }>();
     for (const name of await readdir(dir)) {
-      const tomb = /^(.+)\.json\.tomb-/.exec(name);
-      const tmp = /^(.+)\.json\.tmp-/.exec(name);
       const live = /^(.+)\.json$/.exec(name);
-      if (tomb) {
-        const id = tomb[1] as string;
-        const group = groups.get(id) ?? { live: false, tombstones: [], scratch: [] };
-        group.tombstones.push(name);
-        groups.set(id, group);
-      } else if (tmp) {
-        const id = tmp[1] as string;
-        const group = groups.get(id) ?? { live: false, tombstones: [], scratch: [] };
-        group.scratch.push(name);
-        groups.set(id, group);
-      } else if (live) {
-        const id = live[1] as string;
-        const group = groups.get(id) ?? { live: false, tombstones: [], scratch: [] };
-        group.live = true;
-        groups.set(id, group);
-      }
-    }
-    for (const [id, group] of groups) {
-      const livePath = path.join(dir, `${id}.json`);
-      const discard = [...group.scratch];
-      if (!catalogIds.has(id)) {
-        if (group.live) {
-          await rm(livePath, { force: true });
+      if (live) {
+        if (!catalogIds.has(live[1] as string)) {
+          await rm(path.join(dir, name), { force: true });
         }
-        discard.push(...group.tombstones);
-      } else if (group.live) {
-        discard.push(...group.tombstones);
       } else {
-        let restored = false;
-        for (const name of group.tombstones) {
-          if (!restored) {
-            await rename(path.join(dir, name), livePath);
-            restored = true;
-          } else {
-            discard.push(name);
-          }
-        }
-      }
-      for (const name of discard) {
         await rm(path.join(dir, name), { force: true });
       }
     }
@@ -249,26 +162,23 @@ export class PlatformStore {
   putDataset(meta: Omit<CatalogEntry, "updatedAt">, blob: Buffer): Promise<CatalogEntry> {
     return this.enqueue(async () => {
       this.assertDatasetId(meta.id);
+      const contentHash = createHash("sha256").update(blob).digest("hex");
       const stored: StoredCatalogEntry = {
         ...meta,
         updatedAt: new Date().toISOString(),
-        contentHash: createHash("sha256").update(blob).digest("hex"),
+        contentHash,
       };
-      const blobPath = this.blobPath(meta.id);
-      const commentsPath = this.commentsPath(meta.id);
+      const newBlob = this.blobFile(meta.id, contentHash);
+      const previous = this.catalog.get(meta.id);
       // A create or reuse (id absent) starts with a durable empty comments file, written
-      // before the catalog commit, so boot recovery treats live comments as authoritative
-      // and discards any stale committed-delete tombstone regardless of cleanup success.
-      // A true overwrite (id present) keeps its existing comments untouched.
-      const isNew = !this.catalog.has(meta.id);
-      // Preserve the prior blob so a failed catalog write can be rolled back to a
-      // consistent (blob, catalog) pair rather than leaving the two disagreeing.
-      const backup = isNew ? null : `${blobPath}.bak-${randomUUID()}`;
-      if (backup) {
-        await rename(blobPath, backup);
-      }
+      // before the catalog commit, so recovery treats live comments as authoritative and a
+      // reused id cannot resurface old comments. A true overwrite keeps its comments.
+      const isNew = previous === undefined;
+      const commentsPath = this.commentsPath(meta.id);
+      // Write the new immutable generation completely before touching the catalog. Existing
+      // readers keep resolving the prior generation until the catalog + memory commit below.
       try {
-        await this.atomicWrite(blobPath, blob);
+        await this.atomicWrite(newBlob, blob);
         if (isNew) {
           await this.atomicWrite(commentsPath, JSON.stringify([], null, 2));
         }
@@ -276,26 +186,28 @@ export class PlatformStore {
         rows.push(stored);
         await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
       } catch (error) {
-        // Roll back to the prior (blob, catalog) pair. Remove the just-written blob
-        // first so restoring the backup cannot collide with Windows rename-replace
-        // semantics and strand the pair.
-        await rm(blobPath, { force: true });
-        if (backup) {
-          await rename(backup, blobPath);
+        // Remove only the unreferenced new generation; the prior generation (if the hash
+        // differs) stays intact and referenced. A same-hash re-put shares the file, so it
+        // must not be removed.
+        if (previous?.contentHash !== contentHash) {
+          await rm(newBlob, { force: true });
         }
         if (isNew) {
           await rm(commentsPath, { force: true });
         }
         throw error;
       }
-      // The catalog write above is the durable commit point; advance the in-memory
-      // view immediately so a failed backup cleanup cannot turn a committed put into
-      // a rejection. Backup removal is best-effort housekeeping only.
+      // Catalog is the durable commit point: advance memory, then best-effort remove the
+      // now-superseded generation. Its failure cannot turn a committed put into a rejection.
       this.catalog.set(meta.id, stored);
-      if (backup) {
-        await rm(backup, { force: true }).catch((error: unknown) => {
-          console.warn(`[store] failed to remove blob backup ${backup}: ${String(error)}`);
-        });
+      if (previous && previous.contentHash !== contentHash) {
+        await rm(this.blobFile(meta.id, previous.contentHash), { force: true }).catch(
+          (error: unknown) => {
+            console.warn(
+              `[store] failed to remove prior blob generation for ${meta.id}: ${String(error)}`,
+            );
+          },
+        );
       }
       const { contentHash: _hash, ...entry } = stored;
       return entry;
@@ -305,54 +217,23 @@ export class PlatformStore {
   deleteDataset(id: string): Promise<boolean> {
     return this.enqueue(async () => {
       this.assertDatasetId(id);
-      if (!this.catalog.has(id)) {
+      const entry = this.catalog.get(id);
+      if (!entry) {
         return false;
       }
-      const blobPath = this.blobPath(id);
-      const commentsPath = this.commentsPath(id);
-      const blobTomb = `${blobPath}.tomb-${randomUUID()}`;
-      const commentsTomb = `${commentsPath}.tomb-${randomUUID()}`;
-      // Move blob and comments aside before the catalog commit so a commit failure can be
-      // rolled back and a crash mid-delete leaves recoverable tombstones rather than a
-      // committed entry with stale data (or comments that resurface when the id is reused).
-      let movedBlob = false;
-      let movedComments = false;
-      try {
-        movedBlob = await this.renameIfExists(blobPath, blobTomb);
-        movedComments = await this.renameIfExists(commentsPath, commentsTomb);
-      } catch (error) {
-        // A comments move-aside failure must restore any already-staged blob before
-        // rejecting, so the dataset is left fully intact.
-        if (movedBlob) {
-          await rename(blobTomb, blobPath);
-        }
-        throw error;
-      }
-      const rows = [...this.catalog.values()].filter((entry) => entry.id !== id);
-      try {
-        await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
-      } catch (error) {
-        if (movedBlob) {
-          await rename(blobTomb, blobPath);
-        }
-        if (movedComments) {
-          await rename(commentsTomb, commentsPath);
-        }
-        throw error;
-      }
-      // Catalog commit is durable: advance memory, then clean tombstones best-effort so a
-      // cleanup failure cannot turn a committed delete into a rejection.
+      const rows = [...this.catalog.values()].filter((row) => row.id !== id);
+      await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
+      // Committed: advance memory. Readers that already resolved the old path can still read
+      // the immutable generation until the best-effort cleanup below removes it; a cleanup
+      // failure cannot turn a committed delete into a rejection, and boot recovery removes
+      // any leftover unreferenced generation or orphaned comments.
       this.catalog.delete(id);
-      if (movedBlob) {
-        await rm(blobTomb, { force: true }).catch((error: unknown) => {
-          console.warn(`[store] failed to remove blob tombstone ${blobTomb}: ${String(error)}`);
-        });
-      }
-      if (movedComments) {
-        await rm(commentsTomb, { force: true }).catch((error: unknown) => {
-          console.warn(`[store] failed to remove comments tombstone ${commentsTomb}: ${String(error)}`);
-        });
-      }
+      await rm(this.blobFile(id, entry.contentHash), { force: true }).catch((error: unknown) => {
+        console.warn(`[store] failed to remove blob for ${id}: ${String(error)}`);
+      });
+      await rm(this.commentsPath(id), { force: true }).catch((error: unknown) => {
+        console.warn(`[store] failed to remove comments for ${id}: ${String(error)}`);
+      });
       return true;
     });
   }

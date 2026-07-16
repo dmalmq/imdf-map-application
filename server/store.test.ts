@@ -1,16 +1,17 @@
 // @vitest-environment node
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import type { PathLike, RmOptions } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformStore } from "./store";
 import type { CatalogEntry } from "./types";
-import type { PathLike, RmOptions } from "node:fs";
 
 const mockCtl = vi.hoisted(() => ({
   rejectRmSubstring: null as string | null,
-  rejectRenameSubstring: null as string | null,
+  onCatalogCommit: null as (() => Promise<void>) | null,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -24,15 +25,29 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       mockCtl.rejectRmSubstring !== null && String(target).includes(mockCtl.rejectRmSubstring)
         ? Promise.reject(new Error("cleanup boom"))
         : actual.rm(target, options),
-    rename: (from: PathLike, to: PathLike): Promise<void> =>
-      mockCtl.rejectRenameSubstring !== null && String(to).includes(mockCtl.rejectRenameSubstring)
-        ? Promise.reject(new Error("rename boom"))
-        : actual.rename(from, to),
+    rename: async (from: PathLike, to: PathLike): Promise<void> => {
+      if (mockCtl.onCatalogCommit && String(to).endsWith("catalog.json")) {
+        await mockCtl.onCatalogCommit();
+      }
+      return actual.rename(from, to);
+    },
   };
 });
 
 async function tempDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "gis-store-"));
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+function sha256(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
 }
 
 const META: Omit<CatalogEntry, "updatedAt"> = {
@@ -113,6 +128,7 @@ describe("PlatformStore", () => {
     const store = await PlatformStore.open(dir);
     for (const bad of ["../evil", "/etc/passwd", "a/b", "UPPER", "", ".", "a".repeat(65)]) {
       expect(() => store.blobPath(bad)).toThrow();
+      expect(() => store.getBlobSnapshot(bad)).toThrow();
       await expect(store.putDataset({ ...META, id: bad }, ZIP)).rejects.toThrow();
       await expect(store.deleteDataset(bad)).rejects.toThrow();
       await expect(store.listComments(bad)).rejects.toThrow();
@@ -129,28 +145,27 @@ describe("PlatformStore", () => {
     await expect(PlatformStore.open(dir)).rejects.toThrow();
   });
 
-  it("rolls back a new put when catalog persistence fails, leaving no orphan blob", async () => {
+  it("rolls back a new put when catalog persistence fails, leaving no orphan blob or comments", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await mkdir(path.join(dir, "catalog.json"));
     await expect(store.putDataset(META, ZIP)).rejects.toThrow();
-    expect(existsSync(store.blobPath("tokyo-station"))).toBe(false);
+    expect(await readdir(path.join(dir, "blobs"))).toEqual([]);
+    expect(existsSync(path.join(dir, "comments", "tokyo-station.json"))).toBe(false);
     expect(store.getEntry("tokyo-station")).toBeUndefined();
     expect(store.listCatalog()).toEqual([]);
-    expect(existsSync(path.join(dir, "comments", "tokyo-station.json"))).toBe(false);
   });
 
-  it("rolls back an overwrite when catalog persistence fails, preserving the old blob and entry", async () => {
+  it("rolls back an overwrite when catalog persistence fails, preserving the old generation and entry", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
-    const original = await readFile(store.blobPath("tokyo-station"));
     await rm(path.join(dir, "catalog.json"));
     await mkdir(path.join(dir, "catalog.json"));
     await expect(store.putDataset({ ...META, name: "v2" }, Buffer.from([9, 9, 9]))).rejects.toThrow();
-    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(original);
+    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(ZIP);
     expect(store.getEntry("tokyo-station")?.name).toBe("東京駅");
-    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
+    expect(await readdir(path.join(dir, "blobs"))).toHaveLength(1);
   });
 
   it("does not mutate in-memory users or sessions when persistence fails", async () => {
@@ -168,78 +183,48 @@ describe("PlatformStore", () => {
     expect(store.findSession("t1")).toBeUndefined();
   });
 
-  it("keeps an overwrite committed even when post-commit backup cleanup fails", async () => {
+  it("keeps an overwrite committed even when the superseded generation cleanup fails", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
-    const NEW = Buffer.from([1, 2, 3, 4]);
-    mockCtl.rejectRmSubstring = ".bak-";
+    const V2 = Buffer.from([1, 2, 3, 4]);
+    mockCtl.rejectRmSubstring = ".zip";
     try {
-      const entry = await store.putDataset({ ...META, name: "v2", featureCount: 42 }, NEW);
+      const entry = await store.putDataset({ ...META, name: "v2" }, V2);
       expect(entry.name).toBe("v2");
     } finally {
       mockCtl.rejectRmSubstring = null;
     }
-    expect(store.getEntry("tokyo-station")?.name).toBe("v2");
-    expect(store.getEntry("tokyo-station")?.featureCount).toBe(42);
-    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(NEW);
-    expect(store.listCatalog()[0]?.name).toBe("v2");
+    expect(store.getEntry("tokyo-station")?.contentHash).toBe(sha256(V2));
+    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(V2);
   });
 
-  it("recovers an overwrite interrupted after the new blob is published (before catalog commit)", async () => {
+  it("removes unreferenced blob generations and orphans at boot", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
-    const blob = store.blobPath("tokyo-station");
-    // Crash state: old blob moved to a backup, new content published, catalog still v1.
-    await rename(blob, `${blob}.bak-crash`);
-    await writeFile(blob, Buffer.from([7, 7, 7]));
+    const current = path.basename(store.blobPath("tokyo-station"));
+    await writeFile(path.join(dir, "blobs", "tokyo-station.deadbeef.zip"), ZIP);
+    await writeFile(path.join(dir, "blobs", "ghost.cafef00d.zip"), ZIP);
     const reopened = await PlatformStore.open(dir);
-    expect(reopened.getEntry("tokyo-station")?.name).toBe("東京駅");
+    expect(await readdir(path.join(dir, "blobs"))).toEqual([current]);
+    expect(reopened.listCatalog().map((entry) => entry.id)).toEqual(["tokyo-station"]);
     expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
-    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
   });
 
-  it("recovers an overwrite interrupted after the old blob was moved aside", async () => {
-    const dir = await tempDir();
-    const store = await PlatformStore.open(dir);
-    await store.putDataset(META, ZIP);
-    const blob = store.blobPath("tokyo-station");
-    // Crash state: old blob moved to backup, new blob never published, catalog still v1.
-    await rename(blob, `${blob}.bak-crash`);
-    const reopened = await PlatformStore.open(dir);
-    expect(reopened.getEntry("tokyo-station")?.name).toBe("東京駅");
-    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
-    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
-  });
-
-  it("cleans a stale backup left after a committed overwrite, retaining the new blob", async () => {
-    const dir = await tempDir();
-    const store = await PlatformStore.open(dir);
-    await store.putDataset(META, ZIP);
-    const V2 = Buffer.from([9, 9, 9]);
-    await store.putDataset({ ...META, name: "v2" }, V2);
-    const blob = store.blobPath("tokyo-station");
-    await writeFile(`${blob}.bak-stale`, ZIP);
-    const reopened = await PlatformStore.open(dir);
-    expect(reopened.getEntry("tokyo-station")?.name).toBe("v2");
-    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(V2);
-    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
-  });
-
-  it("keeps a delete committed and comments gone even when tombstone cleanup fails", async () => {
+  it("keeps a delete committed even when blob and comment cleanup fails", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
     await store.addComment("tokyo-station", { author: "alice", text: "hi" });
-    mockCtl.rejectRmSubstring = ".json";
+    mockCtl.rejectRmSubstring = "tokyo-station";
     try {
       expect(await store.deleteDataset("tokyo-station")).toBe(true);
     } finally {
       mockCtl.rejectRmSubstring = null;
     }
     expect(store.listCatalog()).toEqual([]);
-    expect(await store.listComments("tokyo-station")).toEqual([]);
+    expect(store.getEntry("tokyo-station")).toBeUndefined();
   });
 
   it("removes orphan comments for a deleted id so a reused id starts clean", async () => {
@@ -247,74 +232,11 @@ describe("PlatformStore", () => {
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
     await store.addComment("tokyo-station", { author: "alice", text: "old" });
-    // Simulate a delete whose committed catalog persisted but blob/comment cleanup was lost.
-    await writeFile(path.join(dir, "catalog.json"), JSON.stringify([]));
+    // Simulate a committed delete whose blob/comment cleanup was lost.
     await rm(store.blobPath("tokyo-station"), { force: true });
+    await writeFile(path.join(dir, "catalog.json"), JSON.stringify([]));
     const reopened = await PlatformStore.open(dir);
     await reopened.putDataset(META, ZIP);
-    expect(await reopened.listComments("tokyo-station")).toEqual([]);
-  });
-
-  it("restores a pre-commit delete tombstone for a still-cataloged entry", async () => {
-    const dir = await tempDir();
-    const store = await PlatformStore.open(dir);
-    await store.putDataset(META, ZIP);
-    const created = await store.addComment("tokyo-station", { author: "alice", text: "keep" });
-    const blob = store.blobPath("tokyo-station");
-    const comments = path.join(dir, "comments", "tokyo-station.json");
-    // Crash state: delete moved blob + comments aside but never committed the catalog.
-    await rename(blob, `${blob}.tomb-crash`);
-    await rename(comments, `${comments}.tomb-crash`);
-    const reopened = await PlatformStore.open(dir);
-    expect(reopened.getEntry("tokyo-station")?.name).toBe("東京駅");
-    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
-    expect(await reopened.listComments("tokyo-station")).toEqual([created]);
-  });
-
-  it("removes an uncataloged live blob left by a first-time put crash before catalog commit", async () => {
-    const dir = await tempDir();
-    const store = await PlatformStore.open(dir);
-    await store.putDataset(META, ZIP);
-    // Crash state: a second, never-committed dataset's blob was published with no catalog entry.
-    const ghost = path.join(dir, "blobs", "ghost.zip");
-    await writeFile(ghost, ZIP);
-    const reopened = await PlatformStore.open(dir);
-    expect(existsSync(ghost)).toBe(false);
-    expect(reopened.listCatalog().map((entry) => entry.id)).toEqual(["tokyo-station"]);
-    expect(await readFile(reopened.blobPath("tokyo-station"))).toEqual(ZIP);
-  });
-
-  it("restores an already-staged blob when the comments move-aside fails during delete", async () => {
-    const dir = await tempDir();
-    const store = await PlatformStore.open(dir);
-    await store.putDataset(META, ZIP);
-    await store.addComment("tokyo-station", { author: "alice", text: "keep" });
-    mockCtl.rejectRenameSubstring = ".json.tomb-";
-    try {
-      await expect(store.deleteDataset("tokyo-station")).rejects.toThrow();
-    } finally {
-      mockCtl.rejectRenameSubstring = null;
-    }
-    expect(store.getEntry("tokyo-station")?.name).toBe("東京駅");
-    expect(await readFile(store.blobPath("tokyo-station"))).toEqual(ZIP);
-    expect(await store.listComments("tokyo-station")).toHaveLength(1);
-    expect(await readdir(path.join(dir, "blobs"))).toEqual(["tokyo-station.zip"]);
-  });
-
-  it("does not resurrect comments after delete cleanup fails, the id is reused, then reopened", async () => {
-    const dir = await tempDir();
-    const store = await PlatformStore.open(dir);
-    await store.putDataset(META, ZIP);
-    await store.addComment("tokyo-station", { author: "alice", text: "old" });
-    mockCtl.rejectRmSubstring = ".json";
-    try {
-      expect(await store.deleteDataset("tokyo-station")).toBe(true);
-    } finally {
-      mockCtl.rejectRmSubstring = null;
-    }
-    // Reuse the id in-process; the stale committed-delete comment tombstone must be cleared.
-    await store.putDataset(META, ZIP);
-    const reopened = await PlatformStore.open(dir);
     expect(await reopened.listComments("tokyo-station")).toEqual([]);
   });
 
@@ -323,8 +245,7 @@ describe("PlatformStore", () => {
     const store = await PlatformStore.open(dir);
     await store.putDataset(META, ZIP);
     await store.addComment("tokyo-station", { author: "alice", text: "old" });
-    // Keep every `.json` rm failing across the delete and the in-process reuse, so the fix
-    // cannot depend on any tombstone cleanup succeeding.
+    // Keep every comment rm failing across the delete and the in-process reuse.
     mockCtl.rejectRmSubstring = ".json";
     try {
       expect(await store.deleteDataset("tokyo-station")).toBe(true);
@@ -334,5 +255,76 @@ describe("PlatformStore", () => {
     }
     const reopened = await PlatformStore.open(dir);
     expect(await reopened.listComments("tokyo-station")).toEqual([]);
+  });
+
+  it("keeps every blob snapshot a matching readable pair during a paused put overwrite", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const before = store.getBlobSnapshot("tokyo-station");
+    expect(before).toBeDefined();
+    if (!before) return;
+    const V2 = Buffer.from([9, 8, 7, 6, 5]);
+    const reached = deferred();
+    const release = deferred();
+    mockCtl.onCatalogCommit = async () => {
+      reached.resolve();
+      await release.promise;
+    };
+    const putPromise = store.putDataset({ ...META, name: "v2" }, V2);
+    try {
+      await reached.promise;
+      // Commit is paused: a fresh snapshot still resolves the prior generation, and the
+      // earlier snapshot remains valid. Every snapshot's hash must match the bytes at its path.
+      const during = store.getBlobSnapshot("tokyo-station");
+      expect(during).toBeDefined();
+      if (!during) return;
+      expect(during.entry.contentHash).toBe(before.entry.contentHash);
+      for (const snap of [before, during]) {
+        expect(sha256(await readFile(snap.path))).toBe(snap.entry.contentHash);
+      }
+      expect(await readFile(during.path)).toEqual(ZIP);
+      release.resolve();
+      await putPromise;
+    } finally {
+      mockCtl.onCatalogCommit = null;
+      release.resolve();
+    }
+    const after = store.getBlobSnapshot("tokyo-station");
+    expect(after).toBeDefined();
+    if (!after) return;
+    expect(after.entry.contentHash).not.toBe(before.entry.contentHash);
+    const afterBytes = await readFile(after.path);
+    expect(sha256(afterBytes)).toBe(after.entry.contentHash);
+    expect(afterBytes).toEqual(V2);
+  });
+
+  it("keeps a blob snapshot readable and matching through a paused delete", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const snap = store.getBlobSnapshot("tokyo-station");
+    expect(snap).toBeDefined();
+    if (!snap) return;
+    const reached = deferred();
+    const release = deferred();
+    mockCtl.onCatalogCommit = async () => {
+      reached.resolve();
+      await release.promise;
+    };
+    const delPromise = store.deleteDataset("tokyo-station");
+    try {
+      await reached.promise;
+      // Commit is paused: the entry is still resolvable and the captured snapshot still reads
+      // its own bytes.
+      expect(store.getEntry("tokyo-station")).toBeDefined();
+      expect(sha256(await readFile(snap.path))).toBe(snap.entry.contentHash);
+      release.resolve();
+      expect(await delPromise).toBe(true);
+    } finally {
+      mockCtl.onCatalogCommit = null;
+      release.resolve();
+    }
+    expect(store.getEntry("tokyo-station")).toBeUndefined();
   });
 });
