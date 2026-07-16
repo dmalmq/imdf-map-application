@@ -45,10 +45,19 @@ export default defineConfig({
       testMatch: VISUAL_SPEC,
     },
   ],
-  webServer: {
-    command: "pnpm build && pnpm exec vite preview --host 127.0.0.1 --port 4173",
-    url: "http://127.0.0.1:4173",
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-  },
+  webServer: [
+    {
+      command: "corepack pnpm build && corepack pnpm exec vite preview --host 127.0.0.1 --port 4173",
+      url: "http://127.0.0.1:4173",
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
+    {
+      command:
+        "corepack pnpm build:server && node server/dist/main.js add-user admin --role admin --password e2e-admin-pw --data e2e/.platform-data && node server/dist/main.js add-user alice --role user --password e2e-alice-pw --data e2e/.platform-data && node server/dist/main.js --port 4174 --data e2e/.platform-data --app dist",
+      url: "http://127.0.0.1:4174/api/catalog",
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
 });
