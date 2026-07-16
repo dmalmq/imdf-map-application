@@ -1,5 +1,11 @@
 import path from "node:path";
-import { CliUsageError, argValue, boundPort, promptPassword } from "./cli.js";
+import {
+  CliUsageError,
+  argValue,
+  assertOnlyOptions,
+  boundPort,
+  promptPassword,
+} from "./cli.js";
 import { createApp } from "./app.js";
 import { hashPassword } from "./auth.js";
 import { PlatformStore } from "./store.js";
@@ -10,6 +16,7 @@ async function main(): Promise<void> {
   const dataDir = path.resolve(argValue(args, "--data") ?? "./platform-data");
 
   if (args[0] === "add-user") {
+    assertOnlyOptions(args, 2, ["--role", "--password", "--data"]);
     const username = args[1];
     const role = argValue(args, "--role");
     if (username === undefined || username.startsWith("--") || (role !== "admin" && role !== "user")) {
@@ -34,6 +41,7 @@ async function main(): Promise<void> {
     return;
   }
 
+  assertOnlyOptions(args, 0, ["--port", "--data", "--app"]);
   const port = Number(argValue(args, "--port") ?? "8080");
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     console.error("Invalid --port; expected an integer between 0 and 65535.");
