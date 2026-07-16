@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { CliUsageError, argValue, boundPort, promptPassword } from "./cli";
