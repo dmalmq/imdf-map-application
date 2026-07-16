@@ -314,13 +314,13 @@ export class PlatformStore {
     expectedGeneration?: StoredCatalogEntry,
   ): Promise<CommentRecord | undefined> {
     return this.enqueue(async () => {
+      const commentsPath = this.commentsPath(datasetId);
       if (
         expectedGeneration !== undefined &&
         this.catalog.get(datasetId) !== expectedGeneration
       ) {
         return undefined;
       }
-      const commentsPath = this.commentsPath(datasetId);
       const record: CommentRecord = {
         ...input,
         id: randomUUID(),

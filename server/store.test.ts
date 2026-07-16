@@ -151,6 +151,10 @@ describe("PlatformStore", () => {
   it("rejects traversal and malformed dataset ids on every path and mutation op", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const generation = store.getBlobSnapshot("tokyo-station")?.entry;
+    expect(generation).toBeDefined();
+    if (generation === undefined) return;
     for (const bad of ["../evil", "/etc/passwd", "a/b", "UPPER", "", ".", "a".repeat(65)]) {
       expect(() => store.blobPath(bad)).toThrow();
       expect(() => store.getBlobSnapshot(bad)).toThrow();
@@ -159,6 +163,9 @@ describe("PlatformStore", () => {
       await expect(store.deleteDataset(bad)).rejects.toThrow();
       await expect(store.listComments(bad)).rejects.toThrow();
       await expect(store.addComment(bad, { author: "a", text: "b" })).rejects.toThrow();
+      await expect(
+        store.addComment(bad, { author: "a", text: "b" }, generation),
+      ).rejects.toThrow();
       await expect(store.deleteComment(bad, "x")).rejects.toThrow();
     }
   });
