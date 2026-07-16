@@ -4658,7 +4658,7 @@ Re-running `add-user` for an existing name resets the password/role.
 
 ### Publishing and sharing
 
-1. Sign in (top-right), open a GDB folder/archive or an IMDF ZIP locally.
+1. Open the viewer menu and sign in, then open a GDB folder/archive or an IMDF ZIP locally.
 2. Review the GDB mapping as usual, import, then click 公開 (Publish).
 3. Share the view URL (`/?dataset=<id>`) or embed URL
    (`/?dataset=<id>&embed=1&level=b1f&lang=ja`) — the same `level`, `lang`,
