@@ -248,6 +248,7 @@ describe("PlatformStore", () => {
     }
     expect(store.listCatalog()).toEqual([]);
     expect(store.getEntry("tokyo-station")).toBeUndefined();
+    expect(await store.listComments("tokyo-station")).toEqual([]);
   });
 
   it("removes orphan comments for a deleted id so a reused id starts clean", async () => {
@@ -320,6 +321,28 @@ describe("PlatformStore", () => {
     const afterBytes = await readFile(after.path);
     expect(sha256(afterBytes)).toBe(after.entry.contentHash);
     expect(afterBytes).toEqual(V2);
+  });
+
+  it("does not delete a retained generation when republishing it fails", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const retained = store.getBlobSnapshot("tokyo-station");
+    expect(retained).toBeDefined();
+    if (!retained) return;
+    const V2 = Buffer.from([9, 8, 7, 6, 5]);
+    await store.putDataset({ ...META, name: "v2" }, V2);
+    mockCtl.onCatalogCommit = async () => {
+      throw new Error("catalog boom");
+    };
+    try {
+      await expect(store.putDataset(META, ZIP)).rejects.toThrow("catalog boom");
+    } finally {
+      mockCtl.onCatalogCommit = null;
+    }
+    const retainedBytes = await readFile(retained.path);
+    expect(retainedBytes).toEqual(ZIP);
+    expect(sha256(retainedBytes)).toBe(retained.entry.contentHash);
   });
 
   it("keeps a blob snapshot readable and matching through a paused delete", async () => {

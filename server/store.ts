@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CatalogEntry, CommentRecord, SessionRecord, UserRecord } from "./types";
 
@@ -29,6 +29,7 @@ export class PlatformStore {
   private readonly catalog = new Map<string, StoredCatalogEntry>();
   private readonly users = new Map<string, UserRecord>();
   private readonly sessions = new Map<string, SessionRecord>();
+  private readonly deletedDatasets = new Set<string>();
 
   private constructor(private readonly dataDir: string) {}
 
@@ -175,10 +176,20 @@ export class PlatformStore {
       // reused id cannot resurface old comments. A true overwrite keeps its comments.
       const isNew = previous === undefined;
       const commentsPath = this.commentsPath(meta.id);
-      // Write the new immutable generation completely before touching the catalog. Existing
-      // readers keep resolving the prior generation until the catalog + memory commit below.
+      // Write a new immutable generation completely before touching the catalog. A retained
+      // generation may already exist after an earlier overwrite/delete; this attempt does not
+      // own it and must never remove it during rollback.
+      let createdGeneration = false;
       try {
-        await this.atomicWrite(newBlob, blob);
+        try {
+          await stat(newBlob);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+          }
+          await this.atomicWrite(newBlob, blob);
+          createdGeneration = true;
+        }
         if (isNew) {
           await this.atomicWrite(commentsPath, JSON.stringify([], null, 2));
         }
@@ -186,10 +197,9 @@ export class PlatformStore {
         rows.push(stored);
         await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
       } catch (error) {
-        // Remove only the unreferenced new generation; the prior generation (if the hash
-        // differs) stays intact and referenced. A same-hash re-put shares the file, so it
-        // must not be removed.
-        if (previous?.contentHash !== contentHash) {
+        // Roll back only a generation created by this attempt. An existing same-hash path can
+        // be a retained snapshot from an older catalog generation.
+        if (createdGeneration) {
           await rm(newBlob, { force: true });
         }
         if (isNew) {
@@ -202,6 +212,7 @@ export class PlatformStore {
       // path but not yet opened it. Immutable old generations are reclaimed only by open()'s
       // startup GC once they are unreferenced by the persisted catalog.
       this.catalog.set(meta.id, stored);
+      this.deletedDatasets.delete(meta.id);
       const { contentHash: _hash, ...entry } = stored;
       return entry;
     });
@@ -222,6 +233,7 @@ export class PlatformStore {
       // and must not remain readable after delete, so they are cleaned best-effort now
       // (boot recovery + the durable empty file on reuse cover a cleanup failure).
       this.catalog.delete(id);
+      this.deletedDatasets.add(id);
       await rm(this.commentsPath(id), { force: true }).catch((error: unknown) => {
         console.warn(`[store] failed to remove comments for ${id}: ${String(error)}`);
       });
@@ -230,7 +242,11 @@ export class PlatformStore {
   }
 
   async listComments(datasetId: string): Promise<CommentRecord[]> {
-    return readJsonFile<CommentRecord[]>(this.commentsPath(datasetId), []);
+    const commentsPath = this.commentsPath(datasetId);
+    if (this.deletedDatasets.has(datasetId)) {
+      return [];
+    }
+    return readJsonFile<CommentRecord[]>(commentsPath, []);
   }
 
   addComment(
