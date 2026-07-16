@@ -4,3 +4,6 @@ test-results
 playwright-report
 .DS_Store
 .pnpm-store
+server/dist/
+platform-data/
+e2e/.platform-data/
