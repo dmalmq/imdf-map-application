@@ -197,18 +197,11 @@ export class PlatformStore {
         }
         throw error;
       }
-      // Catalog is the durable commit point: advance memory, then best-effort remove the
-      // now-superseded generation. Its failure cannot turn a committed put into a rejection.
+      // Catalog is the durable commit point: advance memory. The superseded generation is
+      // deliberately NOT unlinked here — a concurrent reader may have captured its snapshot
+      // path but not yet opened it. Immutable old generations are reclaimed only by open()'s
+      // startup GC once they are unreferenced by the persisted catalog.
       this.catalog.set(meta.id, stored);
-      if (previous && previous.contentHash !== contentHash) {
-        await rm(this.blobFile(meta.id, previous.contentHash), { force: true }).catch(
-          (error: unknown) => {
-            console.warn(
-              `[store] failed to remove prior blob generation for ${meta.id}: ${String(error)}`,
-            );
-          },
-        );
-      }
       const { contentHash: _hash, ...entry } = stored;
       return entry;
     });
@@ -223,14 +216,12 @@ export class PlatformStore {
       }
       const rows = [...this.catalog.values()].filter((row) => row.id !== id);
       await this.atomicWrite(this.file("catalog.json"), JSON.stringify(rows, null, 2));
-      // Committed: advance memory. Readers that already resolved the old path can still read
-      // the immutable generation until the best-effort cleanup below removes it; a cleanup
-      // failure cannot turn a committed delete into a rejection, and boot recovery removes
-      // any leftover unreferenced generation or orphaned comments.
+      // Committed: advance memory. The deleted blob generation is deliberately NOT unlinked
+      // here — a reader may have captured its snapshot path but not yet opened it. It is
+      // reclaimed by open()'s startup GC once unreferenced. Comments are not content-addressed
+      // and must not remain readable after delete, so they are cleaned best-effort now
+      // (boot recovery + the durable empty file on reuse cover a cleanup failure).
       this.catalog.delete(id);
-      await rm(this.blobFile(id, entry.contentHash), { force: true }).catch((error: unknown) => {
-        console.warn(`[store] failed to remove blob for ${id}: ${String(error)}`);
-      });
       await rm(this.commentsPath(id), { force: true }).catch((error: unknown) => {
         console.warn(`[store] failed to remove comments for ${id}: ${String(error)}`);
       });
