@@ -30,6 +30,16 @@ const CONTENT_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
+function ifNoneMatch(header: string | string[] | undefined, etag: string): boolean {
+  const value = Array.isArray(header) ? header.join(",") : header;
+  return (
+    value !== undefined &&
+    value
+      .split(",")
+      .some((candidate) => candidate.trim() === "*" || candidate.trim().replace(/^W\//, "") === etag)
+  );
+}
+
 class BodyTooLarge extends Error {}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -276,7 +286,7 @@ export function createApp(options: AppOptions): Server {
     };
     res.once("close", release);
     const etag = `"${entry.contentHash}"`;
-    if (req.headers["if-none-match"] === etag) {
+    if (ifNoneMatch(req.headers["if-none-match"], etag)) {
       res.off("close", release);
       await lease.release();
       res.writeHead(304);
@@ -342,7 +352,11 @@ export function createApp(options: AppOptions): Server {
       "content-type": CONTENT_TYPES[path.extname(resolved)] ?? "application/octet-stream",
       "content-length": info.size,
     });
-    createReadStream(resolved).pipe(res);
+    try {
+      await pipeline(createReadStream(resolved), res);
+    } catch (error) {
+      if (!res.destroyed) throw error;
+    }
   }
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -402,7 +416,8 @@ export function createApp(options: AppOptions): Server {
         return;
       }
       if (segments[3] === "comments") {
-        if (store.getEntry(id) === undefined) {
+        const expectedGeneration = store.getBlobSnapshot(id)?.entry;
+        if (expectedGeneration === undefined) {
           sendError(res, 404, "not_found", "Dataset not found.");
           return;
         }
@@ -421,7 +436,20 @@ export function createApp(options: AppOptions): Server {
             sendError(res, 400, "invalid_comment", "Comment text must be 1-2000 characters.");
             return;
           }
-          const comment = await store.addComment(id, { ...input, author: user.username });
+          const comment = await store.addComment(
+            id,
+            { ...input, author: user.username },
+            expectedGeneration,
+          );
+          if (comment === undefined) {
+            sendError(
+              res,
+              409,
+              "dataset_changed",
+              "Dataset changed while the comment was submitted.",
+            );
+            return;
+          }
           sendJson(res, 201, { comment });
           return;
         }

@@ -151,6 +151,15 @@ describe("platform API", () => {
       headers: { "if-none-match": etag ?? "" },
     });
     expect(cached.status).toBe(304);
+    for (const candidate of ["*", `W/${etag}`, `"other", ${etag}`]) {
+      expect(
+        (
+          await fetch(`${base}/datasets/tokyo.zip`, {
+            headers: { "if-none-match": candidate },
+          })
+        ).status,
+      ).toBe(304);
+    }
     expect(await fetch(`${base}/datasets/missing.zip`).then((r) => r.status)).toBe(404);
   });
 
@@ -278,7 +287,7 @@ describe("platform API", () => {
   });
 
   it("comments: user posts (author from session), owner/admin delete, foreign delete forbidden", async () => {
-    const { base } = await boot();
+    const { base, store } = await boot();
     const adminCookie = await login(base, "admin", "admin-pw");
     await fetch(`${base}/api/datasets/tokyo?${PUT_QUERY}`, { method: "PUT", headers: { cookie: adminCookie }, body: ZIP });
     const userCookie = await login(base, "alice", "alice-pw");
@@ -307,6 +316,16 @@ describe("platform API", () => {
     const second = ((await again.json()) as { comment: { id: string } }).comment;
     const adminOwnCookie = adminCookie;
     const foreign = await fetch(`${base}/api/datasets/tokyo/comments/${second.id}`, { method: "DELETE" });
+    await store.upsertUser({ username: "bob", role: "user", ...hashPassword("bob-pw") });
+    const bobCookie = await login(base, "bob", "bob-pw");
+    expect(
+      (
+        await fetch(`${base}/api/datasets/tokyo/comments/${second.id}`, {
+          method: "DELETE",
+          headers: { cookie: bobCookie },
+        })
+      ).status,
+    ).toBe(403);
     expect(foreign.status).toBe(401);
     const ownerDelete = await fetch(`${base}/api/datasets/tokyo/comments/${second.id}`, { method: "DELETE", headers: { cookie: userCookie } });
     expect(ownerDelete.status).toBe(204);
@@ -319,6 +338,78 @@ describe("platform API", () => {
         body: JSON.stringify({ text: "" }),
       })).status,
     ).toBe(400);
+  });
+
+  it("rejects a slow comment when the targeted dataset generation is replaced", async () => {
+    const { base, store } = await boot();
+    const adminCookie = await login(base, "admin", "admin-pw");
+    const userCookie = await login(base, "alice", "alice-pw");
+    await fetch(`${base}/api/datasets/tokyo?${PUT_QUERY}`, {
+      method: "PUT",
+      headers: { cookie: adminCookie },
+      body: ZIP,
+    });
+
+    const generationRead = Promise.withResolvers<void>();
+    const originalSnapshot = store.getBlobSnapshot.bind(store);
+    store.getBlobSnapshot = (id) => {
+      const snapshot = originalSnapshot(id);
+      generationRead.resolve();
+      return snapshot;
+    };
+
+    const body = Buffer.from(JSON.stringify({ text: "belongs to the old generation" }));
+    const responseReady = Promise.withResolvers<IncomingMessage>();
+    const client = request(
+      `${base}/api/datasets/tokyo/comments`,
+      {
+        method: "POST",
+        headers: {
+          cookie: userCookie,
+          "content-type": "application/json",
+          "content-length": body.length,
+        },
+      },
+      responseReady.resolve,
+    );
+    client.on("error", responseReady.reject);
+    client.write(body.subarray(0, 5));
+    await generationRead.promise;
+    store.getBlobSnapshot = originalSnapshot;
+
+    expect(
+      (
+        await fetch(`${base}/api/datasets/tokyo`, {
+          method: "DELETE",
+          headers: { cookie: adminCookie },
+        })
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        await fetch(`${base}/api/datasets/tokyo?${PUT_QUERY}`, {
+          method: "PUT",
+          headers: { cookie: adminCookie },
+          body: ZIP,
+        })
+      ).status,
+    ).toBe(200);
+    client.end(body.subarray(5));
+
+    const response = await responseReady.promise;
+    expect(response.statusCode).toBe(409);
+    response.resume();
+    await new Promise<void>((resolve) => response.once("end", resolve));
+    const comments = await fetch(`${base}/api/datasets/tokyo/comments`);
+    const payload: unknown = await comments.json();
+    expect(
+      payload !== null &&
+        typeof payload === "object" &&
+        "comments" in payload &&
+        Array.isArray(payload.comments)
+        ? payload.comments
+        : null,
+    ).toEqual([]);
   });
 
   it("serves static app files with SPA fallback and no traversal", async () => {

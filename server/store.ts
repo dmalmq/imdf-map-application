@@ -302,8 +302,24 @@ export class PlatformStore {
   addComment(
     datasetId: string,
     input: Omit<CommentRecord, "id" | "createdAt">,
-  ): Promise<CommentRecord> {
+  ): Promise<CommentRecord>;
+  addComment(
+    datasetId: string,
+    input: Omit<CommentRecord, "id" | "createdAt">,
+    expectedGeneration: StoredCatalogEntry,
+  ): Promise<CommentRecord | undefined>;
+  addComment(
+    datasetId: string,
+    input: Omit<CommentRecord, "id" | "createdAt">,
+    expectedGeneration?: StoredCatalogEntry,
+  ): Promise<CommentRecord | undefined> {
     return this.enqueue(async () => {
+      if (
+        expectedGeneration !== undefined &&
+        this.catalog.get(datasetId) !== expectedGeneration
+      ) {
+        return undefined;
+      }
       const commentsPath = this.commentsPath(datasetId);
       const record: CommentRecord = {
         ...input,

@@ -97,6 +97,24 @@ describe("PlatformStore", () => {
     expect(await store.deleteComment("any", created.id)).toBeNull();
   });
 
+  it("does not append a comment after the targeted dataset generation changes", async () => {
+    const dir = await tempDir();
+    const store = await PlatformStore.open(dir);
+    await store.putDataset(META, ZIP);
+    const original = store.getBlobSnapshot("tokyo-station")?.entry;
+    expect(original).toBeDefined();
+    if (original === undefined) return;
+    await store.putDataset(META, Buffer.from([0x50, 0x4b, 0x03, 0x04, 9]));
+    expect(
+      await store.addComment(
+        "tokyo-station",
+        { author: "alice", text: "stale" },
+        original,
+      ),
+    ).toBeUndefined();
+    expect(await store.listComments("tokyo-station")).toEqual([]);
+  });
+
   it("drops catalog entries whose blob is missing at boot", async () => {
     const dir = await tempDir();
     const store = await PlatformStore.open(dir);
