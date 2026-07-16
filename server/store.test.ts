@@ -107,8 +107,15 @@ describe("PlatformStore", () => {
       catalogFile,
       JSON.stringify([...rows, { ...META, id: "dangling", updatedAt: "2026-01-01T00:00:00.000Z", contentHash: "0".repeat(64) }]),
     );
+    const danglingComments = path.join(dir, "comments", "dangling.json");
+    await writeFile(
+      danglingComments,
+      JSON.stringify([{ id: "old", author: "alice", text: "stale", createdAt: "2026-01-01" }]),
+    );
     const reopened = await PlatformStore.open(dir);
     expect(reopened.listCatalog().map((entry) => entry.id)).toEqual(["tokyo-station"]);
+    expect(await reopened.listComments("dangling")).toEqual([]);
+    expect(existsSync(danglingComments)).toBe(false);
   });
 
   it("persists users and sessions across reopen", async () => {

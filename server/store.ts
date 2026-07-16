@@ -51,7 +51,6 @@ export class PlatformStore {
         await rm(path.join(blobDir, name), { force: true });
       }
     }
-    await store.recoverComments(new Set(rows.map((row) => row.id)));
     for (const row of rows) {
       if (present.has(`${row.id}.${row.contentHash}.zip`)) {
         store.catalog.set(row.id, row);
@@ -59,6 +58,7 @@ export class PlatformStore {
         console.warn(`[store] dropping catalog entry without blob: ${row.id}`);
       }
     }
+    await store.recoverComments(new Set(store.catalog.keys()));
     for (const user of await readJsonFile<UserRecord[]>(store.file("users.json"), [])) {
       store.users.set(user.username, user);
     }
