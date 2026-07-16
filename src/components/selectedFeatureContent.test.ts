@@ -163,4 +163,41 @@ describe("resolveSelectedFeatureContent", () => {
     });
     expect(resolveSelectedFeatureContent(loaded, occupant, "en").description).toBe("Selected wins");
   });
+
+  it("exposes original GDB columns in original order with provenance, excluding __gdb_ keys", () => {
+    const anchor = feature("anchor");
+    const gdb = feature("unit", {
+      sourceProperties: {
+        OBJECTID: 7,
+        名称: "コンコース",
+        FLOOR: "B1F",
+        width: null,
+        tags: ["a", "b"],
+        opaque: 1n,
+        __gdb_database: "gdb-1",
+        __gdb_layer: "TokyoSta_B1_Space",
+        __gdb_resolved_level_id: "xyz",
+      },
+    });
+    const resolved = resolveSelectedFeatureContent(venue(gdb, anchor, {}), gdb, "en");
+    expect(resolved.provenance).toBe("TokyoSta_B1_Space (gdb-1)");
+    expect(resolved.sourceAttributes).toEqual([
+      { field: "OBJECTID", value: "7" },
+      { field: "名称", value: "コンコース" },
+      { field: "FLOOR", value: "B1F" },
+      { field: "width", value: "null" },
+      { field: "tags", value: '["a","b"]' },
+      { field: "opaque", value: "1" },
+    ]);
+  });
+
+  it("keeps sourceAttributes null for IMDF features", () => {
+    const anchor = feature("anchor");
+    const occupant = feature("occupant", {
+      sourceProperties: { hours: "Mo-Fr 10:00-20:00" },
+    });
+    const resolved = resolveSelectedFeatureContent(venue(occupant, anchor, {}), occupant, "en");
+    expect(resolved.sourceAttributes).toBeNull();
+    expect(resolved.provenance).toBeNull();
+  });
 });

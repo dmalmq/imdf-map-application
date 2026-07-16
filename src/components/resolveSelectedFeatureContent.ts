@@ -9,6 +9,37 @@ import type {
 
 const PHONE_RE = /^[+0-9().\- ]+$/;
 
+export interface SourceAttribute {
+  field: string;
+  value: string;
+}
+
+function formatAttributeValue(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function resolveSourceAttributes(
+  feature: ViewerFeature,
+): { attributes: SourceAttribute[]; provenance: string } | null {
+  const layer = feature.sourceProperties["__gdb_layer"];
+  if (typeof layer !== "string") return null;
+  const database = feature.sourceProperties["__gdb_database"];
+  const attributes = Object.entries(feature.sourceProperties)
+    .filter(([key]) => !key.startsWith("__gdb_"))
+    .map(([field, value]) => ({ field, value: formatAttributeValue(value) }));
+  return {
+    attributes,
+    provenance: typeof database === "string" ? `${layer} (${database})` : layer,
+  };
+}
+
 export interface ResolvedFeatureContent {
   name: string;
   description: string | null;
@@ -19,6 +50,10 @@ export interface ResolvedFeatureContent {
   phone: string | null;
   website: string | null;
   image: { src: string; alt: string } | null;
+  /** Original GDB columns in original field order; null for IMDF features. */
+  sourceAttributes: SourceAttribute[] | null;
+  /** Layer/database provenance for GDB features; null otherwise. */
+  provenance: string | null;
 }
 
 function coreString(feature: ViewerFeature, key: string): string | null {
@@ -77,6 +112,7 @@ export function resolveSelectedFeatureContent(
     typeof anchorId === "string" && anchorId !== feature.id
       ? venue.enrichmentByFeatureId.get(anchorId)
       : undefined;
+  const source = resolveSourceAttributes(feature);
 
   const descriptions = {
     ...(anchor?.description ?? {}),
@@ -104,5 +140,7 @@ export function resolveSelectedFeatureContent(
     phone: enrichedPhone ?? validPhone(coreString(feature, "phone")),
     website: enrichedWebsite ?? validWebsite(coreString(feature, "website")),
     image: resolveImage(selected, anchor, locale, venue.manifest.language),
+    sourceAttributes: source?.attributes ?? null,
+    provenance: source?.provenance ?? null,
   };
 }

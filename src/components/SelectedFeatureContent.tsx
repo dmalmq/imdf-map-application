@@ -9,6 +9,7 @@ const ui = {
   accessibility: { ja: "アクセシビリティ", en: "Accessibility" },
   phone: { ja: "電話", en: "Phone" },
   website: { ja: "ウェブサイト", en: "Website" },
+  sourceData: { ja: "元データ", en: "Source data" },
   close: { ja: "詳細を閉じる", en: "Close details" },
 } as const;
 
@@ -52,50 +53,75 @@ export function SelectedFeatureContent({
       {content.description === null ? null : (
         <p className="selected-feature__description">{content.description}</p>
       )}
-      <dl className="selected-feature__details">
-        {content.category === null ? null : (
-          <div>
-            <dt>{ui.category[locale]}</dt>
-            <dd>{content.category}</dd>
+      {content.sourceAttributes !== null ? (
+        <>
+          <p className="selected-feature__provenance">{content.provenance}</p>
+          <div
+            className="selected-feature__attributes-scroll"
+            aria-label={ui.sourceData[locale]}
+            tabIndex={0}
+          >
+            <table className="selected-feature__attributes">
+              <caption className="selected-feature__attributes-caption">
+                {ui.sourceData[locale]}
+              </caption>
+              <tbody>
+                {content.sourceAttributes.map((attribute) => (
+                  <tr key={attribute.field}>
+                    <th scope="row">{attribute.field}</th>
+                    <td>{attribute.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
-        {content.floor === null ? null : (
-          <div>
-            <dt>{ui.floor[locale]}</dt>
-            <dd>{content.floor}</dd>
-          </div>
-        )}
-        {content.hours === null ? null : (
-          <div>
-            <dt>{ui.hours[locale]}</dt>
-            <dd>{content.hours}</dd>
-          </div>
-        )}
-        {content.accessibility.length === 0 ? null : (
-          <div>
-            <dt>{ui.accessibility[locale]}</dt>
-            <dd>{content.accessibility.join(", ")}</dd>
-          </div>
-        )}
-        {content.phone === null ? null : (
-          <div>
-            <dt>{ui.phone[locale]}</dt>
-            <dd>
-              <a href={`tel:${content.phone}`}>{content.phone}</a>
-            </dd>
-          </div>
-        )}
-        {content.website === null ? null : (
-          <div>
-            <dt>{ui.website[locale]}</dt>
-            <dd>
-              <a href={content.website} target="_blank" rel="noreferrer">
-                {ui.website[locale]}
-              </a>
-            </dd>
-          </div>
-        )}
-      </dl>
+        </>
+      ) : (
+        <dl className="selected-feature__details">
+          {content.category === null ? null : (
+            <div>
+              <dt>{ui.category[locale]}</dt>
+              <dd>{content.category}</dd>
+            </div>
+          )}
+          {content.floor === null ? null : (
+            <div>
+              <dt>{ui.floor[locale]}</dt>
+              <dd>{content.floor}</dd>
+            </div>
+          )}
+          {content.hours === null ? null : (
+            <div>
+              <dt>{ui.hours[locale]}</dt>
+              <dd>{content.hours}</dd>
+            </div>
+          )}
+          {content.accessibility.length === 0 ? null : (
+            <div>
+              <dt>{ui.accessibility[locale]}</dt>
+              <dd>{content.accessibility.join(", ")}</dd>
+            </div>
+          )}
+          {content.phone === null ? null : (
+            <div>
+              <dt>{ui.phone[locale]}</dt>
+              <dd>
+                <a href={`tel:${content.phone}`}>{content.phone}</a>
+              </dd>
+            </div>
+          )}
+          {content.website === null ? null : (
+            <div>
+              <dt>{ui.website[locale]}</dt>
+              <dd>
+                <a href={content.website} target="_blank" rel="noreferrer">
+                  {ui.website[locale]}
+                </a>
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
     </article>
   );
 }

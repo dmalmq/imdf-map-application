@@ -24,6 +24,8 @@ const content: ResolvedFeatureContent = {
   phone: null,
   website: null,
   image: null,
+  sourceAttributes: null,
+  provenance: null,
 };
 
 afterEach(() => {
