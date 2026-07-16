@@ -4440,7 +4440,6 @@ import { normalizeVenue } from "../src/imdf/normalizeVenue";
 import { writeVenueSnapshot } from "../src/imdf/venueSnapshot";
 import type { FeatureType, ImdfManifest, ParsedImdfArchive } from "../src/imdf/types";
 import {
-  closeMenu,
   LEVEL_B1_EN,
   levelPill,
   minimalImdfZipBuffer,
@@ -4503,24 +4502,23 @@ test.describe("platform", () => {
     await api.dispose();
   });
 
-  test("gallery lists the published snapshot and opens it", async ({ page }) => {
-    await page.goto("/");
-    const card = page.getByRole("button", { name: /E2E スナップショット/ });
-    await expect(card).toBeVisible();
-    await card.click();
-    await expect(page).toHaveURL(new RegExp(`dataset=${SNAPSHOT_ID}`));
+  test("snapshot datasets load through the bundle path", async ({ page }) => {
+    // Targeted: kind=venue-snapshot goes through readVenueSnapshot, not the
+    // IMDF worker. The full journey below uses a UI-published dataset.
+    await page.goto(`/?dataset=${SNAPSHOT_ID}`);
     await expect(page.locator(".maplibregl-canvas")).toBeVisible();
     await expect(page.getByText(VENUE_NAME_JA).first()).toBeVisible();
   });
 
-  test("signed-out users see no publish control; admin signs in via the menu and publishes an opened IMDF zip", async ({ page }) => {
-    await page.goto("/");
+  test("full journey: admin UI-publish -> gallery -> colleague view -> pinned comment -> embed", async ({ page }) => {
+    const PUBLISHED_ID = `e2e-imdf-${RUN_ID}`;
+
     // Landing is public; no publish control anywhere while signed out.
+    await page.goto("/");
     await expect(page.getByRole("button", { name: "公開" })).toHaveCount(0);
 
     // Open the minimal IMDF zip locally first (the account row lives in the
     // viewer menu, which exists once a venue is shown).
-
     const zip = await minimalImdfZipBuffer();
     await page
       .locator('input[type="file"][accept*="zip"]')
@@ -4543,16 +4541,27 @@ test.describe("platform", () => {
 
     // Publish it.
     await page.getByRole("button", { name: "公開" }).click();
-    const idInput = page.getByLabel("データセットID");
-    await idInput.fill(`e2e-imdf-${RUN_ID}`);
+    await page.getByLabel("表示名").fill("E2E 公開テスト");
+    await page.getByLabel("データセットID").fill(PUBLISHED_ID);
     await page.getByRole("button", { name: "公開", exact: true }).last().click();
-    await expect(page.getByLabel("表示URL")).toHaveValue(new RegExp(`dataset=e2e-imdf-${RUN_ID}`));
-  });
+    await expect(page.getByLabel("表示URL")).toHaveValue(new RegExp(`dataset=${PUBLISHED_ID}`));
+    await page.getByRole("button", { name: "閉じる" }).click();
 
-  test("a user leaves a pinned comment that survives reload; embed stays chrome-free", async ({ page }) => {
-    await page.goto(`/?dataset=${SNAPSHOT_ID}`);
+    // Sign the admin out via the menu, then confirm the UI-published dataset
+    // appears in the gallery.
+    await openMenu(page);
+    await page.getByRole("button", { name: "サインアウト" }).click();
+    await page.goto("/");
+    const card = page.getByRole("button", { name: /E2E 公開テスト/ });
+    await expect(card).toBeVisible();
+
+    // Colleague opens it from the gallery.
+    await card.click();
+    await expect(page).toHaveURL(new RegExp(`dataset=${PUBLISHED_ID}`));
     await expect(page.locator(".maplibregl-canvas")).toBeVisible();
+    await expect(page.getByText(VENUE_NAME_JA).first()).toBeVisible();
 
+    // Colleague signs in as alice via the menu.
     await openMenu(page);
     await page.getByRole("button", { name: "サインイン" }).click();
     await page.getByLabel("ユーザー名").fill("alice");
@@ -4561,6 +4570,9 @@ test.describe("platform", () => {
     // Dialog closes on success; the menu already closed itself on the first
     // dialog interaction (outside-click), so continue directly.
     await expect(page.getByLabel("ユーザー名")).toHaveCount(0);
+
+    // Switch to B1 so the pin lands on a non-default level, then pin + post.
+    await levelPill(page, LEVEL_B1_EN).click();
     await page.getByRole("button", { name: "コメント", exact: true }).click();
     await page.getByRole("button", { name: "地図にピンを打つ" }).click();
     const canvas = page.locator(".maplibregl-canvas");
@@ -4571,13 +4583,15 @@ test.describe("platform", () => {
     await page.getByRole("button", { name: "投稿" }).click();
     await expect(page.getByText("ここを確認してください")).toBeVisible();
 
+    // Persists across reload.
     await page.reload();
     await page.getByRole("button", { name: "コメント", exact: true }).click();
     await expect(page.getByText("ここを確認してください")).toBeVisible();
 
-    await page.goto(`/?dataset=${SNAPSHOT_ID}&embed=1&level=b1`);
+    // Embed deep link on the SAME dataset: chrome-free with the pin's level
+    // preselected (same contract as embed.spec).
+    await page.goto(`/?dataset=${PUBLISHED_ID}&embed=1&level=b1`);
     await expect(page.locator(".maplibregl-canvas")).toBeVisible();
-    // Chrome-free with the deep-linked level preselected (same contract as embed.spec).
     await expect(levelPill(page, LEVEL_B1_EN)).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("button", { name: "サインイン" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "コメント", exact: true })).toHaveCount(0);
@@ -4590,7 +4604,7 @@ Selector caveats for the implementer: (a) the IMDF file input accept string must
 - [ ] **Step 3: Run the spec on Chromium**
 
 Run: `corepack pnpm exec playwright test e2e/platform.spec.ts --project=chromium`
-Expected: 3 passed. (Cross-browser projects will also pick this spec up in full runs; keep it browser-agnostic.)
+Expected: 2 passed. (Cross-browser projects will also pick this spec up in full runs; keep it browser-agnostic.)
 
 - [ ] **Step 4: Commit**
 
