@@ -16,6 +16,7 @@
   --color-warning: #d97706;
   --color-warning-bg: #fef3c7;
   --color-error: #dc2626;
+  --color-success: #16a34a;
   --color-selected: #4f46e5;
   --color-focus: #4f46e5;
 
@@ -1482,4 +1483,146 @@ button {
 
 .signin-card .kiriko-input input {
   width: 100%;
+}
+
+.upload-modal,
+.confirm-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(560px, 100%);
+  padding: var(--space-6);
+  background: var(--color-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
+}
+
+.confirm-modal {
+  width: min(400px, 100%);
+}
+
+.upload-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.upload-modal__title,
+.confirm-modal__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 26px;
+}
+
+.drop-target {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 160px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-app-bg);
+  cursor: pointer;
+}
+
+.drop-target--active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.drop-target__title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.drop-target__hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-muted);
+}
+
+.upload-modal__name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.upload-modal__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-chip-fill);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  transition: width 0.15s ease-out;
+}
+
+.upload-modal__processing {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-muted);
+}
+
+.upload-modal__error,
+.confirm-modal__body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.upload-modal__error {
+  color: var(--color-error);
+}
+
+.upload-modal__published {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-success);
+}
+
+.upload-modal__footer,
+.confirm-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.btn-destructive {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-error);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  transition: filter 0.15s ease-out;
+}
+
+.btn-destructive:hover {
+  filter: brightness(0.92);
 }

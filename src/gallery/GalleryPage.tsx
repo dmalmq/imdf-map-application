@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { KirikoMark } from "../components/icons";
 import type { LocaleCode } from "../imdf/types";
 import { api, type ApiUser, type VenueSummary } from "./api";
+import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 import { DatasetCard } from "./DatasetCard";
 import { SignInModal } from "./SignInModal";
+import { UploadModal } from "./UploadModal";
 
 const ui = {
   datasets: { ja: "データセット", en: "Datasets" },
@@ -28,6 +30,8 @@ export function GalleryPage() {
   const [locale, setLocale] = useState<LocaleCode>("ja");
   const [state, setState] = useState<GalleryState>({ phase: "loading" });
   const [filter, setFilter] = useState("");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [deleting, setDeleting] = useState<VenueSummary | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -147,8 +151,7 @@ export function GalleryPage() {
               }}
             />
           </div>
-          {/* Task 11 wires this to the UploadModal */}
-          <button type="button" className="btn-primary gallery__upload-btn">
+          <button type="button" className="btn-primary gallery__upload-btn" onClick={() => { setUploadOpen(true); }}>
             {ui.openLocal[locale]}
           </button>
         </div>
@@ -168,13 +171,39 @@ export function GalleryPage() {
                   openVenue(venue.slug);
                 }}
                 onDelete={() => {
-                  /* Task 11 wires the confirm modal */
+                  setDeleting(venue);
                 }}
               />
             ))}
           </div>
         )}
       </main>
+      {uploadOpen ? (
+        <UploadModal
+          locale={locale}
+          onClose={() => {
+            setUploadOpen(false);
+          }}
+          onPublished={() => {
+            void reload();
+          }}
+        />
+      ) : null}
+      {deleting !== null ? (
+        <ConfirmDeleteModal
+          locale={locale}
+          venueName={deleting.name}
+          onCancel={() => {
+            setDeleting(null);
+          }}
+          onConfirm={() => {
+            void api.deleteVenue(deleting.id).then(() => {
+              setDeleting(null);
+              return reload();
+            });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
