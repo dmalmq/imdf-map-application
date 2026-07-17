@@ -6,8 +6,16 @@ afterEach(cleanupTestApps);
 describe("venues", () => {
   it("requires a session", async () => {
     const { app } = await makeTestApp();
-    const res = await app.inject({ method: "GET", url: "/api/venues" });
-    expect(res.statusCode).toBe(401);
+    const list = await app.inject({ method: "GET", url: "/api/venues" });
+    expect(list.statusCode).toBe(401);
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/venues",
+      payload: { name: "No Session" },
+    });
+    expect(create.statusCode).toBe(401);
+    const del = await app.inject({ method: "DELETE", url: "/api/venues/1" });
+    expect(del.statusCode).toBe(401);
   });
 
   it("creates with slugs, lists, and deletes", async () => {
