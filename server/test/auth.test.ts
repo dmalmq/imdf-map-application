@@ -39,4 +39,28 @@ describe("auth", () => {
     const after = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie } });
     expect(after.statusCode).toBe(401);
   });
+
+  it("sets the Secure cookie attribute when secureCookies is enabled", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { buildApp } = await import("../src/app");
+    const app = await buildApp({
+      dataDir: mkdtempSync(join(tmpdir(), "kiriko-secure-")),
+      sessionTtlDays: 30,
+      secureCookies: true,
+      bootstrapUser: TEST_USER,
+      bootstrapPassword: TEST_PASSWORD,
+    });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: { username: TEST_USER, password: TEST_PASSWORD },
+      });
+      expect(res.cookies.find((c) => c.name === "kiriko_session")?.secure).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
 });

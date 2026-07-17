@@ -14,6 +14,7 @@ export async function makeTestApp(): Promise<{ app: FastifyInstance; dataDir: st
   const app = await buildApp({
     dataDir,
     sessionTtlDays: 30,
+    secureCookies: false,
     bootstrapUser: TEST_USER,
     bootstrapPassword: TEST_PASSWORD,
   });

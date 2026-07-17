@@ -34,6 +34,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
+        secure: request.server.config.secureCookies,
         maxAge: request.server.config.sessionTtlDays * 24 * 60 * 60,
       });
       return { user: { id: row.id, username: row.username, role: row.role } };
@@ -45,7 +46,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (token) {
       destroySession(request.server.db, token);
     }
-    void reply.clearCookie("kiriko_session", { path: "/" });
+    void reply.clearCookie("kiriko_session", { httpOnly: true, sameSite: "lax", path: "/" });
     return reply.code(204).send();
   });
 

@@ -1,6 +1,7 @@
 export interface AppConfig {
   dataDir: string;
   sessionTtlDays: number;
+  secureCookies: boolean;
   bootstrapUser?: string;
   bootstrapPassword?: string;
 }
@@ -9,6 +10,7 @@ export function configFromEnv(): AppConfig & { port: number } {
   const config: AppConfig & { port: number } = {
     dataDir: process.env["KIRIKO_DATA_DIR"] ?? "./data",
     sessionTtlDays: 30,
+    secureCookies: /^(1|true)$/i.test(process.env["KIRIKO_SECURE_COOKIES"] ?? ""),
     port: Number(process.env["KIRIKO_PORT"] ?? 8790),
   };
   const user = process.env["KIRIKO_BOOTSTRAP_USER"];
