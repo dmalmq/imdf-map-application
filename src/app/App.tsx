@@ -21,6 +21,11 @@ import { resolveSelectedFeatureContent } from "../components/resolveSelectedFeat
 import { ImdfDropzone } from "../components/ImdfDropzone";
 import { GdbImportDialog } from "../components/GdbImportDialog";
 import { LevelSwitcher } from "../components/LevelSwitcher";
+import {
+  LayerControls,
+  type LayerBuildingRow,
+  type LayerTypeRow,
+} from "../components/LayerControls";
 import { ViewerMenu } from "../components/ViewerMenu";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { ArchiveError } from "../errors/ArchiveError";
@@ -43,9 +48,10 @@ import {
 } from "../gdb/loadGdb";
 import type { GdbInspection, GdbMappingPlan } from "../gdb/types";
 import { localizedLabel } from "../imdf/localize";
-import type { LoadedVenue, SearchResult } from "../imdf/types";
+import type { FeatureType, LoadedVenue, SearchResult } from "../imdf/types";
 import { IndoorMap } from "../map/IndoorMap";
 import { countFloorMarkerMatches } from "../map/useFeatureMarkers";
+import { visibleSearchEntries, type VisibilitySelection } from "../map/visibility";
 import { searchVenue } from "../search/searchVenue";
 import {
   initialViewerState,
@@ -243,17 +249,72 @@ export function App() {
   const locale = state.locale;
   const venueState = activeVenue(state);
 
+  const visibility = useMemo<VisibilitySelection>(
+    () =>
+      venueState
+        ? { hiddenTypes: venueState.hiddenTypes, hiddenBuildings: venueState.hiddenBuildings }
+        : { hiddenTypes: new Set(), hiddenBuildings: new Set() },
+    [venueState],
+  );
+
+  const TYPE_ORDER: FeatureType[] = [
+    "unit",
+    "opening",
+    "detail",
+    "amenity",
+    "fixture",
+    "kiosk",
+    "occupant",
+  ];
+
+  const layerTypeRows = useMemo<LayerTypeRow[]>(() => {
+    if (!venueState) {
+      return [];
+    }
+    const counts = new Map<FeatureType, number>();
+    for (const feature of venueState.loadedVenue.featuresById.values()) {
+      counts.set(feature.featureType, (counts.get(feature.featureType) ?? 0) + 1);
+    }
+    return TYPE_ORDER.filter((featureType) => counts.has(featureType)).map((featureType) => ({
+      featureType,
+      count: counts.get(featureType) ?? 0,
+    }));
+  }, [venueState]);
+
+  const layerBuildingRows = useMemo<LayerBuildingRow[]>(() => {
+    if (!venueState) {
+      return [];
+    }
+    const counts = new Map<string, number>();
+    for (const feature of venueState.loadedVenue.featuresById.values()) {
+      if (feature.buildingId !== null) {
+        counts.set(feature.buildingId, (counts.get(feature.buildingId) ?? 0) + 1);
+      }
+    }
+    return venueState.loadedVenue.buildings.map((building) => ({
+      id: building.id,
+      label: localizedLabel(
+        building.label,
+        locale,
+        building.id,
+        venueState.loadedVenue.manifest.language,
+      ),
+      count: counts.get(building.id) ?? 0,
+    }));
+  }, [venueState, locale]);
+
   const searchResults = useMemo(() => {
     if (!venueState) {
       return [] as SearchResult[];
     }
-    return searchVenue(venueState.loadedVenue.searchEntries, {
+    const entries = visibleSearchEntries(venueState.loadedVenue.searchEntries, visibility);
+    return searchVenue(entries, {
       text: venueState.searchText,
       category: venueState.searchCategory,
       locale,
       levelId: venueState.selectedLevelId,
     });
-  }, [venueState, locale]);
+  }, [venueState, locale, visibility]);
 
   const currentFloorMatchCount = useMemo(() => {
     if (!venueState) return 0;
@@ -967,6 +1028,26 @@ export function App() {
                   ) : undefined
                 }
               />
+              <LayerControls
+                locale={locale}
+                types={layerTypeRows}
+                buildings={layerBuildingRows}
+                hiddenTypes={venueState.hiddenTypes}
+                hiddenBuildings={venueState.hiddenBuildings}
+                onToggleType={(featureType) => {
+                  dispatch({ type: "toggle_type", featureType });
+                }}
+                onToggleBuilding={(buildingId) => {
+                  dispatch({ type: "toggle_building", buildingId });
+                }}
+                onSetTypesHidden={(hidden) => {
+                  dispatch({ type: "set_types_hidden", hidden });
+                }}
+                onSetBuildingsHidden={(hidden) => {
+                  dispatch({ type: "set_buildings_hidden", hidden });
+                }}
+                onOpenChange={() => {}}
+              />
               <div className="map-stage__levels">
                 <LevelSwitcher
                   levels={venueState.loadedVenue.levels}
@@ -992,6 +1073,7 @@ export function App() {
                 onSelectFeature={onMapSelectFeature}
                 flyTo={flyTarget}
                 {...(commentsOpen && pinArmed ? { onMapClick: onCommentMapClick } : {})}
+                visibility={visibility}
               />
               {!embed && commentsOpen && activeDatasetId !== null ? (
                 <CommentsPanel

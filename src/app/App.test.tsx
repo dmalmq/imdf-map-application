@@ -178,6 +178,8 @@ vi.mock("../map/IndoorMap", () => ({
         data-search-category={props.searchCategory}
         data-compact={String(props.compact)}
         data-bottom-padding={String(props.bottomPadding)}
+        data-hidden-types={[...(props.visibility?.hiddenTypes ?? [])].join(",")}
+        data-hidden-buildings={[...(props.visibility?.hiddenBuildings ?? [])].join(",")}
         data-identity={identityRef.current.n}
       >
         <canvas className="maplibregl-canvas" tabIndex={0} data-testid="map-canvas" />
@@ -1675,4 +1677,37 @@ describe("App comments", () => {
     await userEvent.click(await screen.findByRole("button", { name: "サインインしてコメント" }));
     expect(screen.getByLabelText("アカウントにサインイン")).toBeTruthy();
   });
+  it("hides occupants via LayerControls and filters search", async () => {
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+    const user = userEvent.setup();
+    render(<App />);
+    await uploadViaHiddenInput(zipFile());
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+
+    await user.click(screen.getByRole("button", { name: "メニュー" }));
+    await user.click(screen.getByRole("button", { name: "English" }));
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "Layers" }));
+    const occupants = screen.getByRole("checkbox", { name: /Occupants/ }) as HTMLInputElement;
+    expect(occupants.checked).toBe(true);
+    await user.click(occupants);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub").getAttribute("data-hidden-types")).toBe(
+        "occupant",
+      );
+    });
+
+    const search = screen.getByRole("combobox", { name: "Search" });
+    await user.clear(search);
+    await user.type(search, "Station Shop");
+    const dropdown = document.querySelector(".floating-search__dropdown");
+    expect(dropdown).not.toBeNull();
+    expect(dropdown?.textContent).toMatch(/No matching places/i);
+    expect(screen.queryByRole("option", { name: /Station Shop/i })).toBeNull();
+  });
+
 });
