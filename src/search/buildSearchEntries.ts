@@ -53,6 +53,7 @@ export function buildSearchEntries(features: Iterable<ViewerFeature>): SearchEnt
       featureId: feature.id,
       featureType: feature.featureType,
       levelId: feature.levelId,
+      buildingId: feature.buildingId,
       category: feature.category,
       labels: feature.labels,
       altLabels: feature.altLabels,

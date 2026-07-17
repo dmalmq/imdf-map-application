@@ -343,3 +343,85 @@ describe("locale fallback chain (localize)", () => {
     expect(localizedLabel({ en: "" }, "en", featureId)).toBe(featureId);
   });
 });
+
+describe("normalizeVenue building resolution", () => {
+  it("resolves buildingId for levels, units, and building features, and lists buildings", () => {
+    const archive: ParsedImdfArchive = {
+      manifest: { version: "1.0.0", language: "ja" },
+      collections: {
+        venue: {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              id: "venue-1",
+              geometry: { type: "Polygon", coordinates: [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]] },
+              properties: { name: { en: "V", ja: "V" } },
+            },
+          ],
+        },
+        building: {
+          type: "FeatureCollection",
+          features: [
+            { type: "Feature", id: "bldg-A", geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] }, properties: { name: { en: "A", ja: "A" } } },
+          ],
+        },
+        level: {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              id: "lvl-1",
+              geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] },
+              properties: { ordinal: 0, building_ids: ["bldg-A"], name: { en: "1", ja: "1" } },
+            },
+          ],
+        },
+        unit: {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              id: "unit-1",
+              geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] },
+              properties: { level_id: "lvl-1", category: "room" },
+            },
+          ],
+        },
+      },
+    };
+    const venue = normalizeVenue(archive);
+    expect(venue.featuresById.get("lvl-1")?.buildingId).toBe("bldg-A");
+    expect(venue.featuresById.get("unit-1")?.buildingId).toBe("bldg-A");
+    expect(venue.featuresById.get("bldg-A")?.buildingId).toBe("bldg-A");
+    expect(venue.buildings).toEqual([{ id: "bldg-A", label: { en: "A", ja: "A" } }]);
+  });
+
+  it("leaves buildingId null when unresolved and omits the buildings list", () => {
+    const archive: ParsedImdfArchive = {
+      manifest: { version: "1.0.0", language: "ja" },
+      collections: {
+        venue: {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              id: "venue-1",
+              geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] },
+              properties: { name: { en: "V", ja: "V" } },
+            },
+          ],
+        },
+        amenity: {
+          type: "FeatureCollection",
+          features: [
+            { type: "Feature", id: "am-1", geometry: { type: "Point", coordinates: [0, 0] }, properties: {} },
+          ],
+        },
+      },
+    };
+    const venue = normalizeVenue(archive);
+    expect(venue.featuresById.get("am-1")?.buildingId).toBeNull();
+    expect(venue.buildings).toEqual([]);
+  });
+});

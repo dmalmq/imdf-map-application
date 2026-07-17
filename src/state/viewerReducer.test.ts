@@ -26,6 +26,7 @@ function venueFeature(): ViewerFeature {
     category: null,
     accessibility: [],
     restriction: null,
+    buildingId: null,
     sourceProperties: {},
   };
 }
@@ -38,6 +39,7 @@ function makeVenue(
     manifest: { version: "1.0.0", language: "ja-JP" },
     venue: venueFeature(),
     levels,
+    buildings: [],
     featuresById: new Map(features.map((feature) => [feature.id, feature])),
     renderFeaturesByLevel: new Map(),
     searchEntries: [],
@@ -596,6 +598,7 @@ describe("viewerReducer search fields", () => {
       category: "shopping",
       accessibility: [],
       restriction: null,
+      buildingId: null,
       sourceProperties: {},
     };
     const ready = readyState("venue.zip", levels1F, {

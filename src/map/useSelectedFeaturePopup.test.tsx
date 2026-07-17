@@ -62,6 +62,7 @@ function feature(id: string, center: [number, number] | null = [139.7, 35.6]): V
     category: "shop",
     accessibility: [],
     restriction: null,
+    buildingId: null,
     sourceProperties: {},
   };
 }
@@ -72,6 +73,7 @@ function venue(features: ViewerFeature[]): LoadedVenue {
     manifest: { version: "1.0.0", language: "en" },
     venue: venueFeature,
     levels: [],
+    buildings: [],
     featuresById: new Map([[venueFeature.id, venueFeature], ...features.map((entry) => [entry.id, entry] as const)]),
     renderFeaturesByLevel: new Map(),
     searchEntries: [],

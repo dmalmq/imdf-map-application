@@ -81,6 +81,8 @@ export interface ViewerFeature {
   category: string | null;
   accessibility: string[];
   restriction: string | null;
+  /** Resolved building feature id this feature belongs to, or null. */
+  buildingId: string | null;
   /** Complete original `properties` object, not only unknown keys. */
   sourceProperties: Record<string, unknown>;
 }
@@ -89,6 +91,7 @@ export interface SearchEntry {
   featureId: string;
   featureType: FeatureType;
   levelId: string | null;
+  buildingId: string | null;
   category: string | null;
   labels: Record<string, string>;
   altLabels: Record<string, string>;
@@ -112,10 +115,16 @@ export interface ViewerWarning {
   archiveEntry?: string;
 }
 
+export interface VenueBuilding {
+  id: string;
+  label: Record<string, string>;
+}
+
 export interface LoadedVenue {
   manifest: ImdfManifest;
   venue: ViewerFeature;
   levels: ViewerLevel[];
+  buildings: VenueBuilding[];
   featuresById: Map<string, ViewerFeature>;
   renderFeaturesByLevel: Map<string, GeoJSON.FeatureCollection>;
   searchEntries: SearchEntry[];

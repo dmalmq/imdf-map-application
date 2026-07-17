@@ -14,6 +14,7 @@ function feature(featureType: ViewerFeature["featureType"], category: string | n
     category,
     accessibility: [],
     restriction: null,
+    buildingId: null,
     sourceProperties: {},
   };
 }

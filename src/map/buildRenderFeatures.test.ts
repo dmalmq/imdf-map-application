@@ -25,6 +25,7 @@ function feature(id: string, featureType: ViewerFeature["featureType"]): ViewerF
     category: null,
     accessibility: [],
     restriction: null,
+    buildingId: null,
     sourceProperties: {},
   };
 }
@@ -38,6 +39,7 @@ describe("buildRenderFeatures", () => {
       manifest: { version: "1.0.0", language: "en" },
       venue: venueFeature,
       levels: [],
+      buildings: [],
       featuresById: new Map([
         [venueFeature.id, venueFeature],
         [building.id, building],

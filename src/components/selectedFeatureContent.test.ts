@@ -27,6 +27,7 @@ function feature(id: string, overrides: Partial<ViewerFeature> = {}): ViewerFeat
     category: "shop",
     accessibility: ["wheelchair"],
     restriction: null,
+    buildingId: null,
     sourceProperties: {},
     ...overrides,
   };
@@ -42,6 +43,7 @@ function venue(
     manifest: { version: "1.0.0", language: "en" },
     venue: venueFeature,
     levels: [level],
+    buildings: [],
     featuresById: new Map([
       [venueFeature.id, venueFeature],
       [occupant.id, occupant],

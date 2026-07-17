@@ -46,6 +46,7 @@ const VENUE_FEATURE: ViewerFeature = {
   category: null,
   accessibility: [],
   restriction: null,
+  buildingId: null,
   sourceProperties: {},
 };
 
@@ -60,6 +61,7 @@ const SHOP_FEATURE: ViewerFeature = {
   category: "shopping",
   accessibility: [],
   restriction: null,
+  buildingId: null,
   sourceProperties: { hours: "Mo-Fr 10:00-20:00" },
 };
 
@@ -74,6 +76,7 @@ const NULL_LEVEL_AMENITY: ViewerFeature = {
   category: "restroom",
   accessibility: ["wheelchair"],
   restriction: null,
+  buildingId: null,
   sourceProperties: {},
 };
 
@@ -88,6 +91,7 @@ const NULL_CENTER_FEATURE: ViewerFeature = {
   category: "shopping",
   accessibility: [],
   restriction: null,
+  buildingId: null,
   sourceProperties: {},
 };
 
@@ -98,6 +102,7 @@ function entryFor(feature: ViewerFeature): SearchEntry {
     featureId: feature.id,
     featureType: feature.featureType,
     levelId: feature.levelId,
+    buildingId: feature.buildingId,
     category: feature.category,
     labels: feature.labels,
     altLabels: feature.altLabels,
@@ -127,6 +132,7 @@ function buildMinimalVenue(overrides?: Partial<LoadedVenue>): LoadedVenue {
     manifest: { version: "1.0.0", language: "ja-JP" },
     venue: VENUE_FEATURE,
     levels: LEVELS,
+    buildings: [],
     featuresById,
     renderFeaturesByLevel: new Map([
       [LEVEL_1F.id, emptyCollection],
@@ -757,6 +763,7 @@ describe("App", () => {
       category: "information",
       accessibility: [],
       restriction: null,
+      buildingId: null,
       sourceProperties: { image: "/marker/locker.png" },
     };
     const venue = buildMinimalVenue({

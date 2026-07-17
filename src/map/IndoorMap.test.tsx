@@ -169,6 +169,7 @@ function makeVenue(level: string, needsIcon: boolean): LoadedVenue {
     category: null,
     accessibility: [],
     restriction: null,
+    buildingId: null,
     sourceProperties: {},
   };
   const properties: Record<string, unknown> = { __feature_id: `feat-${level}` };
@@ -179,6 +180,7 @@ function makeVenue(level: string, needsIcon: boolean): LoadedVenue {
     manifest: { version: "1.0.0", language: "ja" },
     venue: venueFeature,
     levels: [],
+    buildings: [],
     featuresById: new Map([["venue", venueFeature]]),
     renderFeaturesByLevel: new Map([
       [

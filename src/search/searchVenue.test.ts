@@ -21,6 +21,7 @@ function entry(partial: {
     featureId: partial.featureId,
     featureType: partial.featureType ?? "unit",
     levelId: partial.levelId === undefined ? "level-1" : partial.levelId,
+    buildingId: null,
     category,
     labels,
     altLabels,

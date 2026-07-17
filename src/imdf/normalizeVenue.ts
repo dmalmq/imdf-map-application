@@ -6,6 +6,7 @@ import type {
   FeatureType,
   LoadedVenue,
   ParsedImdfArchive,
+  VenueBuilding,
   ViewerFeature,
   ViewerLevel,
   ViewerWarning,
@@ -18,6 +19,46 @@ const DISPLAY_POINT_FEATURE_TYPES: Partial<Record<FeatureType, true>> = {
   kiosk: true,
   occupant: true,
 };
+
+/** First non-empty string in a `building_ids` array property, or null. */
+function firstBuildingId(props: Record<string, unknown>): string | null {
+  const ids = props["building_ids"];
+  if (!Array.isArray(ids)) {
+    return null;
+  }
+  for (const value of ids) {
+    if (typeof value === "string" && value !== "") {
+      return value;
+    }
+  }
+  return null;
+}
+
+/** Sorted list of venue buildings, derived from `building` features. */
+export function deriveVenueBuildings(
+  featuresById: Map<string, ViewerFeature>,
+): VenueBuilding[] {
+  const buildings: VenueBuilding[] = [];
+  for (const feature of featuresById.values()) {
+    if (feature.featureType === "building") {
+      buildings.push({ id: feature.id, label: feature.labels });
+    }
+  }
+  buildings.sort((a, b) => {
+    const aj = a.label["ja"] ?? "";
+    const bj = b.label["ja"] ?? "";
+    if (aj !== bj) {
+      return aj < bj ? -1 : 1;
+    }
+    const ae = a.label["en"] ?? "";
+    const be = b.label["en"] ?? "";
+    if (ae !== be) {
+      return ae < be ? -1 : 1;
+    }
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return buildings;
+}
 
 function asProperties(value: unknown): Record<string, unknown> {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
@@ -235,6 +276,7 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
         category,
         accessibility: normalizeAccessibility(props["accessibility"]),
         restriction,
+        buildingId: null,
         sourceProperties: props,
       };
       featuresById.set(id, viewerFeature);
@@ -295,6 +337,17 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
       }
     }
     feature.levelId = levelId;
+
+    // building: own id → own building_ids → source level's building_ids
+    if (feature.featureType === "building") {
+      feature.buildingId = feature.id;
+    } else if (feature.featureType === "footprint" || feature.featureType === "level") {
+      feature.buildingId = firstBuildingId(props);
+    } else if (levelId !== null) {
+      const sourceLevel = featuresById.get(levelId);
+      feature.buildingId =
+        sourceLevel === undefined ? null : firstBuildingId(sourceLevel.sourceProperties);
+    }
 
     // center: display_point → own geometry → anchor geometry → unit geometry
     let center: [number, number] | null = null;
@@ -475,6 +528,7 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
     manifest: archive.manifest,
     venue,
     levels,
+    buildings: deriveVenueBuildings(featuresById),
     featuresById,
     renderFeaturesByLevel,
     searchEntries: buildSearchEntries(featuresById.values()),

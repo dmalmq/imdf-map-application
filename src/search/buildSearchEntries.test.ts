@@ -24,6 +24,7 @@ function feature(partial: {
     category: partial.category === undefined ? null : partial.category,
     accessibility: [],
     restriction: null,
+    buildingId: null,
     sourceProperties: partial.sourceProperties ?? {},
   };
 }

@@ -33,6 +33,7 @@ function feature(
     category,
     accessibility: [],
     restriction: null,
+    buildingId: null,
     sourceProperties: {},
     ...overrides,
   };
@@ -43,6 +44,7 @@ function venueWith(features: ViewerFeature[]): LoadedVenue {
     manifest: { version: "1.0.0", language: "en" },
     venue: feature("venue", "venue", null),
     levels: [],
+    buildings: [],
     featuresById: new Map(features.map((f) => [f.id, f])),
     renderFeaturesByLevel: new Map(),
     searchEntries: [],

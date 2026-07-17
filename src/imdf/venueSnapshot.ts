@@ -7,6 +7,7 @@ import {
   ZipWriter,
   configure,
 } from "@zip.js/zip.js";
+import { deriveVenueBuildings } from "./normalizeVenue";
 import type { Entry } from "@zip.js/zip.js";
 import { ArchiveError } from "../errors/ArchiveError";
 import type {
@@ -158,6 +159,7 @@ function isViewerFeature(value: unknown): value is ViewerFeature {
     isNullableString(value.category) &&
     isStringArray(value.accessibility) &&
     isNullableString(value.restriction) &&
+    (value.buildingId === undefined || isNullableString(value.buildingId)) &&
     isRecord(value.sourceProperties)
   );
 }
@@ -182,6 +184,7 @@ function isSearchEntry(value: unknown): value is SearchEntry {
     typeof value.featureType === "string" &&
     FEATURE_TYPES.has(value.featureType) &&
     isNullableString(value.levelId) &&
+    (value.buildingId === undefined || isNullableString(value.buildingId)) &&
     isNullableString(value.category) &&
     isStringRecord(value.labels) &&
     isStringRecord(value.altLabels) &&
@@ -394,13 +397,25 @@ export async function readVenueSnapshot(data: Blob): Promise<LoadedVenue> {
     throw new ArchiveError("invalid_archive", "snapshot.json is missing required venue fields.");
   }
   const serialized = venue as unknown as SerializedVenue;
+  const featuresById = new Map(
+    serialized.featuresById.map(
+      ([id, feature]): [string, ViewerFeature] => [
+        id,
+        { ...feature, buildingId: feature.buildingId ?? null },
+      ],
+    ),
+  );
   return {
     manifest: serialized.manifest,
     venue: serialized.venue,
     levels: serialized.levels,
-    featuresById: new Map(serialized.featuresById),
+    buildings: deriveVenueBuildings(featuresById),
+    featuresById,
     renderFeaturesByLevel: new Map(serialized.renderFeaturesByLevel),
-    searchEntries: serialized.searchEntries,
+    searchEntries: serialized.searchEntries.map((entry) => ({
+      ...entry,
+      buildingId: entry.buildingId ?? null,
+    })),
     boundsByLevel: new Map(serialized.boundsByLevel),
     enrichmentByFeatureId: new Map(serialized.enrichmentByFeatureId),
     warnings: serialized.warnings,

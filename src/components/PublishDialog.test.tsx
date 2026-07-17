@@ -26,6 +26,7 @@ function venueStub(): LoadedVenue {
     manifest: { version: "1.0.0", language: "ja" },
     venue: {} as LoadedVenue["venue"],
     levels: [{} as LoadedVenue["levels"][number], {} as LoadedVenue["levels"][number]],
+    buildings: [],
     featuresById: new Map([
       ["a", {} as never],
       ["b", {} as never],
