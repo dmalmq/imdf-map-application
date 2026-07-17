@@ -103,6 +103,142 @@ const blockingText = {
   },
 } as const;
 
+/**
+ * Localized reason phrases for a `gdb_conversion_failed`/`gdb_too_large` that
+ * blames one layer. The internal `reason` strings buildGdbVenue throws are
+ * collapsed to a small set of user-facing categories.
+ */
+const conversionReasonText = {
+  floor: {
+    ja: "をフロアに割り当てできませんでした",
+    en: "could not be matched to a floor",
+  },
+  geometry: {
+    ja: "の形状が対象種別と一致しません",
+    en: "has a geometry type that does not match its target",
+  },
+  ordinal: {
+    ja: "のフロア番号を解決できませんでした",
+    en: "has no resolvable floor number",
+  },
+  empty: {
+    ja: "に使用可能な形状がありません",
+    en: "has no usable geometry",
+  },
+  duplicateId: {
+    ja: "のフロア ID が重複しています",
+    en: "has a duplicate floor id",
+  },
+  building: {
+    ja: "に建物が割り当てられていません",
+    en: "has no building assigned",
+  },
+  tooLarge: {
+    ja: "の変換結果が処理上限を超えました",
+    en: "produced output beyond the processing limit",
+  },
+  generic: {
+    ja: "を変換できませんでした",
+    en: "could not be converted",
+  },
+} as const;
+
+const conversionReasonCategory: Record<string, keyof typeof conversionReasonText> = {
+  "unresolved source-reference level": "floor",
+  "unresolved feature floor": "floor",
+  "row without building": "building",
+  "unknown building id": "building",
+  "incompatible feature geometry": "geometry",
+  "incompatible level geometry": "geometry",
+  "incompatible GeometryCollection member family": "geometry",
+  "unresolved level ordinal": "ordinal",
+  "empty or geometry-less level layer": "empty",
+  "empty or geometry-less layer": "empty",
+  "ambiguous duplicate raw level id": "duplicateId",
+};
+
+const conversionLayerText = {
+  ja: (layer: string, phrase: string) => `レイヤー「${layer}」${phrase}`,
+  en: (layer: string, phrase: string) => `Layer "${layer}" ${phrase}`,
+};
+
+const conversionAdviceText = {
+  ja: (layer: string, phrase: string) =>
+    `${conversionLayerText.ja(layer, phrase)}。取込対象から外すか割り当てを変更して再度取り込んでください。`,
+  en: (layer: string, phrase: string) =>
+    `${conversionLayerText.en(layer, phrase)}. Exclude it or adjust its mapping, then import again.`,
+};
+
+const conversionListHeader = {
+  ja: (count: number) =>
+    `${count} 個のレイヤーを変換できませんでした。取込対象から外すか割り当てを変更して再度取り込んでください:`,
+  en: (count: number) =>
+    `${count} layer${count === 1 ? "" : "s"} could not be converted. Exclude or fix them, then import again:`,
+};
+
+/** Resolve the localized reason phrase for a conversion/too-large failure. */
+function conversionReasonPhrase(
+  reason: string | null,
+  tooLarge: boolean,
+  locale: LocaleCode,
+): string {
+  let category: keyof typeof conversionReasonText = "generic";
+  if (tooLarge) {
+    category = "tooLarge";
+  } else if (reason !== null && reason in conversionReasonCategory) {
+    category = conversionReasonCategory[reason]!;
+  }
+  return conversionReasonText[category][locale];
+}
+
+/**
+ * Build a localized, actionable line naming the single layer a conversion
+ * failure blames, or null when the error carries no layer identity. The
+ * worker's raw `detail` (e.g. a GDAL message) is appended when present. Used for
+ * worker-export failures and as a fallback when no `failures` list is attached.
+ */
+export function conversionErrorDetail(error: ArchiveError, locale: LocaleCode): string | null {
+  if (error.code !== "gdb_conversion_failed" && error.code !== "gdb_too_large") return null;
+  const details = error.details;
+  if (!details) return null;
+  const layer = typeof details.layer === "string" && details.layer.length > 0 ? details.layer : null;
+  if (layer === null) return null;
+  const reason = typeof details.reason === "string" ? details.reason : null;
+  const phrase = conversionReasonPhrase(reason, error.code === "gdb_too_large", locale);
+  let message = conversionAdviceText[locale](layer, phrase);
+  const detail =
+    typeof details.detail === "string" && details.detail.length > 0 ? details.detail : null;
+  if (detail !== null) {
+    message += locale === "ja" ? `（${detail}）` : ` (${detail})`;
+  }
+  return message;
+}
+
+/**
+ * Parse the `details.failures` list buildGdbVenue enrichment attaches into
+ * localized per-layer lines, or null when the error carries no such list. Each
+ * item names one layer that must be excluded or fixed before import.
+ */
+export function conversionFailureList(
+  error: ArchiveError,
+  locale: LocaleCode,
+): { layer: string; text: string }[] | null {
+  if (error.code !== "gdb_conversion_failed") return null;
+  const raw = error.details?.failures;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const items: { layer: string; text: string }[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const record: Record<string, unknown> = entry;
+    const layer =
+      typeof record.layer === "string" && record.layer.length > 0 ? record.layer : null;
+    if (layer === null) continue;
+    const reason = typeof record.reason === "string" ? record.reason : null;
+    items.push({ layer, text: conversionLayerText[locale](layer, conversionReasonPhrase(reason, false, locale)) });
+  }
+  return items.length > 0 ? items : null;
+}
+
 export interface GdbImportDialogProps {
   inspection: GdbInspection;
   initialPlan: GdbMappingPlan;
@@ -679,9 +815,30 @@ export function GdbImportDialog({
             </div>
           ) : null}
           {error ? (
-            <p className="gdb-dialog__error" role="alert">
-              {archiveErrorCopy[error.code]}
-            </p>
+            <div className="gdb-dialog__error" role="alert">
+              <p>{archiveErrorCopy[error.code]}</p>
+              {(() => {
+                const failures = conversionFailureList(error, locale);
+                if (failures !== null) {
+                  return (
+                    <>
+                      <p className="gdb-dialog__error-detail">
+                        {conversionListHeader[locale](failures.length)}
+                      </p>
+                      <ul className="gdb-dialog__error-layers">
+                        {failures.map((failure) => (
+                          <li key={failure.layer}>{failure.text}</li>
+                        ))}
+                      </ul>
+                    </>
+                  );
+                }
+                const detail = conversionErrorDetail(error, locale);
+                return detail !== null ? (
+                  <p className="gdb-dialog__error-detail">{detail}</p>
+                ) : null;
+              })()}
+            </div>
           ) : null}
           {issues.length > 0 ? (
             <div className="gdb-dialog__blocking" role="alert">

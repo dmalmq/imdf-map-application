@@ -1,10 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { hasGeometry } from "./gdb.worker";
+import { hasGeometry, resolveGdalInitFunction } from "./gdb.worker";
 
 function feature(geometry: unknown): { type: "Feature"; geometry: unknown; properties: null } {
   return { type: "Feature", geometry, properties: null };
 }
 
+
+describe("resolveGdalInitFunction", () => {
+  it("returns a function module namespace directly", () => {
+    const init = () => undefined;
+    expect(resolveGdalInitFunction(init)).toBe(init);
+  });
+
+  it("walks default exports to the initializer", () => {
+    const init = () => undefined;
+    expect(resolveGdalInitFunction({ default: { default: init } })).toBe(init);
+  });
+
+  it("falls back to the UMD global when the ESM namespace is empty", () => {
+    const init = () => undefined;
+    expect(resolveGdalInitFunction({}, init)).toBe(init);
+    expect(resolveGdalInitFunction({ default: {} }, init)).toBe(init);
+  });
+
+  it("returns null when neither the namespace nor the global is callable", () => {
+    // Pass null explicitly — `undefined` would fall through to the real UMD global.
+    expect(resolveGdalInitFunction({}, null)).toBeNull();
+    expect(resolveGdalInitFunction({ default: { foo: 1 } }, { not: "fn" })).toBeNull();
+  });
+
+  it("uses the installed UMD global when the second argument is omitted", () => {
+    // Importing gdb.worker loads gdal3.js, which assigns globalThis.initGdalJs.
+    expect(typeof resolveGdalInitFunction({})).toBe("function");
+  });
+});
 describe("hasGeometry", () => {
   it("rejects a Point with empty coordinates", () => {
     expect(hasGeometry(feature({ type: "Point", coordinates: [] }))).toBe(false);

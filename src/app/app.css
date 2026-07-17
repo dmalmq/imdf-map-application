@@ -1106,6 +1106,12 @@ button {
   color: var(--color-danger, #b3261e);
 }
 
+.gdb-dialog__error-detail {
+  display: block;
+  margin-top: 0.25rem;
+  font-weight: 600;
+}
+
 .gdb-dialog__actions {
   display: flex;
   gap: 0.75rem;

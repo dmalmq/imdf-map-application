@@ -100,6 +100,25 @@ function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * Resolve gdal3.js's initializer from an ESM namespace and/or the UMD global.
+ * Vite's worker bundling often yields an empty namespace for the UMD build while
+ * the side effect still assigns `globalThis.initGdalJs`.
+ */
+export function resolveGdalInitFunction(
+  moduleNamespace: unknown,
+  globalInit: unknown = readGlobalGdalInit(),
+): GdalInitFn | null {
+  return findInitFunction(moduleNamespace) ?? findInitFunction(globalInit);
+}
+
+/** Read the UMD side-effect global installed by gdal3.js when present. */
+function readGlobalGdalInit(): unknown {
+  if (typeof globalThis !== "object" || globalThis === null) return undefined;
+  if (!("initGdalJs" in globalThis)) return undefined;
+  return Reflect.get(globalThis, "initGdalJs");
+}
+
 function findInitFunction(value: unknown, depth = 0): GdalInitFn | null {
   if (typeof value === "function") {
     return value as GdalInitFn;
@@ -113,9 +132,11 @@ function findInitFunction(value: unknown, depth = 0): GdalInitFn | null {
 function getGdal(): Promise<GdalInstance> {
   if (!_gdalPromise) {
     _gdalPromise = (async () => {
-      const initFn = findInitFunction(gdalModule);
+      const initFn = resolveGdalInitFunction(gdalModule);
       if (!initFn) {
-        throw new Error("gdal3.js initializer not found.");
+        throw new Error(
+          "gdal3.js initializer not found. Expected a function export or globalThis.initGdalJs.",
+        );
       }
       const instance = await initFn({
         paths: { wasm: wasmUrl, data: dataUrl },

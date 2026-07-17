@@ -35,7 +35,7 @@ import {
   probeCatalog,
 } from "../platform/catalogClient";
 import type { AccountInfo, CatalogEntry, CommentRecord } from "../platform/types";
-import { buildGdbVenue, suggestGdbMapping } from "../gdb/gdbMapping";
+import { buildGdbVenue, collectGdbConversionFailures, suggestGdbMapping } from "../gdb/gdbMapping";
 import {
   createGdbImportSession,
   gdbSelectionName,
@@ -452,7 +452,28 @@ export function App() {
           if (token !== attemptTokenRef.current) {
             return;
           }
-          const venue = buildGdbVenue(conversion, plan);
+          let venue: LoadedVenue;
+          try {
+            venue = buildGdbVenue(conversion, plan);
+          } catch (buildError) {
+            const archiveError = toArchiveError(buildError);
+            // Enumerate every blocking layer (not just the first) so one banner
+            // lists them all; keep the strict fatal path for worker faults.
+            if (archiveError.code === "gdb_conversion_failed") {
+              const failures = collectGdbConversionFailures(conversion, plan);
+              setGdbBusy(false);
+              setGdbError(
+                failures.length > 0
+                  ? new ArchiveError(archiveError.code, archiveError.message, {
+                      ...archiveError.details,
+                      failures,
+                    })
+                  : archiveError,
+              );
+              return;
+            }
+            throw buildError;
+          }
           setGdbBusy(false);
           setGdbReview(null);
           // Successful conversion: park keyboard focus on the live map canvas.

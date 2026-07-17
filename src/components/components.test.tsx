@@ -480,6 +480,57 @@ describe("GdbImportDialog", () => {
     expect(screen.getByRole("alert").textContent).toContain("could not be converted");
   });
 
+  it("names the failing layer and gives guidance for a conversion error with details", () => {
+    const { props, rerender } = renderDialog();
+    const err = new ArchiveError("gdb_conversion_failed", "boom", {
+      reason: "unresolved source-reference level",
+      layer: "Free_shuttle_bus_busstop_Facility",
+      feature: null,
+      reference: null,
+    });
+    rerender(<GdbImportDialog {...props} error={err} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Free_shuttle_bus_busstop_Facility");
+    // Actionable guidance: exclude the layer or adjust its mapping.
+    expect(alert.textContent).toMatch(/exclude/i);
+  });
+
+  it("appends the worker's GDAL detail for an export failure", () => {
+    const { props, rerender } = renderDialog();
+    const err = new ArchiveError("gdb_conversion_failed", "boom", {
+      layer: "Bldg_F1_Floor",
+      database: "gdb-1",
+      detail: "GDAL could not reproject the layer.",
+    });
+    rerender(<GdbImportDialog {...props} error={err} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Bldg_F1_Floor");
+    expect(alert.textContent).toContain("GDAL could not reproject the layer.");
+  });
+
+  it("lists every failing layer when the error carries a failures array", () => {
+    const { props, rerender } = renderDialog();
+    const err = new ArchiveError("gdb_conversion_failed", "boom", {
+      layer: "Free_shuttle_bus_busstop_Facility",
+      reason: "unresolved source-reference level",
+      failures: [
+        { layer: "Free_shuttle_bus_busstop_Facility", reason: "unresolved source-reference level" },
+        { layer: "Yaechika_B2_Space", reason: "incompatible GeometryCollection member family" },
+        { layer: "Shinmarubiru_3_Space", reason: "incompatible feature geometry" },
+      ],
+    });
+    rerender(<GdbImportDialog {...props} error={err} />);
+    const alert = screen.getByRole("alert");
+    const items = within(alert).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(alert.textContent).toContain("Free_shuttle_bus_busstop_Facility");
+    expect(alert.textContent).toContain("Yaechika_B2_Space");
+    expect(alert.textContent).toContain("Shinmarubiru_3_Space");
+    // Header names the count and the exclude/fix guidance.
+    expect(alert.textContent).toMatch(/3 layers/);
+    expect(alert.textContent).toMatch(/exclude/i);
+  });
+
   it("routes a native cancel (Escape) to onCancel", () => {
     const { props } = renderDialog();
     const dialog = document.querySelector("dialog");

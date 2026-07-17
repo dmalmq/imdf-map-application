@@ -3,6 +3,7 @@ import { ArchiveError } from "../errors/ArchiveError";
 import type { LoadedVenue, ViewerFeature } from "../imdf/types";
 import {
   buildGdbVenue,
+  collectGdbConversionFailures,
   extractGdbFloorOrdinal,
   gdbTargetTypesForGeometry,
   isGdbTargetGeometryCompatible,
@@ -1626,7 +1627,7 @@ describe("buildGdbVenue GeometryCollection failures identify the source feature"
       requiredFamily: "polygon",
       memberType: "LineString",
       databaseId: "gdb-1",
-      layerName: "Sta_F1_Floor",
+      layer: "Sta_F1_Floor",
       targetType: "level",
       featureId: "level-feature-7",
     });
@@ -1674,11 +1675,88 @@ describe("buildGdbVenue GeometryCollection failures identify the source feature"
       requiredFamily: "polygon",
       memberType: "LineString",
       databaseId: "gdb-1",
-      layerName: "Sta_F1_unit",
+      layer: "Sta_F1_unit",
       targetType: "unit",
       featureIndex: 1,
     });
     expect(error.details).not.toHaveProperty("featureId");
+  });
+});
+
+describe("collectGdbConversionFailures", () => {
+  it("enumerates every blocking layer with its reason, leaving a valid plan empty", () => {
+    const conv = conversion([
+      convLayer("gdb-1", "Sta_F1_Floor", [feat(square(0, 0), { id: "l1", name: "1F" })]),
+      convLayer("gdb-1", "Sta_F1_unit", [feat(lineGeom(0, 0), { NAME: "Room" })]),
+      convLayer("gdb-1", "orphan_poi", [feat(pointGeom(9, 9), { uuid: "p1", floor_id: "nope" })]),
+    ]);
+    const plan: GdbMappingPlan = {
+      venueName: "Sta",
+      buildings: [{ id: "building-1", name: "Sta" }],
+      layers: [
+        lp({
+          key: { databaseId: "gdb-1", layerName: "Sta_F1_Floor" },
+          targetType: "level",
+          buildingId: "building-1",
+          levelRule: { kind: "layer-name" },
+          idField: "id",
+          nameField: "name",
+        }),
+        lp({
+          key: { databaseId: "gdb-1", layerName: "Sta_F1_unit" },
+          targetType: "unit",
+          buildingId: "building-1",
+          levelRule: { kind: "layer-name" },
+          nameField: "NAME",
+        }),
+        lp({
+          key: { databaseId: "gdb-1", layerName: "orphan_poi" },
+          targetType: "amenity",
+          buildingId: null,
+          levelRule: { kind: "source-reference", field: "floor_id" },
+          idField: "uuid",
+        }),
+      ],
+    };
+
+    // Strict build fails on the first blocking layer only.
+    expect(() => buildGdbVenue(conv, plan)).toThrow(ArchiveError);
+
+    const failures = collectGdbConversionFailures(conv, plan);
+    expect(failures).toEqual([
+      { layer: "Sta_F1_unit", reason: "incompatible feature geometry" },
+      { layer: "orphan_poi", reason: "unresolved source-reference level" },
+    ]);
+
+    // Excluding both named layers yields a plan that converts (empty result).
+    const fixed: GdbMappingPlan = {
+      ...plan,
+      layers: plan.layers.map((row) =>
+        row.key.layerName === "Sta_F1_Floor" ? row : { ...row, included: false },
+      ),
+    };
+    expect(collectGdbConversionFailures(conv, fixed)).toEqual([]);
+  });
+
+  it("returns an empty list when the plan already converts", () => {
+    const conv = conversion([
+      convLayer("gdb-1", "Sta_F1_Floor", [feat(square(0, 0), { id: "l1", name: "1F" })]),
+    ]);
+    const plan: GdbMappingPlan = {
+      venueName: "Sta",
+      buildings: [{ id: "building-1", name: "Sta" }],
+      layers: [
+        lp({
+          key: { databaseId: "gdb-1", layerName: "Sta_F1_Floor" },
+          targetType: "level",
+          buildingId: "building-1",
+          levelRule: { kind: "layer-name" },
+          idField: "id",
+          nameField: "name",
+        }),
+      ],
+    };
+    expect(collectGdbConversionFailures(conv, plan)).toEqual([]);
   });
 });
 

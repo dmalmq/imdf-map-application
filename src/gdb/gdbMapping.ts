@@ -533,7 +533,7 @@ function normalizeGeometryForFamily(
         requiredFamily: family,
         memberType: member.type,
         databaseId: context.databaseId,
-        layerName: context.layerName,
+        layer: context.layerName,
         targetType: context.targetType,
         ...(context.featureId !== null
           ? { featureId: context.featureId }
@@ -1410,4 +1410,56 @@ export function buildGdbVenue(
   }
 
   return venue;
+}
+
+/** One layer that blocks {@link buildGdbVenue}, with its raw failure reason. */
+export interface GdbConversionFailure {
+  layer: string;
+  reason: string;
+}
+
+/**
+ * Enumerate every layer that blocks conversion. Repeatedly attempts
+ * {@link buildGdbVenue}; on each per-layer failure it records the blamed layer
+ * and re-attempts with that layer excluded, until the plan converts or a
+ * failure names no single layer (a venue-level failure no exclusion resolves).
+ * Returns the layers to exclude or fix, each with its raw reason — empty when
+ * the plan already converts. Pure: the plan is cloned per attempt, never
+ * mutated. Iteration is bounded by the included-layer count.
+ */
+export function collectGdbConversionFailures(
+  conversion: GdbConversionResult,
+  plan: GdbMappingPlan,
+): GdbConversionFailure[] {
+  const failures: GdbConversionFailure[] = [];
+  const excluded = new Set<string>();
+  let working = plan;
+  const maxAttempts = plan.layers.filter((layer) => layer.included).length + 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      buildGdbVenue(conversion, working);
+      return failures;
+    } catch (error) {
+      if (!(error instanceof ArchiveError) || error.code !== "gdb_conversion_failed") {
+        throw error;
+      }
+      const blamed = error.details?.layer;
+      const layer = typeof blamed === "string" && blamed.length > 0 ? blamed : null;
+      if (layer === null || excluded.has(layer)) {
+        // No single layer to blame (a venue-level failure), or the same layer
+        // re-blamed: no further exclusion makes progress.
+        return failures;
+      }
+      const rawReason = error.details?.reason;
+      failures.push({ layer, reason: typeof rawReason === "string" ? rawReason : "" });
+      excluded.add(layer);
+      working = {
+        ...working,
+        layers: working.layers.map((row) =>
+          row.key.layerName === layer ? { ...row, included: false } : row,
+        ),
+      };
+    }
+  }
+  return failures;
 }
