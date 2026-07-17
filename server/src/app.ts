@@ -8,6 +8,7 @@ import { openDb } from "./db/db";
 import { migrate } from "./db/migrate";
 import { ensureBootstrapUser } from "./auth/bootstrap";
 import { registerAuthRoutes } from "./auth/routes";
+import { BlobStore } from "./blobs/store";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const db = openDb(config.dataDir);
@@ -18,6 +19,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
 
   app.decorate("db", db);
   app.decorate("config", config);
+  app.decorate("blobs", new BlobStore(config.dataDir));
 
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: 200 * 1024 * 1024, files: 1 } });
@@ -42,5 +44,6 @@ declare module "fastify" {
   interface FastifyInstance {
     db: import("better-sqlite3").Database;
     config: AppConfig;
+    blobs: BlobStore;
   }
 }
