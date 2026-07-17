@@ -445,3 +445,72 @@ describe("map interaction hooks", () => {
     unmount();
   });
 });
+
+describe("IndoorMap visibility filtering", () => {
+  const baseProps = (
+    venue: LoadedVenue,
+    levelId: string,
+    overrides: Record<string, unknown> = {},
+  ) => ({
+    venue,
+    levelId,
+    selectedFeatureId: null,
+    locale: "ja" as const,
+    theme: themes["tokyo-green"],
+    searchCategory: "all" as const,
+    compact: false,
+    bottomPadding: 0,
+    onSelectFeature: () => {},
+    ...overrides,
+  });
+
+  it("filters the source data by visibility selection", async () => {
+    const venue = makeVenue("L0", false);
+    const collection = venue.renderFeaturesByLevel.get("L0")!;
+    collection.features.push({
+      type: "Feature",
+      id: "unit-1",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
+            [0, 0],
+          ],
+        ],
+      },
+      properties: {
+        __feature_id: "unit-1",
+        __feature_type: "unit",
+        __level_id: "L0",
+        __category: "room",
+        __restricted: false,
+        __building_id: "b1",
+      },
+    });
+
+    const { unmount } = render(
+      createElement(
+        IndoorMap,
+        baseProps(venue, "L0", {
+          visibility: { hiddenTypes: new Set(["unit"]), hiddenBuildings: new Set() },
+        }),
+      ),
+    );
+    await act(async () => {});
+    const map = mapHolder.instance;
+    await act(async () => {
+      map.fire("load");
+    });
+
+    expect(map.setData).toHaveBeenCalled();
+    const last = map.setData.mock.calls[map.setData.mock.calls.length - 1]![0] as GeoJSON.FeatureCollection;
+    const types = last.features.map((feature) => feature.properties?.["__feature_type"]);
+    expect(types).not.toContain("unit");
+    expect(types).toContain("venue");
+    unmount();
+  });
+});

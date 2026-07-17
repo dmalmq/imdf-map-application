@@ -23,6 +23,7 @@ import {
 import { registerGdbMarkerIcons } from "./gdbMarkerIcons";
 import { useFeatureMarkers } from "./useFeatureMarkers";
 import { useSelectedFeaturePopup } from "./useSelectedFeaturePopup";
+import type { VisibilitySelection } from "./visibility";
 
 export interface IndoorMapProps {
   venue: LoadedVenue;
@@ -37,10 +38,16 @@ export interface IndoorMapProps {
   onSelectFeature: (featureId: string | null) => void;
   /** When set, the next map click reports its lngLat instead of selecting features. */
   onMapClick?: ((lngLat: [number, number]) => void) | undefined;
-  /** Imperative camera target; applied when token changes. */
   flyTo?: { lngLat: [number, number]; token: number } | null | undefined;
+  /** When omitted, nothing is hidden. */
+  visibility?: VisibilitySelection;
 }
 
+
+const EMPTY_VISIBILITY: VisibilitySelection = {
+  hiddenTypes: new Set(),
+  hiddenBuildings: new Set(),
+};
 const FIT_PADDING = 48;
 const FIT_MAX_ZOOM = 20;
 const EASE_DURATION_MS = 450;
@@ -168,12 +175,13 @@ function setSourceData(
   map: MapLibreMap,
   venue: LoadedVenue,
   levelId: string,
+  visibility?: VisibilitySelection,
 ): void {
   const source = getIndoorSource(map);
   if (source == null) {
     return;
   }
-  source.setData(buildRenderFeatures(venue, levelId));
+  source.setData(buildRenderFeatures(venue, levelId, visibility));
 }
 
 function clearFeatureState(
@@ -295,6 +303,7 @@ export function IndoorMap({
   onSelectFeature,
   onMapClick,
   flyTo,
+  visibility = EMPTY_VISIBILITY,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -303,6 +312,7 @@ export function IndoorMap({
   const lastFlyTokenRef = useRef(0);
   const venueRef = useRef(venue);
   const levelIdRef = useRef(levelId);
+  const visibilityRef = useRef(visibility);
   const selectedIdRef = useRef(selectedFeatureId);
   const hoverIdRef = useRef<string | null>(null);
   const appliedSelectedRef = useRef<string | null>(null);
@@ -323,6 +333,7 @@ export function IndoorMap({
   onMapClickRef.current = onMapClick;
   venueRef.current = venue;
   levelIdRef.current = levelId;
+  visibilityRef.current = visibility;
   selectedIdRef.current = selectedFeatureId;
 
   const onMarkerSelect = useCallback((featureId: string) => {
@@ -368,6 +379,7 @@ export function IndoorMap({
     locale,
     selectedFeatureId,
     searchCategory,
+    visibility,
     onSelect: onMarkerSelect,
   });
 
@@ -475,7 +487,7 @@ export function IndoorMap({
       // commit the latest refs once; a pure IMDF venue commits immediately with
       // zero icon fetches.
       ensureIconsThenCommit(map, () => {
-        setSourceData(map, venueRef.current, levelIdRef.current);
+        setSourceData(map, venueRef.current, levelIdRef.current, visibilityRef.current);
         fitLevelBounds(map, venueRef.current, levelIdRef.current);
         setMapInstance(map);
 
@@ -557,7 +569,7 @@ export function IndoorMap({
     // A later GDB venue arriving after an IMDF venue registers icons first;
     // the commit reads the latest refs so a newer swap cannot double-commit.
     ensureIconsThenCommit(map, () => {
-      setSourceData(map, venueRef.current, levelIdRef.current);
+      setSourceData(map, venueRef.current, levelIdRef.current, visibilityRef.current);
       fitLevelBounds(map, venueRef.current, levelIdRef.current);
 
       const selected = selectedIdRef.current;
@@ -575,7 +587,7 @@ export function IndoorMap({
         });
       }
     });
-  }, [venue, levelId, compact, ensureIconsThenCommit]);
+  }, [venue, levelId, visibility, compact, ensureIconsThenCommit]);
 
   // Selection change (same level): update feature-state + camera.
   useEffect(() => {
