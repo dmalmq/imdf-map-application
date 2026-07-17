@@ -14,6 +14,7 @@ import { JobQueue } from "./jobs/queue";
 import { makePublishRunner } from "./jobs/publish";
 import { registerJobRoutes } from "./jobs/routes";
 import { registerUploadRoute } from "./venues/uploadRoute";
+import { registerServeRoutes } from "./serve/routes";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const db = openDb(config.dataDir);
@@ -40,6 +41,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   registerVenueRoutes(app);
   registerUploadRoute(app);
   registerJobRoutes(app);
+  registerServeRoutes(app);
 
   app.get("/healthz", async () => ({ ok: true }));
   app.get("/api/openapi.json", async () => app.swagger());
