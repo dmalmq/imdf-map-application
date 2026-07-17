@@ -3,6 +3,7 @@ import { KirikoMark } from "../components/icons";
 import type { LocaleCode } from "../imdf/types";
 import { api, type ApiUser, type VenueSummary } from "./api";
 import { DatasetCard } from "./DatasetCard";
+import { SignInModal } from "./SignInModal";
 
 const ui = {
   datasets: { ja: "データセット", en: "Datasets" },
@@ -100,11 +101,15 @@ export function GalleryPage() {
     return <div className="gallery">{header}</div>;
   }
   if (state.phase === "signed-out") {
-    // Task 10 replaces this with <SignInModal onSignedIn={reload} />
     return (
       <div className="gallery">
         {header}
-        <div className="gallery-signin-pending" />
+        <SignInModal
+          locale={locale}
+          onSignedIn={() => {
+            void reload();
+          }}
+        />
       </div>
     );
   }
