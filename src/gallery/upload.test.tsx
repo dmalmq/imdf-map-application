@@ -66,4 +66,20 @@ describe("UploadModal", () => {
     expect(await screen.findByText(/not a ZIP archive/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Publish" })).toBeTruthy();
   });
+
+  it("disables the header close button while uploading", async () => {
+    createVenue.mockResolvedValue({ id: 9, slug: "slow", name: "slow" });
+    uploadVersion.mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<UploadModal locale="en" onClose={() => {}} onPublished={() => {}} />);
+
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("slow.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(
+        true,
+      );
+    });
+  });
 });

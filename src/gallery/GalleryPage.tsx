@@ -197,10 +197,15 @@ export function GalleryPage() {
             setDeleting(null);
           }}
           onConfirm={() => {
-            void api.deleteVenue(deleting.id).then(() => {
-              setDeleting(null);
-              return reload();
-            });
+            void api
+              .deleteVenue(deleting.id)
+              .catch(() => {
+                // Deletion failed (network/server); reload below re-syncs the list.
+              })
+              .then(() => {
+                setDeleting(null);
+                return reload();
+              });
           }}
         />
       ) : null}

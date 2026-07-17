@@ -85,7 +85,7 @@ export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) 
       <div className="upload-modal" role="dialog" aria-label={ui.title[locale]}>
         <header className="upload-modal__header">
           <h2 className="upload-modal__title">{ui.title[locale]}</h2>
-          <button type="button" className="floating-panel__close" aria-label={ui.close[locale]} onClick={onClose}>
+          <button type="button" className="floating-panel__close" aria-label={ui.close[locale]} onClick={onClose} disabled={busy}>
             <IconClose />
           </button>
         </header>
