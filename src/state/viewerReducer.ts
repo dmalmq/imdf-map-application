@@ -1,7 +1,6 @@
 import type { ArchiveError } from "../errors/ArchiveError";
 import type { LoadedVenue, LocaleCode, ViewerLevel } from "../imdf/types";
 import type { SearchCategory } from "../search/searchVenue";
-import type { ThemeId } from "../theme/types";
 
 export interface ReadyVenueState {
   fileName: string;
@@ -13,19 +12,17 @@ export interface ReadyVenueState {
 }
 
 export type ViewerState =
-  | { status: "empty"; themeId: ThemeId; locale: LocaleCode }
+  | { status: "empty"; locale: LocaleCode }
   | {
       status: "loading";
       fileName: string;
-      themeId: ThemeId;
       locale: LocaleCode;
       previous?: ReadyVenueState;
     }
-  | ({ status: "ready"; themeId: ThemeId; locale: LocaleCode } & ReadyVenueState)
+  | ({ status: "ready"; locale: LocaleCode } & ReadyVenueState)
   | {
       status: "error";
       error: ArchiveError;
-      themeId: ThemeId;
       locale: LocaleCode;
       previous?: ReadyVenueState;
     };
@@ -38,12 +35,10 @@ export type ViewerAction =
   | { type: "select_feature"; featureId: string | null; levelId?: string }
   | { type: "set_search_text"; text: string }
   | { type: "set_search_category"; category: SearchCategory }
-  | { type: "set_theme"; themeId: ThemeId }
   | { type: "set_locale"; locale: LocaleCode };
 
 export const initialViewerState: ViewerState = {
   status: "empty",
-  themeId: "tokyo-green",
   locale: "ja",
 };
 
@@ -115,14 +110,12 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
         ? {
             status: "loading",
             fileName: action.fileName,
-            themeId: state.themeId,
             locale: state.locale,
             previous,
           }
         : {
             status: "loading",
             fileName: action.fileName,
-            themeId: state.themeId,
             locale: state.locale,
           };
     }
@@ -134,7 +127,6 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
       }
       return {
         status: "ready",
-        themeId: state.themeId,
         locale: state.locale,
         fileName: action.fileName,
         loadedVenue: action.venue,
@@ -156,11 +148,10 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
         ? {
             status: "error",
             error: action.error,
-            themeId: state.themeId,
             locale: state.locale,
             previous: state.previous,
           }
-        : { status: "error", error: action.error, themeId: state.themeId, locale: state.locale };
+        : { status: "error", error: action.error, locale: state.locale };
     }
     case "select_level":
       return state.status === "ready" && state.loadedVenue.levels.some((l) => l.id === action.levelId)
@@ -182,8 +173,6 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
       return state.status === "ready" ? { ...state, searchText: action.text } : state;
     case "set_search_category":
       return state.status === "ready" ? { ...state, searchCategory: action.category } : state;
-    case "set_theme":
-      return { ...state, themeId: action.themeId };
     case "set_locale":
       return { ...state, locale: action.locale };
   }

@@ -75,7 +75,7 @@ describe("collectMarkerFeatures", () => {
       feature("a-unlinked", "amenity", "elevator", {
         sourceProperties: { unit_ids: ["u-elsewhere"] },
       }),
-      feature("a-nonbubble", "amenity", "information", {
+      feature("a-nonbubble", "amenity", "seating", {
         sourceProperties: { unit_ids: ["u-elevator"] },
       }),
     ]);
@@ -165,6 +165,12 @@ describe("markerIconFor", () => {
     expect(markerIconFor("toilets")).toBe(markerIconFor("restroom"));
     expect(markerIconFor("walkway")).toBeUndefined();
     expect(markerIconFor("room")).toBeUndefined();
-    expect(markerIconFor("information")).toBeUndefined();
+    expect(markerIconFor("seating")).toBeUndefined();
+  });
+
+  it("maps POI amenity categories to Maki/Temaki icons", () => {
+    expect(markerIconFor("information")).toBeDefined();
+    expect(markerIconFor("atm")).toBeDefined();
+    expect(markerIconFor("vendingmachine")).toBeDefined();
   });
 });

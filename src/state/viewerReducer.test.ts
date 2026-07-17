@@ -57,7 +57,6 @@ function readyState(
   const loadedVenue = makeVenue(levels);
   return {
     status: "ready",
-    themeId: "tokyo-green",
     locale: "ja",
     fileName,
     loadedVenue,
@@ -70,10 +69,9 @@ function readyState(
 }
 
 describe("initialViewerState", () => {
-  it("starts empty with ja locale and tokyo-green theme", () => {
+  it("starts empty with ja locale", () => {
     expect(initialViewerState).toEqual({
       status: "empty",
-      themeId: "tokyo-green",
       locale: "ja",
     });
   });
@@ -150,7 +148,6 @@ describe("viewerReducer load lifecycle", () => {
     expect(next).toEqual({
       status: "loading",
       fileName: "a.zip",
-      themeId: "tokyo-green",
       locale: "ja",
     });
     expect("previous" in next && next.previous !== undefined).toBe(false);
@@ -271,7 +268,6 @@ describe("viewerReducer stale suppression", () => {
     const failed: ViewerState = {
       status: "error",
       error: new ArchiveError("invalid_archive", "bad"),
-      themeId: "tokyo-green",
       locale: "ja",
     };
     expect(
@@ -347,7 +343,6 @@ describe("viewerReducer replacement / valid-map preservation", () => {
     expect(failed).toEqual({
       status: "error",
       error,
-      themeId: "tokyo-green",
       locale: "ja",
     });
   });
@@ -424,7 +419,7 @@ describe("viewerReducer select_feature / select_level", () => {
   });
 });
 
-describe("viewerReducer set_theme / set_locale", () => {
+describe("viewerReducer set_locale", () => {
   it("works in every status", () => {
     const statuses: ViewerState[] = [
       initialViewerState,
@@ -433,21 +428,14 @@ describe("viewerReducer set_theme / set_locale", () => {
       {
         status: "error",
         error: new ArchiveError("worker_failed", "x"),
-        themeId: "tokyo-green",
         locale: "ja",
       },
     ];
 
     for (const state of statuses) {
-      const themed = viewerReducer(state, { type: "set_theme", themeId: "customer-blue" });
-      expect(themed.themeId).toBe("customer-blue");
-      expect(themed.status).toBe(state.status);
-      expect(themed.locale).toBe(state.locale);
-
       const localized = viewerReducer(state, { type: "set_locale", locale: "en" });
       expect(localized.locale).toBe("en");
       expect(localized.status).toBe(state.status);
-      expect(localized.themeId).toBe(state.themeId);
     }
   });
 });

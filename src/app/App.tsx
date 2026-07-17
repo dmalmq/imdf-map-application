@@ -8,18 +8,25 @@ import {
   type CSSProperties,
   type DragEvent,
 } from "react";
-import { ExplorerSidebar } from "../components/ExplorerSidebar";
-import { resolveSelectedFeature } from "../components/FeatureDetails";
+import { ContextBar } from "../components/ContextBar";
+import { FloatingPanel } from "../components/FloatingPanel";
+import { FloorStack } from "../components/FloorStack";
+import { IconRail, type RailPanelId } from "../components/IconRail";
+import { KirikoMark } from "../components/icons";
 import { ImdfDropzone } from "../components/ImdfDropzone";
-import { LevelSwitcher } from "../components/LevelSwitcher";
-import { ThemeSwitcher } from "../components/ThemeSwitcher";
+import { InspectorPanel, resolveSelectedFeature } from "../components/InspectorPanel";
+import { LayersPanel } from "../components/LayersPanel";
+import { SearchPanel } from "../components/SearchPanel";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
+import { WarningsPanel } from "../components/WarningsPanel";
+import { ZoomCluster } from "../components/ZoomCluster";
 import { ArchiveError } from "../errors/ArchiveError";
 import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
 import { loadImdfArchive } from "../imdf/loadImdfArchive";
 import { localizedLabel } from "../imdf/localize";
 import type { SearchResult } from "../imdf/types";
-import { IndoorMap } from "../map/IndoorMap";
+import { IndoorMap, type IndoorMapControls } from "../map/IndoorMap";
+import { defaultLayerVisibility, type MapLayerGroup } from "../map/layerGroups";
 import { searchVenue } from "../search/searchVenue";
 import {
   initialViewerState,
@@ -27,20 +34,24 @@ import {
   type ReadyVenueState,
   type ViewerState,
 } from "../state/viewerReducer";
-import { themes } from "../theme/presets";
-import type { ThemeId } from "../theme/types";
+import { kirikoTheme } from "../theme/presets";
 import { parseViewerParams } from "./viewerParams";
 
 const ui = {
-  product: { ja: "IMDF Indoor Viewer", en: "IMDF Indoor Viewer" },
+  product: { ja: "Kiriko", en: "Kiriko" },
   localeGroup: { ja: "言語", en: "Language" },
-  localeJa: { ja: "日本語", en: "日本語" },
-  localeEn: { ja: "English", en: "English" },
   openZip: { ja: "IMDF ZIP を開く", en: "Open IMDF ZIP" },
   loading: { ja: "読み込み中", en: "Loading" },
   ready: { ja: "会場を読み込みました", en: "Venue loaded" },
   error: { ja: "読み込みエラー", en: "Load error" },
   empty: { ja: "会場が未読み込みです", en: "No venue loaded" },
+  searchPanel: { ja: "検索", en: "Search" },
+  layersPanel: { ja: "レイヤー", en: "Layers" },
+  warningsPanel: { ja: "警告", en: "Warnings" },
+  closePanel: { ja: "パネルを閉じる", en: "Close panel" },
+  closeInspector: { ja: "詳細を閉じる", en: "Close details" },
+  attribution: { ja: "IMDF venue data © Company", en: "IMDF venue data © Company" },
+  openInKiriko: { ja: "Kiriko で開く", en: "Open in Kiriko" },
 } as const;
 
 const COMPACT_MQ = "(max-width: 899px)";
@@ -71,28 +82,8 @@ function useCompactLayout(): boolean {
   return compact;
 }
 
-function themeStyle(themeId: ThemeId): CSSProperties {
-  const theme = themes[themeId];
-  const c = theme.colors;
-  return {
-    ["--color-canvas" as string]: c.canvas,
-    ["--color-panel" as string]: c.panel,
-    ["--color-text" as string]: c.text,
-    ["--color-muted" as string]: c.muted,
-    ["--color-border" as string]: c.border,
-    ["--color-accent" as string]: c.accent,
-    ["--color-accent-soft" as string]: c.accentSoft,
-    ["--color-unit" as string]: c.unit,
-    ["--color-unit-outline" as string]: c.unitOutline,
-    ["--color-walkway" as string]: c.walkway,
-    ["--color-restricted" as string]: c.restricted,
-    ["--color-opening" as string]: c.opening,
-    ["--color-selected" as string]: c.selected,
-    ["--color-error" as string]: c.error,
-    ["--color-warning" as string]: c.warning,
-    ["--color-focus" as string]: c.focus,
-    fontFamily: theme.fontFamily,
-  };
+function themeStyle(): CSSProperties {
+  return { fontFamily: kirikoTheme.fontFamily };
 }
 
 function isAbortError(error: unknown): boolean {
@@ -150,15 +141,25 @@ export function App() {
   const [state, dispatch] = useReducer(viewerReducer, params, (p) => ({
     ...initialViewerState,
     ...(p.locale !== null ? { locale: p.locale } : {}),
-    ...(p.themeId !== null ? { themeId: p.themeId } : {}),
   }));
   const attemptTokenRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const compact = useCompactLayout();
   const [mapDragActive, setMapDragActive] = useState(false);
+  const [activePanel, setActivePanel] = useState<RailPanelId | null>(() =>
+    embed ||
+    (typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia(COMPACT_MQ).matches)
+      ? null
+      : "search",
+  );
+  const [layerVisibility, setLayerVisibility] = useState(defaultLayerVisibility);
+  const [mapControls, setMapControls] = useState<IndoorMapControls | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const theme = themes[state.themeId];
   const locale = state.locale;
   const venueState = activeVenue(state);
 
@@ -197,12 +198,26 @@ export function App() {
     if (!venueState) {
       return null;
     }
-    const level = venueState.loadedVenue.levels.find((entry) => entry.id === venueState.selectedLevelId);
+    const level = venueState.loadedVenue.levels.find(
+      (entry) => entry.id === venueState.selectedLevelId,
+    );
     if (!level) {
       return null;
     }
     return localizedLabel(level.label, locale, level.id, venueState.loadedVenue.manifest.language);
   }, [venueState, locale]);
+
+  const selectedFeatureName = useMemo(() => {
+    if (!venueState || !selectedFeature) {
+      return null;
+    }
+    return localizedLabel(
+      selectedFeature.labels,
+      locale,
+      selectedFeature.id,
+      venueState.loadedVenue.manifest.language,
+    );
+  }, [venueState, selectedFeature, locale]);
 
   const runLoad = useCallback(
     (fileName: string, getFile: (signal: AbortSignal) => Promise<File>, requestedLevel?: string) => {
@@ -267,6 +282,9 @@ export function App() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      if (copiedTimerRef.current !== null) {
+        clearTimeout(copiedTimerRef.current);
+      }
     };
   }, []);
 
@@ -274,17 +292,58 @@ export function App() {
     fileInputRef.current?.click();
   }, []);
 
-  const onSelectResult = useCallback((result: SearchResult) => {
-    if (result.levelId === null) {
-      dispatch({ type: "select_feature", featureId: result.featureId });
-    } else {
-      dispatch({ type: "select_feature", featureId: result.featureId, levelId: result.levelId });
-    }
-  }, []);
+  const onSelectResult = useCallback(
+    (result: SearchResult) => {
+      if (result.levelId === null) {
+        dispatch({ type: "select_feature", featureId: result.featureId });
+      } else {
+        dispatch({ type: "select_feature", featureId: result.featureId, levelId: result.levelId });
+      }
+      // On compact, the sheet covers the map; close it so the selection shows.
+      if (compact) {
+        setActivePanel(null);
+      }
+    },
+    [compact],
+  );
 
   const onMapSelectFeature = useCallback((featureId: string | null) => {
     dispatch({ type: "select_feature", featureId });
   }, []);
+
+  const onToggleRail = useCallback((panel: RailPanelId) => {
+    setActivePanel((current) => (current === panel ? null : panel));
+  }, []);
+
+  const onToggleLayer = useCallback((group: MapLayerGroup) => {
+    setLayerVisibility((current) => ({ ...current, [group]: !current[group] }));
+  }, []);
+
+  const onControls = useCallback((controls: IndoorMapControls | null) => {
+    setMapControls(controls);
+  }, []);
+
+  const copyViewLink = useCallback(() => {
+    const url = new URL(window.location.href);
+    if (venueState) {
+      url.searchParams.set("level", venueState.selectedLevelId);
+    }
+    url.searchParams.set("lang", locale);
+    void navigator.clipboard
+      .writeText(url.toString())
+      .then(() => {
+        setLinkCopied(true);
+        if (copiedTimerRef.current !== null) {
+          clearTimeout(copiedTimerRef.current);
+        }
+        copiedTimerRef.current = setTimeout(() => {
+          setLinkCopied(false);
+        }, 2000);
+      })
+      .catch(() => {
+        // Clipboard unavailable (permissions, insecure context) — no feedback.
+      });
+  }, [venueState, locale]);
 
   const onMapDragOver = useCallback((event: DragEvent) => {
     if (!event.dataTransfer.types.includes("Files")) {
@@ -312,65 +371,31 @@ export function App() {
   );
 
   const localeSwitcher = (
-    <div className="locale-switcher" role="group" aria-label={ui.localeGroup[locale]}>
+    <div className="locale-chips" role="group" aria-label={ui.localeGroup[locale]}>
       <button
         type="button"
-        className={locale === "ja" ? "locale-switcher__btn locale-switcher__btn--active" : "locale-switcher__btn"}
+        className={locale === "ja" ? "chip chip--selected" : "chip"}
         aria-pressed={locale === "ja"}
         onClick={() => {
           dispatch({ type: "set_locale", locale: "ja" });
         }}
       >
-        {ui.localeJa[locale]}
+        日本語
       </button>
       <button
         type="button"
-        className={locale === "en" ? "locale-switcher__btn locale-switcher__btn--active" : "locale-switcher__btn"}
+        className={locale === "en" ? "chip chip--selected" : "chip"}
         aria-pressed={locale === "en"}
         onClick={() => {
           dispatch({ type: "set_locale", locale: "en" });
         }}
       >
-        {ui.localeEn[locale]}
+        EN
       </button>
     </div>
   );
 
-  const themeSwitcher = (
-    <ThemeSwitcher
-      themeId={state.themeId}
-      locale={locale}
-      onChange={(themeId) => {
-        dispatch({ type: "set_theme", themeId });
-      }}
-    />
-  );
-
-  const openButton = (
-    <button type="button" className="top-bar__open" onClick={openPicker}>
-      {ui.openZip[locale]}
-    </button>
-  );
-
-  const venueMeta =
-    venueName !== null ? (
-      <div className="top-bar__meta">
-        <span className="top-bar__venue">{venueName}</span>
-        {levelName !== null ? <span className="top-bar__level">{levelName}</span> : null}
-      </div>
-    ) : null;
-
-  const compactHeader =
-    compact && venueState ? (
-      <div className="explorer-sidebar__compact-header">
-        <div className="explorer-sidebar__compact-row explorer-sidebar__compact-row--meta">{venueMeta}</div>
-        <div className="explorer-sidebar__compact-row explorer-sidebar__compact-row--controls">
-          {localeSwitcher}
-          {themeSwitcher}
-        </div>
-      </div>
-    ) : null;
-
+  const warnings = venueState?.loadedVenue.warnings ?? [];
   const showMap = venueState !== null;
   const dragEnabled = showMap && !embed;
   const showEmptyDropzone =
@@ -383,8 +408,20 @@ export function App() {
     (state.status === "ready" || (state.status === "loading" && Boolean(state.previous)));
   const onRetry = params.src !== null ? loadFromSrc : openPicker;
 
+  const viewerUrl = useMemo(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("embed");
+    return url.toString();
+  }, []);
+
+  // Compact: sheets are exclusive — an open rail panel hides the inspector
+  // sheet (selection and its map highlight persist underneath).
+  const inspectorOpen =
+    showMap && selectedFeature !== null && !embed && (!compact || activePanel === null);
+  const embedInfoOpen = showMap && selectedFeature !== null && embed;
+
   return (
-    <div className={compact ? "app app--compact" : "app"} style={themeStyle(state.themeId)}>
+    <div className={compact ? "app app--compact" : "app"} style={themeStyle()}>
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {liveMessage(state)}
       </div>
@@ -404,119 +441,211 @@ export function App() {
         }}
       />
 
-      {!embed ? (
-        <header className="top-bar">
-          <div className="top-bar__brand">
-            <span className="top-bar__product">{ui.product[locale]}</span>
-            {!compact ? venueMeta : null}
-          </div>
-          <div className="top-bar__actions">
-            {!compact ? (
-              <>
-                {localeSwitcher}
-                {themeSwitcher}
-              </>
-            ) : null}
-            {openButton}
-          </div>
-        </header>
-      ) : null}
-
-      <div className="app__body">
-        {showMap && !embed ? (
-          <ExplorerSidebar
-            locale={locale}
-            searchText={venueState.searchText}
-            searchCategory={venueState.searchCategory}
-            results={searchResults}
-            selectedFeature={selectedFeature}
+      <main
+        className="map-stage"
+        onDragOver={dragEnabled ? onMapDragOver : undefined}
+        onDragLeave={dragEnabled ? onMapDragLeave : undefined}
+        onDrop={dragEnabled ? onMapDrop : undefined}
+      >
+        {showMap ? (
+          <IndoorMap
             venue={venueState.loadedVenue}
-            onSearchText={(text) => {
-              dispatch({ type: "set_search_text", text });
-            }}
-            onSearchCategory={(category) => {
-              dispatch({ type: "set_search_category", category });
-            }}
-            onSelectResult={onSelectResult}
-            compactHeader={compactHeader}
+            levelId={venueState.selectedLevelId}
+            selectedFeatureId={venueState.selectedFeatureId}
+            locale={locale}
+            theme={kirikoTheme}
+            layerVisibility={layerVisibility}
+            onSelectFeature={onMapSelectFeature}
+            onControls={onControls}
           />
         ) : null}
 
-        <main
-          className="map-stage"
-          onDragOver={dragEnabled ? onMapDragOver : undefined}
-          onDragLeave={dragEnabled ? onMapDragLeave : undefined}
-          onDrop={dragEnabled ? onMapDrop : undefined}
-        >
-          {showMap ? (
-            <>
-              <IndoorMap
-                venue={venueState.loadedVenue}
-                levelId={venueState.selectedLevelId}
-                selectedFeatureId={venueState.selectedFeatureId}
+        {!embed ? (
+          <>
+            <ContextBar venueName={venueName ?? ui.product[locale]} levelName={levelName} />
+
+            <div className="top-actions">
+              <button type="button" className="btn-ghost top-actions__open" onClick={openPicker}>
+                {ui.openZip[locale]}
+              </button>
+              {localeSwitcher}
+            </div>
+
+            {showMap ? (
+              <IconRail
                 locale={locale}
-                theme={theme}
-                onSelectFeature={onMapSelectFeature}
+                activePanel={activePanel}
+                warningCount={warnings.length}
+                onToggle={onToggleRail}
+                variant={compact ? "bar" : "rail"}
               />
-              <div className="map-stage__levels">
-                <LevelSwitcher
+            ) : null}
+
+            {showMap && activePanel === "search" ? (
+              <FloatingPanel
+                title={ui.searchPanel[locale]}
+                closeLabel={ui.closePanel[locale]}
+                onClose={() => {
+                  setActivePanel(null);
+                }}
+                className="floating-panel--left"
+              >
+                <SearchPanel
+                  locale={locale}
+                  searchText={venueState.searchText}
+                  searchCategory={venueState.searchCategory}
+                  results={searchResults}
+                  selectedFeatureId={venueState.selectedFeatureId}
+                  onSearchText={(text) => {
+                    dispatch({ type: "set_search_text", text });
+                  }}
+                  onSearchCategory={(category) => {
+                    dispatch({ type: "set_search_category", category });
+                  }}
+                  onSelectResult={onSelectResult}
+                />
+              </FloatingPanel>
+            ) : null}
+
+            {showMap && activePanel === "layers" ? (
+              <FloatingPanel
+                title={ui.layersPanel[locale]}
+                closeLabel={ui.closePanel[locale]}
+                onClose={() => {
+                  setActivePanel(null);
+                }}
+                className="floating-panel--left"
+              >
+                <LayersPanel locale={locale} visibility={layerVisibility} onToggle={onToggleLayer} />
+              </FloatingPanel>
+            ) : null}
+
+            {showMap && activePanel === "warnings" ? (
+              <FloatingPanel
+                title={ui.warningsPanel[locale]}
+                closeLabel={ui.closePanel[locale]}
+                onClose={() => {
+                  setActivePanel(null);
+                }}
+                className="floating-panel--left"
+              >
+                <WarningsPanel warnings={warnings} locale={locale} />
+              </FloatingPanel>
+            ) : null}
+
+            {inspectorOpen && selectedFeature !== null ? (
+              <FloatingPanel
+                title={selectedFeatureName ?? selectedFeature.id}
+                closeLabel={ui.closeInspector[locale]}
+                onClose={() => {
+                  onMapSelectFeature(null);
+                }}
+                className="floating-panel--inspector"
+              >
+                <InspectorPanel
+                  feature={selectedFeature}
                   levels={venueState.loadedVenue.levels}
-                  selectedLevelId={venueState.selectedLevelId}
                   locale={locale}
                   manifestLanguage={venueState.loadedVenue.manifest.language}
-                  onSelect={(levelId) => {
-                    dispatch({ type: "select_level", levelId });
-                  }}
+                  {...(params.src !== null
+                    ? { onCopyLink: copyViewLink, copied: linkCopied }
+                    : {})}
                 />
-              </div>
-              {state.status === "loading" && state.previous ? (
-                <div className="map-stage__loading" role="status">
-                  <span className="imdf-dropzone__spinner" aria-hidden="true" />
-                  <span>
-                    {ui.loading[locale]}: {state.fileName}
-                  </span>
-                </div>
-              ) : null}
-              {showReplaceOverlay ? (
-                <ImdfDropzone
-                  locale={locale}
-                  status={state.status === "loading" ? "loading" : "ready"}
-                  {...(state.status === "loading" ? { fileName: state.fileName } : {})}
-                  variant="overlay"
-                  onFile={handleFile}
-                  onOpenPicker={openPicker}
-                />
-              ) : null}
-            </>
-          ) : null}
+              </FloatingPanel>
+            ) : null}
+          </>
+        ) : null}
 
-          {showEmptyDropzone ? (
-            <ImdfDropzone
+        {embed && embedInfoOpen && selectedFeature !== null ? (
+          <div className="embed-info">
+            <p className="embed-info__title">{selectedFeatureName ?? selectedFeature.id}</p>
+            <p className="embed-info__meta">
+              {[selectedFeature.featureType, levelName]
+                .filter((part): part is string => part !== null && part !== "")
+                .join(" · ")}
+            </p>
+          </div>
+        ) : null}
+
+        {showMap ? (
+          <>
+            <FloorStack
+              levels={venueState.loadedVenue.levels}
+              selectedLevelId={venueState.selectedLevelId}
               locale={locale}
-              status={state.status === "loading" ? "loading" : "empty"}
-              {...(state.status === "loading" ? { fileName: state.fileName } : {})}
-              variant="empty"
-              onFile={handleFile}
-              onOpenPicker={openPicker}
+              manifestLanguage={venueState.loadedVenue.manifest.language}
+              onSelect={(levelId) => {
+                dispatch({ type: "select_level", levelId });
+              }}
             />
-          ) : null}
+            {mapControls !== null ? (
+              <ZoomCluster
+                locale={locale}
+                onZoomIn={mapControls.zoomIn}
+                onZoomOut={mapControls.zoomOut}
+                onRecenter={mapControls.fitLevel}
+              />
+            ) : null}
+            <p className="map-attribution">{ui.attribution[locale]}</p>
+          </>
+        ) : null}
 
-          {showEmbedLoading ? (
-            <div className="map-stage__loading" role="status">
-              <span className="imdf-dropzone__spinner" aria-hidden="true" />
-              <span>
-                {ui.loading[locale]}: {state.status === "loading" ? state.fileName : ""}
-              </span>
-            </div>
-          ) : null}
+        {embed ? (
+          <a className="kiriko-badge" href={viewerUrl} target="_blank" rel="noreferrer">
+            <KirikoMark size={14} />
+            <span>
+              Kiriko <span aria-hidden="true">↗</span>
+            </span>
+            <span className="sr-only">{ui.openInKiriko[locale]}</span>
+          </a>
+        ) : null}
 
-          {showErrorBanner ? (
-            <div className="map-stage__error">
-              <ViewerErrorNotice error={state.error} locale={locale} onRetry={onRetry} />
-            </div>
-          ) : null}
-        </main>
-      </div>
+        {showMap && state.status === "loading" && state.previous ? (
+          <div className="map-stage__loading" role="status">
+            <span className="imdf-dropzone__spinner" aria-hidden="true" />
+            <span>
+              {ui.loading[locale]}: {state.fileName}
+            </span>
+          </div>
+        ) : null}
+
+        {showReplaceOverlay ? (
+          <ImdfDropzone
+            locale={locale}
+            status={state.status === "loading" ? "loading" : "ready"}
+            {...(state.status === "loading" ? { fileName: state.fileName } : {})}
+            variant="overlay"
+            onFile={handleFile}
+            onOpenPicker={openPicker}
+          />
+        ) : null}
+
+        {showEmptyDropzone ? (
+          <ImdfDropzone
+            locale={locale}
+            status={state.status === "loading" ? "loading" : "empty"}
+            {...(state.status === "loading" ? { fileName: state.fileName } : {})}
+            variant="empty"
+            onFile={handleFile}
+            onOpenPicker={openPicker}
+          />
+        ) : null}
+
+        {showEmbedLoading ? (
+          <div className="map-stage__loading" role="status">
+            <span className="imdf-dropzone__spinner" aria-hidden="true" />
+            <span>
+              {ui.loading[locale]}: {state.status === "loading" ? state.fileName : ""}
+            </span>
+          </div>
+        ) : null}
+
+        {showErrorBanner ? (
+          <div className="map-stage__error">
+            <ViewerErrorNotice error={state.error} locale={locale} onRetry={onRetry} />
+          </div>
+        ) : null}
+      </main>
     </div>
   );
 }

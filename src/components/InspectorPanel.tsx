@@ -3,10 +3,6 @@ import type { LocaleCode, LoadedVenue, ViewerFeature, ViewerLevel } from "../imd
 
 const ui = {
   title: { ja: "詳細", en: "Details" },
-  empty: {
-    ja: "地図または検索結果から地物を選択してください。",
-    en: "Select a feature on the map or from search results.",
-  },
   type: { ja: "種別", en: "Type" },
   category: { ja: "カテゴリ", en: "Category" },
   level: { ja: "フロア", en: "Level" },
@@ -15,13 +11,19 @@ const ui = {
   hours: { ja: "営業時間", en: "Hours" },
   id: { ja: "ID", en: "ID" },
   altName: { ja: "別名", en: "Also known as" },
+  copyLink: { ja: "リンクをコピー", en: "Copy link" },
+  copied: { ja: "コピーしました", en: "Copied" },
 } as const;
 
-export interface FeatureDetailsProps {
-  feature: ViewerFeature | null;
+export interface InspectorPanelProps {
+  feature: ViewerFeature;
   levels: ViewerLevel[];
   locale: LocaleCode;
   manifestLanguage: string;
+  /** Copies a deep link to the current view; omitted when not linkable. */
+  onCopyLink?: () => void;
+  /** Transient feedback state owned by the caller. */
+  copied?: boolean;
 }
 
 function levelLabelFor(
@@ -45,72 +47,86 @@ function hoursFromSource(feature: ViewerFeature): string | null {
   return typeof hours === "string" && hours !== "" ? hours : null;
 }
 
-export function FeatureDetails({ feature, levels, locale, manifestLanguage }: FeatureDetailsProps) {
-  if (feature === null) {
-    return (
-      <section className="feature-details" aria-label={ui.title[locale]}>
-        <h2 className="feature-details__heading">{ui.title[locale]}</h2>
-        <p className="feature-details__empty">{ui.empty[locale]}</p>
-      </section>
-    );
-  }
-
+/**
+ * Kiriko Inspector body: feature name, category line, attribute table with
+ * mono values, optional copy-link footer. Hosted inside a FloatingPanel
+ * whose title is the feature name, so this renders from the category line
+ * down.
+ */
+export function InspectorPanel({
+  feature,
+  levels,
+  locale,
+  manifestLanguage,
+  onCopyLink,
+  copied,
+}: InspectorPanelProps) {
   const primary = localizedLabel(feature.labels, locale, feature.id, manifestLanguage);
   const alt = pickLocalizedValue(feature.altLabels, locale, manifestLanguage);
   const levelLabel = levelLabelFor(feature, levels, locale, manifestLanguage);
   const hours = hoursFromSource(feature);
 
+  const categoryLine = [feature.featureType, feature.category, levelLabel]
+    .filter((part): part is string => part !== null && part !== "")
+    .join(" · ");
+
   return (
-    <section className="feature-details" aria-label={ui.title[locale]}>
-      <h2 className="feature-details__heading">{ui.title[locale]}</h2>
-      <p className="feature-details__name">{primary}</p>
+    <div className="inspector">
+      <p className="inspector__kind">{categoryLine}</p>
       {alt !== null && alt !== primary ? (
-        <p className="feature-details__alt">
-          <span className="feature-details__key">{ui.altName[locale]}</span>
-          <span>{alt}</span>
+        <p className="inspector__alt">
+          <span>{ui.altName[locale]}</span> {alt}
         </p>
       ) : null}
-      <dl className="feature-details__list">
-        <div className="feature-details__row">
+      <div className="inspector__divider" aria-hidden="true" />
+      <dl className="inspector__table" aria-label={ui.title[locale]}>
+        <div className="inspector__row">
           <dt>{ui.type[locale]}</dt>
           <dd>{feature.featureType}</dd>
         </div>
         {feature.category !== null ? (
-          <div className="feature-details__row">
+          <div className="inspector__row">
             <dt>{ui.category[locale]}</dt>
             <dd>{feature.category}</dd>
           </div>
         ) : null}
         {levelLabel !== null ? (
-          <div className="feature-details__row">
+          <div className="inspector__row">
             <dt>{ui.level[locale]}</dt>
             <dd>{levelLabel}</dd>
           </div>
         ) : null}
         {feature.accessibility.length > 0 ? (
-          <div className="feature-details__row">
+          <div className="inspector__row">
             <dt>{ui.accessibility[locale]}</dt>
             <dd>{feature.accessibility.join(", ")}</dd>
           </div>
         ) : null}
         {feature.restriction !== null ? (
-          <div className="feature-details__row">
+          <div className="inspector__row">
             <dt>{ui.restriction[locale]}</dt>
             <dd>{feature.restriction}</dd>
           </div>
         ) : null}
         {hours !== null ? (
-          <div className="feature-details__row">
+          <div className="inspector__row">
             <dt>{ui.hours[locale]}</dt>
             <dd>{hours}</dd>
           </div>
         ) : null}
-        <div className="feature-details__row">
+        <div className="inspector__row">
           <dt>{ui.id[locale]}</dt>
-          <dd className="feature-details__id">{feature.id}</dd>
+          <dd>{feature.id}</dd>
         </div>
       </dl>
-    </section>
+      {onCopyLink !== undefined ? (
+        <div className="inspector__footer">
+          <button type="button" className="btn-ghost" onClick={onCopyLink}>
+            {copied === true ? ui.copied[locale] : ui.copyLink[locale]}
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

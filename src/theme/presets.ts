@@ -1,61 +1,40 @@
 import type { ThemeId, ViewerTheme } from "./types";
 
 const fontFamily =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans CJK JP", Meiryo, sans-serif';
+  '"Inter Variable", "Noto Sans JP Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans CJK JP", Meiryo, sans-serif';
 
+/**
+ * Kiriko map palette (Figma 📐 Foundation + MapMock/1F): cool stone canvas,
+ * soft indigo-tinted units, warm beige service rooms, Ai Indigo selection.
+ */
 export const themes: Record<ThemeId, ViewerTheme> = {
-  "tokyo-green": {
-    id: "tokyo-green",
-    label: "Tokyo Green",
+  kiriko: {
+    id: "kiriko",
+    label: "Kiriko",
     colors: {
-      canvas: "#e8ece8",
-      panel: "#fafbf9",
-      text: "#1d2a23",
-      muted: "#53635a",
-      border: "#c8d0cb",
-      accent: "#17452f",
-      accentSoft: "#dce9e1",
-      unit: "#e4e5e3",
-      unitOutline: "#a9b7ae",
-      walkway: "#ffffff",
-      restricted: "#dfe3e0",
-      unitTransit: "#8fbcb6",
-      unitRestroom: "#d3c4e3",
-      unitUnenclosed: "#26282a",
-      unitNonPublic: "#e3dccb",
-      opening: "#9b5a20",
-      selected: "#146b44",
-      error: "#a52828",
-      warning: "#7a4f00",
-      focus: "#005fcc",
-    },
-    fontFamily,
-  },
-  "customer-blue": {
-    id: "customer-blue",
-    label: "Customer Blue",
-    colors: {
-      canvas: "#e8edf3",
-      panel: "#fbfcfe",
-      text: "#172333",
-      muted: "#526173",
-      border: "#c7d0dc",
-      accent: "#184d80",
-      accentSoft: "#dce9f6",
-      unit: "#e4e5e3",
-      unitOutline: "#a9b8ca",
-      walkway: "#ffffff",
-      restricted: "#e1e4e8",
-      unitTransit: "#8fbcb6",
-      unitRestroom: "#d3c4e3",
-      unitUnenclosed: "#26282a",
-      unitNonPublic: "#e3dccb",
-      opening: "#9a612b",
-      selected: "#0d5f9e",
-      error: "#a12626",
-      warning: "#795000",
-      focus: "#005fcc",
+      canvas: "#ededeb",
+      panel: "#ffffff",
+      text: "#1c1917",
+      muted: "#78716c",
+      border: "#e7e5e4",
+      accent: "#4f46e5",
+      accentSoft: "#eef2ff",
+      unit: "#e9edf4",
+      unitOutline: "#c8ceda",
+      walkway: "#f8f9fb",
+      restricted: "#d5dae3",
+      unitTransit: "#d5dae3",
+      unitRestroom: "#f0ebe0",
+      unitUnenclosed: "#e3e7ee",
+      unitNonPublic: "#e5e2da",
+      opening: "#9aa3b2",
+      selected: "#4f46e5",
+      error: "#dc2626",
+      warning: "#d97706",
+      focus: "#4f46e5",
     },
     fontFamily,
   },
 };
+
+export const kirikoTheme: ViewerTheme = themes.kiriko;

@@ -2,12 +2,14 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ViewerFeature, ViewerLevel, ViewerWarning } from "../imdf/types";
-import { CategoryChips } from "./CategoryChips";
-import { FeatureDetails } from "./FeatureDetails";
+import { defaultLayerVisibility } from "../map/layerGroups";
+import { FloorStack } from "./FloorStack";
+import { IconRail } from "./IconRail";
 import { ImdfDropzone } from "./ImdfDropzone";
-import { LevelSwitcher } from "./LevelSwitcher";
-import { ThemeSwitcher } from "./ThemeSwitcher";
-import { ViewerWarnings } from "./ViewerNotice";
+import { InspectorPanel } from "./InspectorPanel";
+import { LayersPanel } from "./LayersPanel";
+import { SearchPanel } from "./SearchPanel";
+import { WarningsPanel } from "./WarningsPanel";
 
 const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
@@ -49,10 +51,10 @@ function makeFeature(overrides: Partial<ViewerFeature> & Pick<ViewerFeature, "id
   };
 }
 
-describe("LevelSwitcher", () => {
-  it("renders levels in the given descending order with aria-pressed on the selected pill", () => {
+describe("FloorStack", () => {
+  it("renders levels in the given descending order with aria-pressed on the selected floor", () => {
     render(
-      <LevelSwitcher
+      <FloorStack
         levels={LEVELS_DESC}
         selectedLevelId={LEVEL_1F.id}
         locale="en"
@@ -62,18 +64,18 @@ describe("LevelSwitcher", () => {
     );
 
     const group = screen.getByRole("group", { name: "Levels" });
-    const pills = within(group).getAllByRole("button");
-    expect(pills.map((pill) => pill.textContent)).toEqual(["2F", "1F", "B1"]);
-    expect(pills[0]?.getAttribute("aria-pressed")).toBe("false");
-    expect(pills[1]?.getAttribute("aria-pressed")).toBe("true");
-    expect(pills[2]?.getAttribute("aria-pressed")).toBe("false");
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual(["2F", "1F", "B1"]);
+    expect(buttons[0]?.getAttribute("aria-pressed")).toBe("false");
+    expect(buttons[1]?.getAttribute("aria-pressed")).toBe("true");
+    expect(buttons[2]?.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("changes selection on click and Enter", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(
-      <LevelSwitcher
+      <FloorStack
         levels={LEVELS_DESC}
         selectedLevelId={LEVEL_1F.id}
         locale="en"
@@ -93,35 +95,46 @@ describe("LevelSwitcher", () => {
   });
 });
 
-describe("CategoryChips", () => {
+function renderSearchPanel(
+  overrides: Partial<Parameters<typeof SearchPanel>[0]> = {},
+): ReturnType<typeof render> {
+  const props: Parameters<typeof SearchPanel>[0] = {
+    locale: "en",
+    searchText: "",
+    searchCategory: "all",
+    results: [],
+    selectedFeatureId: null,
+    onSearchText: () => {},
+    onSearchCategory: () => {},
+    onSelectResult: () => {},
+    ...overrides,
+  };
+  return render(<SearchPanel {...props} />);
+}
+
+describe("SearchPanel category chips", () => {
   it("marks the active category with aria-pressed and toggles on click", async () => {
     const user = userEvent.setup();
-    const onChange = vi.fn();
-    const { rerender } = render(
-      <CategoryChips category="all" locale="en" onChange={onChange} />,
-    );
+    const onSearchCategory = vi.fn();
+    renderSearchPanel({ onSearchCategory });
 
     expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Gates" }).getAttribute("aria-pressed")).toBe("false");
 
     await user.click(screen.getByRole("button", { name: "Shops" }));
-    expect(onChange).toHaveBeenCalledWith("shops");
-
-    rerender(<CategoryChips category="shops" locale="en" onChange={onChange} />);
-    expect(screen.getByRole("button", { name: "Shops" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("false");
+    expect(onSearchCategory).toHaveBeenCalledWith("shops");
   });
 
   it("localizes chip labels for ja and en", () => {
-    const { rerender } = render(
-      <CategoryChips category="all" locale="en" onChange={() => {}} />,
-    );
+    renderSearchPanel();
     expect(screen.getByRole("button", { name: "All" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Gates" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Shops" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Facilities" })).toBeTruthy();
+  });
 
-    rerender(<CategoryChips category="all" locale="ja" onChange={() => {}} />);
+  it("localizes chip labels for ja", () => {
+    renderSearchPanel({ locale: "ja" });
     expect(screen.getByRole("button", { name: "すべて" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "改札・出入口" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "店舗" })).toBeTruthy();
@@ -129,33 +142,60 @@ describe("CategoryChips", () => {
   });
 });
 
-describe("ThemeSwitcher", () => {
-  it("updates aria-pressed when the selected theme changes", async () => {
+describe("IconRail", () => {
+  it("toggles panels and marks the active one", async () => {
     const user = userEvent.setup();
-    const onChange = vi.fn();
-    const { rerender } = render(
-      <ThemeSwitcher themeId="tokyo-green" locale="en" onChange={onChange} />,
+    const onToggle = vi.fn();
+    render(
+      <IconRail locale="en" activePanel="search" warningCount={0} onToggle={onToggle} />,
     );
 
-    const green = screen.getByRole("button", { name: "Tokyo Green" });
-    const blue = screen.getByRole("button", { name: "Customer Blue" });
-    expect(green.getAttribute("aria-pressed")).toBe("true");
-    expect(blue.getAttribute("aria-pressed")).toBe("false");
-
-    await user.click(blue);
-    expect(onChange).toHaveBeenCalledWith("customer-blue");
-
-    rerender(<ThemeSwitcher themeId="customer-blue" locale="en" onChange={onChange} />);
-    expect(screen.getByRole("button", { name: "Customer Blue" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
-    expect(screen.getByRole("button", { name: "Tokyo Green" }).getAttribute("aria-pressed")).toBe(
+    const search = screen.getByRole("button", { name: "Search" });
+    expect(search.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Layers" }).getAttribute("aria-pressed")).toBe(
       "false",
     );
+    // No warnings → no warnings toggle.
+    expect(screen.queryByRole("button", { name: "Warnings" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Layers" }));
+    expect(onToggle).toHaveBeenCalledWith("layers");
+  });
+
+  it("shows the warnings toggle with a count badge when warnings exist", () => {
+    render(
+      <IconRail locale="en" activePanel={null} warningCount={5} onToggle={() => {}} />,
+    );
+    const warnings = screen.getByRole("button", { name: "Warnings" });
+    expect(warnings.textContent).toContain("5");
   });
 });
 
-describe("FeatureDetails", () => {
+describe("LayersPanel", () => {
+  it("reflects visibility with aria-pressed and reports toggles", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    render(
+      <LayersPanel
+        locale="en"
+        visibility={{ ...defaultLayerVisibility, openings: false }}
+        onToggle={onToggle}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Units: shown" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("button", { name: "Openings: hidden" }).getAttribute("aria-pressed"),
+    ).toBe("false");
+
+    await user.click(screen.getByRole("button", { name: "Openings: hidden" }));
+    expect(onToggle).toHaveBeenCalledWith("openings");
+  });
+});
+
+describe("InspectorPanel", () => {
   it("omits category, hours, and restriction rows when absent", () => {
     const feature = makeFeature({
       id: "c1000012-0000-4000-8000-00000000012f",
@@ -166,7 +206,7 @@ describe("FeatureDetails", () => {
     });
 
     render(
-      <FeatureDetails
+      <InspectorPanel
         feature={feature}
         levels={LEVELS_DESC}
         locale="en"
@@ -174,7 +214,6 @@ describe("FeatureDetails", () => {
       />,
     );
 
-    expect(screen.getByText("Open Room")).toBeTruthy();
     expect(screen.queryByText("Category")).toBeNull();
     expect(screen.queryByText("Hours")).toBeNull();
     expect(screen.queryByText("Restriction")).toBeNull();
@@ -192,7 +231,7 @@ describe("FeatureDetails", () => {
     });
 
     render(
-      <FeatureDetails
+      <InspectorPanel
         feature={feature}
         levels={LEVELS_DESC}
         locale="en"
@@ -202,10 +241,11 @@ describe("FeatureDetails", () => {
 
     expect(screen.getByText("Hours")).toBeTruthy();
     expect(screen.getByText("Mo-Fr 10:00-20:00")).toBeTruthy();
-    expect(screen.getByText("shopping")).toBeTruthy();
+    // Kind line and the Category row both show the category.
+    expect(screen.getByText("occupant · shopping · 1F")).toBeTruthy();
   });
 
-  it("falls back to the feature id when locale labels are missing", () => {
+  it("shows the feature id in the ID row", () => {
     const featureId = "c1000002-0000-4000-8000-0000000000b2";
     const feature = makeFeature({
       id: featureId,
@@ -214,23 +254,49 @@ describe("FeatureDetails", () => {
     });
 
     render(
-      <FeatureDetails
+      <InspectorPanel
         feature={feature}
         levels={LEVELS_DESC}
         locale="en"
         manifestLanguage="ja-JP"
       />,
     );
-    // Name uses the id fallback; ID row also shows the id.
-    const name = document.querySelector(".feature-details__name");
-    expect(name?.textContent).toBe(featureId);
-    expect(document.querySelector(".feature-details__id")?.textContent).toBe(featureId);
+    expect(screen.getByText(featureId)).toBeTruthy();
+  });
+
+  it("shows copy-link feedback state from the caller", async () => {
+    const user = userEvent.setup();
+    const onCopyLink = vi.fn();
+    const feature = makeFeature({ id: "c1000012-0000-4000-8000-00000000012f" });
+    const { rerender } = render(
+      <InspectorPanel
+        feature={feature}
+        levels={LEVELS_DESC}
+        locale="en"
+        manifestLanguage="ja-JP"
+        onCopyLink={onCopyLink}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    expect(onCopyLink).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <InspectorPanel
+        feature={feature}
+        levels={LEVELS_DESC}
+        locale="en"
+        manifestLanguage="ja-JP"
+        onCopyLink={onCopyLink}
+        copied
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
   });
 });
 
-describe("ViewerWarnings", () => {
-  it("shows the warning count and messages in a disclosure", async () => {
-    const user = userEvent.setup();
+describe("WarningsPanel", () => {
+  it("shows warning messages with their codes", () => {
     const warnings: ViewerWarning[] = [
       {
         code: "missing_locale",
@@ -244,22 +310,17 @@ describe("ViewerWarnings", () => {
       },
     ];
 
-    render(<ViewerWarnings warnings={warnings} locale="en" />);
+    render(<WarningsPanel warnings={warnings} locale="en" />);
 
-    const summary = screen.getByText("Warnings");
-    expect(screen.getByLabelText("2").textContent).toBe("2");
-
-    // Expand disclosure so list items are visible to users.
-    await user.click(summary);
-    expect(screen.getByText("missing_locale")).toBeTruthy();
     expect(screen.getByText("Feature lacks English label")).toBeTruthy();
-    expect(screen.getByText("unresolved_reference")).toBeTruthy();
     expect(screen.getByText("Anchor not found")).toBeTruthy();
+    expect(screen.getByText(/missing_locale/)).toBeTruthy();
+    expect(screen.getByText(/unresolved_reference/)).toBeTruthy();
   });
 
-  it("renders nothing when there are no warnings", () => {
-    const { container } = render(<ViewerWarnings warnings={[]} locale="en" />);
-    expect(container.firstChild).toBeNull();
+  it("renders an empty message when there are no warnings", () => {
+    render(<WarningsPanel warnings={[]} locale="en" />);
+    expect(screen.getByText("No warnings")).toBeTruthy();
   });
 });
 

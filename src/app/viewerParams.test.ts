@@ -49,11 +49,8 @@ describe("parseViewerParams", () => {
     expect(parseViewerParams("", BASE).locale).toBeNull();
   });
 
-  it("whitelists theme, ignoring prototype keys", () => {
-    expect(parseViewerParams("?theme=customer-blue", BASE).themeId).toBe("customer-blue");
-    expect(parseViewerParams("?theme=tokyo-green", BASE).themeId).toBe("tokyo-green");
-    expect(parseViewerParams("?theme=neon", BASE).themeId).toBeNull();
-    expect(parseViewerParams("?theme=toString", BASE).themeId).toBeNull();
-    expect(parseViewerParams("?theme=__proto__", BASE).themeId).toBeNull();
+  it("ignores the legacy theme param", () => {
+    expect("themeId" in parseViewerParams("?theme=customer-blue", BASE)).toBe(false);
+    expect(parseViewerParams("?theme=neon&lang=en", BASE).locale).toBe("en");
   });
 });
