@@ -71,6 +71,8 @@ function readyState(
     selectedFeatureId: null,
     searchText: "",
     searchCategory: "all",
+    hiddenTypes: new Set(),
+    hiddenBuildings: new Set(),
     ...overrides,
   };
 }
@@ -634,5 +636,80 @@ describe("viewerReducer search fields", () => {
     expect(stillNull.status).toBe("ready");
     if (stillNull.status !== "ready") return;
     expect(stillNull.selectedFeatureId).toBeNull();
+  });
+});
+
+describe("viewerReducer layer visibility", () => {
+  const UNIT_ID = "unit-vis-1";
+  function readyWithUnit(): ViewerState {
+    const unit: ViewerFeature = {
+      id: UNIT_ID,
+      featureType: "unit",
+      levelId: levels1F[1]!.id,
+      geometry: null,
+      center: [0, 0],
+      labels: { en: "Unit" },
+      altLabels: {},
+      category: null,
+      accessibility: [],
+      restriction: null,
+      buildingId: null,
+      sourceProperties: {},
+    };
+    return readyState("venue.zip", levels1F, {
+      loadedVenue: makeVenue(levels1F, [unit]),
+    });
+  }
+
+  it("toggles a hidden type on and off", () => {
+    const s1 = viewerReducer(readyState(), { type: "toggle_type", featureType: "unit" });
+    expect(s1.status === "ready" && s1.hiddenTypes.has("unit")).toBe(true);
+    const s2 = viewerReducer(s1, { type: "toggle_type", featureType: "unit" });
+    expect(s2.status === "ready" && s2.hiddenTypes.has("unit")).toBe(false);
+  });
+
+  it("toggles buildings and bulk-sets hidden types and buildings", () => {
+    const s1 = viewerReducer(readyState(), { type: "toggle_building", buildingId: "b1" });
+    expect(s1.status === "ready" && s1.hiddenBuildings.has("b1")).toBe(true);
+    const s2 = viewerReducer(s1, { type: "toggle_building", buildingId: "b1" });
+    expect(s2.status === "ready" && s2.hiddenBuildings.has("b1")).toBe(false);
+    const bulkB = viewerReducer(readyState(), { type: "set_buildings_hidden", hidden: ["b1", "b2"] });
+    expect(
+      bulkB.status === "ready" &&
+        bulkB.hiddenBuildings.has("b1") &&
+        bulkB.hiddenBuildings.has("b2") &&
+        bulkB.hiddenBuildings.size === 2,
+    ).toBe(true);
+    const bulkT = viewerReducer(readyState(), { type: "set_types_hidden", hidden: ["unit"] });
+    expect(bulkT.status === "ready" && bulkT.hiddenTypes.has("unit") && bulkT.hiddenTypes.size === 1).toBe(true);
+  });
+
+  it("resets hidden sets on a fresh load_succeeded", () => {
+    const hidden = viewerReducer(readyState(), { type: "toggle_type", featureType: "unit" });
+    const loading = viewerReducer(hidden, { type: "load_started", fileName: "venue.zip" });
+    const loaded = viewerReducer(loading, {
+      type: "load_succeeded",
+      fileName: "venue.zip",
+      venue: makeVenue(levels1F),
+    });
+    expect(
+      loaded.status === "ready" && loaded.hiddenTypes.size === 0 && loaded.hiddenBuildings.size === 0,
+    ).toBe(true);
+  });
+
+  it("clears the selection when its type is hidden", () => {
+    const withSel = viewerReducer(readyWithUnit(), { type: "select_feature", featureId: UNIT_ID });
+    expect(withSel.status === "ready" && withSel.selectedFeatureId).toBe(UNIT_ID);
+    const hidden = viewerReducer(withSel, { type: "toggle_type", featureType: "unit" });
+    expect(hidden.status === "ready" && hidden.selectedFeatureId).toBeNull();
+  });
+
+  it("is a no-op outside the ready state", () => {
+    expect(viewerReducer(initialViewerState, { type: "toggle_type", featureType: "unit" })).toBe(
+      initialViewerState,
+    );
+    expect(
+      viewerReducer(initialViewerState, { type: "set_buildings_hidden", hidden: ["b1"] }),
+    ).toBe(initialViewerState);
   });
 });

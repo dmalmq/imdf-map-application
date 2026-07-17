@@ -146,6 +146,8 @@ function activeVenue(state: ViewerState): ReadyVenueState | null {
       selectedFeatureId: state.selectedFeatureId,
       searchText: state.searchText,
       searchCategory: state.searchCategory,
+      hiddenTypes: state.hiddenTypes,
+      hiddenBuildings: state.hiddenBuildings,
     };
   }
   if (

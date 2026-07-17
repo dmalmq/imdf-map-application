@@ -1,5 +1,5 @@
 import type { ArchiveError } from "../errors/ArchiveError";
-import type { LoadedVenue, LocaleCode, ViewerLevel } from "../imdf/types";
+import type { FeatureType, LoadedVenue, LocaleCode, ViewerLevel } from "../imdf/types";
 import { matchesSearchCategory, type SearchCategory } from "../search/searchCategories";
 import type { ThemeId } from "../theme/types";
 
@@ -8,6 +8,8 @@ export interface ReadyVenueState {
   loadedVenue: LoadedVenue;
   selectedLevelId: string;
   selectedFeatureId: string | null;
+  hiddenTypes: ReadonlySet<FeatureType>;
+  hiddenBuildings: ReadonlySet<string>;
   searchText: string;
   searchCategory: SearchCategory;
 }
@@ -48,7 +50,11 @@ export type ViewerAction =
   | { type: "set_search_text"; text: string }
   | { type: "set_search_category"; category: SearchCategory }
   | { type: "set_theme"; themeId: ThemeId }
-  | { type: "set_locale"; locale: LocaleCode };
+  | { type: "set_locale"; locale: LocaleCode }
+  | { type: "toggle_type"; featureType: FeatureType }
+  | { type: "toggle_building"; buildingId: string }
+  | { type: "set_types_hidden"; hidden: FeatureType[] }
+  | { type: "set_buildings_hidden"; hidden: string[] };
 
 export const initialViewerState: ViewerState = {
   status: "empty",
@@ -109,9 +115,26 @@ export function matchLevelId(levels: ViewerLevel[], query: string): string | nul
 function currentReadyState(state: ViewerState): ReadyVenueState | undefined {
   switch (state.status) {
     case "ready": {
-      const { fileName, loadedVenue, selectedLevelId, selectedFeatureId, searchText, searchCategory } =
-        state;
-      return { fileName, loadedVenue, selectedLevelId, selectedFeatureId, searchText, searchCategory };
+      const {
+        fileName,
+        loadedVenue,
+        selectedLevelId,
+        selectedFeatureId,
+        hiddenTypes,
+        hiddenBuildings,
+        searchText,
+        searchCategory,
+      } = state;
+      return {
+        fileName,
+        loadedVenue,
+        selectedLevelId,
+        selectedFeatureId,
+        hiddenTypes,
+        hiddenBuildings,
+        searchText,
+        searchCategory,
+      };
     }
     case "loading":
     case "reviewing":
@@ -120,6 +143,26 @@ function currentReadyState(state: ViewerState): ReadyVenueState | undefined {
     case "empty":
       return undefined;
   }
+}
+
+/** The selected feature id, or null if it is newly hidden by the visibility sets. */
+function clearedSelectionIfHidden(
+  state: ViewerState & { status: "ready" },
+  hiddenTypes: ReadonlySet<FeatureType>,
+  hiddenBuildings: ReadonlySet<string>,
+): string | null {
+  const id = state.selectedFeatureId;
+  if (id === null) {
+    return null;
+  }
+  const feature = state.loadedVenue.featuresById.get(id);
+  if (feature === undefined) {
+    return id;
+  }
+  const visible =
+    !hiddenTypes.has(feature.featureType) &&
+    (feature.buildingId === null || !hiddenBuildings.has(feature.buildingId));
+  return visible ? id : null;
 }
 
 export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerState {
@@ -196,6 +239,8 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
             ? matchLevelId(action.venue.levels, action.requestedLevel)
             : null) ?? pickInitialLevelId(action.venue.levels),
         selectedFeatureId: null,
+        hiddenTypes: new Set(),
+        hiddenBuildings: new Set(),
         searchText: "",
         searchCategory: "all",
       };
@@ -251,6 +296,46 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
           selected !== undefined && !matchesSearchCategory(selected, action.category)
             ? null
             : state.selectedFeatureId,
+      };
+    }
+    case "toggle_type": {
+      if (state.status !== "ready") return state;
+      const hiddenTypes = new Set(state.hiddenTypes);
+      if (hiddenTypes.has(action.featureType)) hiddenTypes.delete(action.featureType);
+      else hiddenTypes.add(action.featureType);
+      return {
+        ...state,
+        hiddenTypes,
+        selectedFeatureId: clearedSelectionIfHidden(state, hiddenTypes, state.hiddenBuildings),
+      };
+    }
+    case "toggle_building": {
+      if (state.status !== "ready") return state;
+      const hiddenBuildings = new Set(state.hiddenBuildings);
+      if (hiddenBuildings.has(action.buildingId)) hiddenBuildings.delete(action.buildingId);
+      else hiddenBuildings.add(action.buildingId);
+      return {
+        ...state,
+        hiddenBuildings,
+        selectedFeatureId: clearedSelectionIfHidden(state, state.hiddenTypes, hiddenBuildings),
+      };
+    }
+    case "set_types_hidden": {
+      if (state.status !== "ready") return state;
+      const hiddenTypes = new Set(action.hidden);
+      return {
+        ...state,
+        hiddenTypes,
+        selectedFeatureId: clearedSelectionIfHidden(state, hiddenTypes, state.hiddenBuildings),
+      };
+    }
+    case "set_buildings_hidden": {
+      if (state.status !== "ready") return state;
+      const hiddenBuildings = new Set(action.hidden);
+      return {
+        ...state,
+        hiddenBuildings,
+        selectedFeatureId: clearedSelectionIfHidden(state, state.hiddenTypes, hiddenBuildings),
       };
     }
     case "set_theme":
