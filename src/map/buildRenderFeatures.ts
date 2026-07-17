@@ -2,6 +2,7 @@ import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
 import { gdbMarkerIconId } from "./gdbMarkerIcons";
 import { color2Fill } from "./color2";
+import { isTypeAndBuildingVisible, type VisibilitySelection } from "./visibility";
 
 /** Renderer-owned property keys flattened onto derived GeoJSON features. */
 export interface RenderFeatureProperties {
@@ -65,6 +66,30 @@ export function renderFeatureFromViewer(
   };
 }
 
+/** Whether a precomputed level feature survives the current visibility selection. */
+function levelFeatureVisible(
+  properties: unknown,
+  visibility: VisibilitySelection | undefined,
+): boolean {
+  if (visibility === undefined) {
+    return true;
+  }
+  if (properties === null || typeof properties !== "object") {
+    return true;
+  }
+  const props = properties as Record<string, unknown>;
+  const featureType = props["__feature_type"];
+  if (typeof featureType !== "string") {
+    return true;
+  }
+  const buildingId = props["__building_id"];
+  return isTypeAndBuildingVisible(
+    featureType as FeatureType,
+    typeof buildingId === "string" ? buildingId : null,
+    visibility,
+  );
+}
+
 /**
  * Selected-level features plus venue/building/footprint context.
  * Does not mutate the venue model.
@@ -72,6 +97,7 @@ export function renderFeatureFromViewer(
 export function buildRenderFeatures(
   venue: LoadedVenue,
   levelId: string,
+  visibility?: VisibilitySelection,
 ): FeatureCollection {
   const features: Feature[] = [];
   const seen = new Map<string, true>();
@@ -82,6 +108,9 @@ export function buildRenderFeatures(
     }
     const rendered = renderFeatureFromViewer(feature);
     if (rendered == null) {
+      return;
+    }
+    if (visibility !== undefined && !isTypeAndBuildingVisible(feature.featureType, feature.buildingId, visibility)) {
       return;
     }
     seen.set(feature.id, true);
@@ -107,6 +136,9 @@ export function buildRenderFeatures(
             ? (feature.properties["__feature_id"] as string)
             : null;
       if (featureId != null && seen.has(featureId)) {
+        continue;
+      }
+      if (!levelFeatureVisible(feature.properties, visibility)) {
         continue;
       }
       if (featureId != null) {

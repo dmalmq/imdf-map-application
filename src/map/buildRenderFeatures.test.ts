@@ -61,6 +61,43 @@ describe("buildRenderFeatures", () => {
   });
 });
 
+describe("buildRenderFeatures visibility", () => {
+  it("excludes hidden types but keeps the venue outline", () => {
+    const venueFeature = feature("venue", "venue");
+    const unit = feature("u1", "unit");
+    unit.levelId = "ordinal:0";
+    const venue = {
+      manifest: { version: "1.0.0", language: "en" },
+      venue: venueFeature,
+      levels: [],
+      buildings: [],
+      featuresById: new Map([
+        [venueFeature.id, venueFeature],
+        [unit.id, unit],
+      ]),
+      renderFeaturesByLevel: new Map([
+        ["ordinal:0", { type: "FeatureCollection", features: [renderFeatureFromViewer(unit)!] }],
+      ]),
+      searchEntries: [],
+      boundsByLevel: new Map(),
+      enrichmentByFeatureId: new Map(),
+      warnings: [],
+    } satisfies LoadedVenue;
+
+    expect(
+      buildRenderFeatures(venue, "ordinal:0").features.map((f) => f.properties?.["__feature_type"]),
+    ).toContain("unit");
+
+    const hidden = buildRenderFeatures(venue, "ordinal:0", {
+      hiddenTypes: new Set(["unit"]),
+      hiddenBuildings: new Set(),
+    });
+    const types = hidden.features.map((f) => f.properties?.["__feature_type"]);
+    expect(types).not.toContain("unit");
+    expect(types).toContain("venue");
+  });
+});
+
 describe("renderFeatureFromViewer marker icon", () => {
   const withImage = (image: unknown): ViewerFeature => {
     const base = feature("f-icon", "amenity");
