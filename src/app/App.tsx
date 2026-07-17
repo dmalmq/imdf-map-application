@@ -35,6 +35,7 @@ import {
   type ViewerState,
 } from "../state/viewerReducer";
 import { kirikoTheme } from "../theme/presets";
+import { datasetArchiveUrl } from "../gallery/api";
 import { parseViewerParams } from "./viewerParams";
 
 const ui = {
@@ -138,6 +139,7 @@ function liveMessage(state: ViewerState): string {
 export function App() {
   const params = useMemo(() => parseViewerParams(window.location.search), []);
   const embed = params.embed;
+  const effectiveSrc = params.src ?? (params.dataset !== null ? datasetArchiveUrl(params.dataset) : null);
   const [state, dispatch] = useReducer(viewerReducer, params, (p) => ({
     ...initialViewerState,
     ...(p.locale !== null ? { locale: p.locale } : {}),
@@ -268,12 +270,12 @@ export function App() {
   );
 
   const loadFromSrc = useCallback(() => {
-    if (params.src === null) {
+    if (effectiveSrc === null) {
       return;
     }
-    const src = params.src;
+    const src = effectiveSrc;
     runLoad(fileNameFromSrc(src), (signal) => fetchImdfFile(src, signal), params.level ?? undefined);
-  }, [runLoad, params]);
+  }, [runLoad, params, effectiveSrc]);
 
   useEffect(() => {
     loadFromSrc();
@@ -406,7 +408,7 @@ export function App() {
     mapDragActive &&
     !embed &&
     (state.status === "ready" || (state.status === "loading" && Boolean(state.previous)));
-  const onRetry = params.src !== null ? loadFromSrc : openPicker;
+  const onRetry = effectiveSrc !== null ? loadFromSrc : openPicker;
 
   const viewerUrl = useMemo(() => {
     const url = new URL(window.location.href);
