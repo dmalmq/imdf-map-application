@@ -1,6 +1,7 @@
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
 import { gdbMarkerIconId } from "./gdbMarkerIcons";
+import { color2Fill } from "./color2";
 
 /** Renderer-owned property keys flattened onto derived GeoJSON features. */
 export interface RenderFeatureProperties {
@@ -9,6 +10,9 @@ export interface RenderFeatureProperties {
   __level_id: string | null;
   __category: string | null;
   __restricted: boolean;
+  __building_id: string | null;
+  /** Per-unit fill from the source `color2` value; absent when not applicable. */
+  __unit_color?: string;
   /** Local symbol-layer icon id derived from `sourceProperties.image`, when allowlisted. */
   __marker_icon?: string;
   [key: string]: unknown;
@@ -38,7 +42,15 @@ export function renderFeatureFromViewer(
     __level_id: feature.levelId,
     __category: feature.category,
     __restricted: feature.restriction !== null,
+    __building_id: feature.buildingId,
   };
+
+  if (feature.featureType === "unit") {
+    const unitColor = color2Fill(feature.sourceProperties["color2"]);
+    if (unitColor !== null) {
+      properties.__unit_color = unitColor;
+    }
+  }
 
   const markerIcon = gdbMarkerIconId(feature.sourceProperties["image"]);
   if (markerIcon !== null) {

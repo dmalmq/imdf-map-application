@@ -87,3 +87,49 @@ describe("renderFeatureFromViewer marker icon", () => {
     expect(source.sourceProperties["image"]).toBe("/marker/ticket.png");
   });
 });
+
+describe("renderFeatureFromViewer building and unit color", () => {
+  it("stamps __building_id and __unit_color for a unit with color2", () => {
+    const feature = {
+      id: "u1",
+      featureType: "unit" as const,
+      levelId: "ordinal:0",
+      geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] } as GeoJSON.Geometry,
+      center: [0.5, 0.5] as [number, number],
+      labels: {},
+      altLabels: {},
+      category: "room",
+      accessibility: [],
+      restriction: null,
+      buildingId: "bldg-A",
+      sourceProperties: { color2: "緑" },
+    };
+    const rendered = renderFeatureFromViewer(feature);
+    expect(rendered?.properties?.["__building_id"]).toBe("bldg-A");
+    expect(rendered?.properties?.["__unit_color"]).toBe("#DDF5D9");
+  });
+
+  it("omits __unit_color for non-units and units without color2", () => {
+    const base = {
+      id: "x",
+      levelId: "ordinal:0",
+      geometry: { type: "Point", coordinates: [0, 0] } as GeoJSON.Geometry,
+      center: [0, 0] as [number, number],
+      labels: {},
+      altLabels: {},
+      category: null,
+      accessibility: [],
+      restriction: null,
+      buildingId: null,
+      sourceProperties: { color2: "緑" },
+    };
+    const amenity = renderFeatureFromViewer({ ...base, featureType: "amenity" as const });
+    expect(amenity?.properties?.["__unit_color"]).toBeUndefined();
+    const unitNoColor = renderFeatureFromViewer({
+      ...base,
+      featureType: "unit" as const,
+      sourceProperties: {},
+    });
+    expect(unitNoColor?.properties?.["__unit_color"]).toBeUndefined();
+  });
+});
