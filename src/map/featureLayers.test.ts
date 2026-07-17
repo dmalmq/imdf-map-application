@@ -1,4 +1,4 @@
-import type { SymbolLayerSpecification } from "maplibre-gl";
+import type { FillLayerSpecification, SymbolLayerSpecification } from "maplibre-gl";
 import { describe, expect, it } from "vitest";
 import { themes } from "../theme/presets";
 import {
@@ -75,8 +75,10 @@ function findLayer(id: string) {
 function fillColor(id: string): unknown {
   const layer = findLayer(id);
   expect(layer.type).toBe("fill");
-  return (layer as import("maplibre-gl").FillLayerSpecification).paint?.["fill-color"];
+  return (layer as FillLayerSpecification).paint?.["fill-color"];
 }
+
+const coalesceFill = (token: string): unknown => ["coalesce", ["get", "__unit_color"], token];
 
 describe("category sets", () => {
   it("assigns conveyances to transit, not walkway", () => {
@@ -102,12 +104,12 @@ describe("category sets", () => {
 describe("buildFeatureLayers category coloring", () => {
   it("paints each bucket with its theme token", () => {
     const c = theme.colors;
-    expect(fillColor(LAYER_TRANSIT_FILL)).toBe(c.unitTransit);
-    expect(fillColor(LAYER_RESTROOM_FILL)).toBe(c.unitRestroom);
-    expect(fillColor(LAYER_UNENCLOSED_FILL)).toBe(c.unitUnenclosed);
-    expect(fillColor(LAYER_NONPUBLIC_FILL)).toBe(c.unitNonPublic);
-    expect(fillColor(LAYER_ROOM_FILL)).toBe(c.unit);
-    expect(fillColor(LAYER_WALKWAY_FILL)).toBe(c.walkway);
+    expect(fillColor(LAYER_TRANSIT_FILL)).toEqual(coalesceFill(c.unitTransit));
+    expect(fillColor(LAYER_RESTROOM_FILL)).toEqual(coalesceFill(c.unitRestroom));
+    expect(fillColor(LAYER_UNENCLOSED_FILL)).toEqual(coalesceFill(c.unitUnenclosed));
+    expect(fillColor(LAYER_NONPUBLIC_FILL)).toEqual(coalesceFill(c.unitNonPublic));
+    expect(fillColor(LAYER_ROOM_FILL)).toEqual(coalesceFill(c.unit));
+    expect(fillColor(LAYER_WALKWAY_FILL)).toEqual(coalesceFill(c.walkway));
   });
 
   it("filters transit units by category and non-restricted state", () => {
@@ -135,7 +137,7 @@ describe("buildFeatureLayers category coloring", () => {
 
   it("renders parking units in a clickable light-blue category layer", () => {
     const parkingFill = "indoor-parking-fill";
-    expect(fillColor(parkingFill)).toBe("#c8ddea");
+    expect(fillColor(parkingFill)).toEqual(coalesceFill("#c8ddea"));
     expect(findLayer(parkingFill).filter).toEqual([
       "all",
       ["==", ["get", "__feature_type"], "unit"],
@@ -183,7 +185,7 @@ describe("buildFeatureLayers category coloring", () => {
 
   it("renders platform units in a dedicated clickable grey layer", () => {
     const platformFill = "indoor-platform-fill";
-    expect(fillColor(platformFill)).toBe("#b8bdc2");
+    expect(fillColor(platformFill)).toEqual(coalesceFill("#b8bdc2"));
     expect(findLayer(platformFill).filter).toEqual([
       "all",
       ["==", ["get", "__feature_type"], "unit"],
@@ -213,20 +215,26 @@ describe("applyThemePaintProperties", () => {
     }, themes["customer-blue"]);
 
     for (const expected of [
-      [LAYER_UNENCLOSED_FILL, "fill-color", c.unitUnenclosed],
+      [LAYER_UNENCLOSED_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitUnenclosed]],
       [LAYER_UNENCLOSED_OUTLINE, "line-color", c.unitOutline],
-      [LAYER_TRANSIT_FILL, "fill-color", c.unitTransit],
+      [LAYER_TRANSIT_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitTransit]],
       [LAYER_TRANSIT_OUTLINE, "line-color", c.unitOutline],
-      [LAYER_RESTROOM_FILL, "fill-color", c.unitRestroom],
+      [LAYER_RESTROOM_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitRestroom]],
       [LAYER_RESTROOM_OUTLINE, "line-color", c.unitOutline],
-      [LAYER_NONPUBLIC_FILL, "fill-color", c.unitNonPublic],
+      [LAYER_NONPUBLIC_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitNonPublic]],
       [LAYER_NONPUBLIC_OUTLINE, "line-color", c.unitOutline],
-      ["indoor-parking-fill", "fill-color", "#c8ddea"],
+      ["indoor-parking-fill", "fill-color", ["coalesce", ["get", "__unit_color"], "#c8ddea"]],
       ["indoor-parking-outline", "line-color", c.unitOutline],
-      ["indoor-platform-fill", "fill-color", c.unitPlatform],
+      ["indoor-platform-fill", "fill-color", ["coalesce", ["get", "__unit_color"], c.unitPlatform]],
       ["indoor-platform-outline", "line-color", c.unitOutline],
     ]) {
       expect(calls).toContainEqual(expected);
     }
+  });
+});
+
+describe("unit fill color2 coalesce", () => {
+  it("wraps unit fill colors in a coalesce over __unit_color", () => {
+    expect(fillColor(LAYER_ROOM_FILL)).toEqual(coalesceFill(theme.colors.unit));
   });
 });

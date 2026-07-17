@@ -119,6 +119,13 @@ type AnyLayer =
 export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
   const c = theme.colors;
 
+  // Units colored by their source `color2` value, falling back to the theme color.
+  const unitFill = (themeColor: string): ExpressionSpecification => [
+    "coalesce",
+    ["get", "__unit_color"],
+    themeColor,
+  ];
+
   const matchFeatureType = (...types: string[]): FilterSpecification => {
     if (types.length === 1) {
       return ["==", ["get", "__feature_type"], types[0]!];
@@ -244,7 +251,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: ["any", matchLevelFloor, matchWalkwayUnit],
       paint: {
-        "fill-color": c.walkway,
+        "fill-color": unitFill(c.walkway),
         "fill-opacity": 1,
       },
     },
@@ -264,7 +271,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchRoomUnit,
       paint: {
-        "fill-color": c.unit,
+        "fill-color": unitFill(c.unit),
         "fill-opacity": 1,
       },
     },
@@ -284,7 +291,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchUnenclosedUnit,
       paint: {
-        "fill-color": c.unitUnenclosed,
+        "fill-color": unitFill(c.unitUnenclosed),
         "fill-opacity": 1,
       },
     },
@@ -304,7 +311,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchTransitUnit,
       paint: {
-        "fill-color": c.unitTransit,
+        "fill-color": unitFill(c.unitTransit),
         "fill-opacity": 1,
       },
     },
@@ -324,7 +331,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchRestroomUnit,
       paint: {
-        "fill-color": c.unitRestroom,
+        "fill-color": unitFill(c.unitRestroom),
         "fill-opacity": 1,
       },
     },
@@ -344,7 +351,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchNonPublicUnit,
       paint: {
-        "fill-color": c.unitNonPublic,
+        "fill-color": unitFill(c.unitNonPublic),
         "fill-opacity": 1,
       },
     },
@@ -364,7 +371,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchParkingUnit,
       paint: {
-        "fill-color": c.unitParking,
+        "fill-color": unitFill(c.unitParking),
         "fill-opacity": 1,
       },
     },
@@ -384,7 +391,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchPlatformUnit,
       paint: {
-        "fill-color": c.unitPlatform,
+        "fill-color": unitFill(c.unitPlatform),
         "fill-opacity": 1,
       },
     },
@@ -406,7 +413,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchStructureUnit,
       paint: {
-        "fill-color": c.unit,
+        "fill-color": unitFill(c.unit),
         "fill-opacity": 0.92,
       },
     },
@@ -426,7 +433,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchRestrictedUnit,
       paint: {
-        "fill-color": c.restricted,
+        "fill-color": unitFill(c.restricted),
         "fill-opacity": 1,
       },
     },
@@ -589,29 +596,36 @@ export function applyThemePaintProperties(
 ): void {
   const c = theme.colors;
 
+  // Units colored by their source `color2` value, falling back to the theme color.
+  const unitFill = (themeColor: string): ExpressionSpecification => [
+    "coalesce",
+    ["get", "__unit_color"],
+    themeColor,
+  ];
+
   setPaintProperty(LAYER_CONTEXT_FILL, "fill-color", c.unit);
   setPaintProperty(LAYER_CONTEXT_OUTLINE, "line-color", c.unitOutline);
 
-  setPaintProperty(LAYER_WALKWAY_FILL, "fill-color", c.walkway);
+  setPaintProperty(LAYER_WALKWAY_FILL, "fill-color", unitFill(c.walkway));
   setPaintProperty(LAYER_WALKWAY_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_ROOM_FILL, "fill-color", c.unit);
+  setPaintProperty(LAYER_ROOM_FILL, "fill-color", unitFill(c.unit));
   setPaintProperty(LAYER_ROOM_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_UNENCLOSED_FILL, "fill-color", c.unitUnenclosed);
+  setPaintProperty(LAYER_UNENCLOSED_FILL, "fill-color", unitFill(c.unitUnenclosed));
   setPaintProperty(LAYER_UNENCLOSED_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_TRANSIT_FILL, "fill-color", c.unitTransit);
+  setPaintProperty(LAYER_TRANSIT_FILL, "fill-color", unitFill(c.unitTransit));
   setPaintProperty(LAYER_TRANSIT_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_RESTROOM_FILL, "fill-color", c.unitRestroom);
+  setPaintProperty(LAYER_RESTROOM_FILL, "fill-color", unitFill(c.unitRestroom));
   setPaintProperty(LAYER_RESTROOM_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_NONPUBLIC_FILL, "fill-color", c.unitNonPublic);
+  setPaintProperty(LAYER_NONPUBLIC_FILL, "fill-color", unitFill(c.unitNonPublic));
   setPaintProperty(LAYER_NONPUBLIC_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_PARKING_FILL, "fill-color", c.unitParking);
+  setPaintProperty(LAYER_PARKING_FILL, "fill-color", unitFill(c.unitParking));
   setPaintProperty(LAYER_PARKING_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_PLATFORM_FILL, "fill-color", c.unitPlatform);
+  setPaintProperty(LAYER_PLATFORM_FILL, "fill-color", unitFill(c.unitPlatform));
   setPaintProperty(LAYER_PLATFORM_OUTLINE, "line-color", c.unitOutline);
 
-  setPaintProperty(LAYER_STRUCTURE_FILL, "fill-color", c.unit);
+  setPaintProperty(LAYER_STRUCTURE_FILL, "fill-color", unitFill(c.unit));
   setPaintProperty(LAYER_STRUCTURE_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_RESTRICTED_FILL, "fill-color", c.restricted);
+  setPaintProperty(LAYER_RESTRICTED_FILL, "fill-color", unitFill(c.restricted));
   setPaintProperty(LAYER_RESTRICTED_OUTLINE, "line-color", c.unitOutline);
   setPaintProperty(LAYER_FIXTURE_FILL, "fill-color", c.unitOutline);
   setPaintProperty(LAYER_FIXTURE_OUTLINE, "line-color", c.muted);
