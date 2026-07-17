@@ -10,6 +10,10 @@ import { ensureBootstrapUser } from "./auth/bootstrap";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerVenueRoutes } from "./venues/routes";
 import { BlobStore } from "./blobs/store";
+import { JobQueue } from "./jobs/queue";
+import { makePublishRunner } from "./jobs/publish";
+import { registerJobRoutes } from "./jobs/routes";
+import { registerUploadRoute } from "./venues/uploadRoute";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const db = openDb(config.dataDir);
@@ -28,9 +32,14 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
     openapi: { info: { title: "Kiriko API", version: "0.1.0" } },
   });
 
+  const queue = new JobQueue(db, { publish_imdf: makePublishRunner(db, app.blobs) });
+  app.decorate("queue", queue);
+
   ensureBootstrapUser(db, config);
   registerAuthRoutes(app);
   registerVenueRoutes(app);
+  registerUploadRoute(app);
+  registerJobRoutes(app);
 
   app.get("/healthz", async () => ({ ok: true }));
   app.get("/api/openapi.json", async () => app.swagger());
@@ -47,5 +56,6 @@ declare module "fastify" {
     db: import("better-sqlite3").Database;
     config: AppConfig;
     blobs: BlobStore;
+    queue: JobQueue;
   }
 }
