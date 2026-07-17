@@ -230,6 +230,32 @@ describe("collectMarkerFeatures", () => {
     expect(ids).toContain("plain-shop");
     expect(ids.some((id) => id.startsWith("icon-"))).toBe(false);
   });
+
+  it("omits markers for hidden types and buildings", () => {
+    const venue = venueWith([
+      feature("a-amenity", "amenity", "restroom"),
+      feature("u-room", "unit", "room"),
+      feature("a-other-building", "amenity", "information", { buildingId: "b2" }),
+    ]);
+    // Give the first amenity a building so the building filter can target it.
+    venue.featuresById.get("a-amenity")!.buildingId = "b1";
+    venue.featuresById.get("u-room")!.buildingId = "b1";
+
+    const hiddenType = collectMarkerFeatures(venue, LEVEL, null, "all", {
+      hiddenTypes: new Set(["amenity"]),
+      hiddenBuildings: new Set(),
+    });
+    expect(hiddenType.some((f) => f.featureType === "amenity")).toBe(false);
+    expect(hiddenType.map((f) => f.id)).toContain("u-room");
+
+    const hiddenBuilding = collectMarkerFeatures(venue, LEVEL, null, "all", {
+      hiddenTypes: new Set(),
+      hiddenBuildings: new Set(["b1"]),
+    });
+    expect(hiddenBuilding.map((f) => f.id)).not.toContain("a-amenity");
+    expect(hiddenBuilding.map((f) => f.id)).not.toContain("u-room");
+    expect(hiddenBuilding.map((f) => f.id)).toContain("a-other-building");
+  });
 });
 
 describe("countFloorMarkerMatches", () => {

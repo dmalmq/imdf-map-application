@@ -4,6 +4,7 @@ import { localizedLabel } from "../imdf/localize";
 import type { FeatureType, LoadedVenue, LocaleCode, ViewerFeature } from "../imdf/types";
 import { isUnitMarkerEligible, matchesSearchCategory, type SearchCategory } from "../search/searchCategories";
 import { gdbMarkerIconId } from "./gdbMarkerIcons";
+import { isTypeAndBuildingVisible, type VisibilitySelection } from "./visibility";
 
 /** Overlay container class hosting all feature markers. */
 export const MARKER_OVERLAY_CLASS = "indoor-marker-overlay";
@@ -173,6 +174,8 @@ export interface UseFeatureMarkersArgs {
   locale: LocaleCode;
   selectedFeatureId: string | null;
   searchCategory: SearchCategory;
+  /** When omitted, nothing is hidden. */
+  visibility?: VisibilitySelection;
   /** Stable callback; marker click selects the feature. */
   onSelect: (featureId: string) => void;
 }
@@ -221,6 +224,7 @@ export function collectMarkerFeatures(
   levelId: string,
   selectedFeatureId: string | null,
   category: SearchCategory,
+  visibility: VisibilitySelection = { hiddenTypes: new Set(), hiddenBuildings: new Set() },
 ): ViewerFeature[] {
   const focused = category !== "all";
   const unitBubbles: ViewerFeature[] = [];
@@ -251,6 +255,9 @@ export function collectMarkerFeatures(
       selected = feature;
     }
     if (feature.levelId !== levelId) {
+      continue;
+    }
+    if (!isTypeAndBuildingVisible(feature.featureType, feature.buildingId, visibility)) {
       continue;
     }
     if (markerUnit) {
@@ -346,6 +353,7 @@ export function useFeatureMarkers({
   locale,
   selectedFeatureId,
   searchCategory,
+  visibility = { hiddenTypes: new Set(), hiddenBuildings: new Set() },
   onSelect,
 }: UseFeatureMarkersArgs): void {
   const pendingFocusFeatureId = useRef<string | null>(null);
@@ -396,7 +404,13 @@ export function useFeatureMarkers({
         return;
       }
 
-      const features = collectMarkerFeatures(venue, levelId, selectedFeatureId, searchCategory);
+      const features = collectMarkerFeatures(
+        venue,
+        levelId,
+        selectedFeatureId,
+        searchCategory,
+        visibility,
+      );
       const manifestLanguage = venue.manifest.language;
       for (const feature of features) {
         const center = feature.center;
@@ -473,5 +487,5 @@ export function useFeatureMarkers({
       }
       overlay.remove();
     };
-  }, [map, venue, levelId, locale, selectedFeatureId, searchCategory, onSelect]);
+  }, [map, venue, levelId, locale, selectedFeatureId, searchCategory, visibility, onSelect]);
 }
