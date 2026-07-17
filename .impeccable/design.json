@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-17T00:00:00+09:00",
+  "title": "Design System: Kiriko",
+  "extensions": {
+    "colorMeta": {
+      "ai-indigo": { "role": "primary", "displayName": "Ai Indigo", "canonical": "#4F46E5", "tonalRamp": ["#1e1b4b", "#312e81", "#3730a3", "#4338ca", "#4f46e5", "#6366f1", "#a5b4fc", "#e0e7ff"] },
+      "indigo-deep": { "role": "primary", "displayName": "Indigo Deep", "canonical": "#4338CA" },
+      "indigo-mist": { "role": "primary", "displayName": "Indigo Mist", "canonical": "#EEF2FF" },
+      "sumi-ink": { "role": "neutral", "displayName": "Sumi Ink", "canonical": "#1C1917", "tonalRamp": ["#1c1917", "#292524", "#44403c", "#57534e", "#78716c", "#a8a29e", "#d6d3d1", "#f5f5f4"] },
+      "stone-gray": { "role": "neutral", "displayName": "Stone Gray", "canonical": "#78716C" },
+      "washi-white": { "role": "neutral", "displayName": "Washi White", "canonical": "#FAFAF9" },
+      "panel-white": { "role": "neutral", "displayName": "Panel White", "canonical": "#FFFFFF" },
+      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "#E7E5E4" },
+      "chip-stone": { "role": "neutral", "displayName": "Chip Stone", "canonical": "#F5F5F4" },
+      "status-in-review": { "role": "tertiary", "displayName": "In-Review Amber", "canonical": "#D97706", "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fcd34d", "#fef3c7"] },
+      "warning-bg": { "role": "tertiary", "displayName": "Warning Wash", "canonical": "#FEF3C7" },
+      "danger": { "role": "tertiary", "displayName": "Danger Red", "canonical": "#DC2626" },
+      "success": { "role": "tertiary", "displayName": "Success Green", "canonical": "#16A34A" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display 24", "purpose": "Page titles only; one per screen at most." },
+      "title": { "displayName": "Title 18", "purpose": "Panel, modal, and card headers; feature names." },
+      "body": { "displayName": "Body 14", "purpose": "Default text: rows, comments, form values." },
+      "label": { "displayName": "Label 13", "purpose": "Buttons, chips, attribute keys. The chrome workhorse." },
+      "caption": { "displayName": "Caption 12", "purpose": "Metadata, timestamps, section headers. Stone Gray." },
+      "mono": { "displayName": "Mono 12", "purpose": "Machine values: IDs, file names, numbers, coordinates." }
+    },
+    "shadows": [
+      { "name": "floating", "value": "0 4px 24px rgba(0, 0, 0, 0.08)", "purpose": "Panels and control clusters floating above the map." },
+      { "name": "raised", "value": "0 8px 32px rgba(0, 0, 0, 0.12)", "purpose": "Modals and mobile bottom sheets, always over a dim overlay." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one primary action per view.",
+      "html": "<button class=\"ds-btn-primary\">Publish dataset</button>",
+      "css": ".ds-btn-primary { background: #4f46e5; color: #ffffff; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 13px; font-weight: 500; line-height: 18px; padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; transition: background 0.15s ease-out; } .ds-btn-primary:hover { background: #4338ca; } .ds-btn-primary:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Default for every action that isn't the primary.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #1c1917; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 13px; font-weight: 500; line-height: 18px; padding: 8px 16px; border: 1px solid #e7e5e4; border-radius: 8px; cursor: pointer; transition: background 0.15s ease-out; } .ds-btn-ghost:hover { background: #f5f5f4; } .ds-btn-ghost:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Confirmation contexts only.",
+      "html": "<button class=\"ds-btn-destructive\">Delete dataset</button>",
+      "css": ".ds-btn-destructive { background: #dc2626; color: #ffffff; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 13px; font-weight: 500; line-height: 18px; padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; transition: filter 0.15s ease-out; } .ds-btn-destructive:hover { filter: brightness(0.92); } .ds-btn-destructive:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "36px field with leading icon; focus swaps hairline for a 2px indigo ring.",
+      "html": "<div class=\"ds-input\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#78716c\" stroke-width=\"2\" stroke-linecap=\"round\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><line x1=\"21\" y1=\"21\" x2=\"16.5\" y2=\"16.5\"/></svg><input type=\"text\" placeholder=\"Search features…\" /></div>",
+      "css": ".ds-input { display: flex; align-items: center; gap: 8px; height: 36px; width: 320px; background: #ffffff; border: 1px solid #e7e5e4; border-radius: 8px; padding: 0 12px; } .ds-input:focus-within { border: 2px solid #4f46e5; padding: 0 11px; } .ds-input input { flex: 1; border: none; outline: none; background: transparent; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 14px; line-height: 20px; color: #1c1917; } .ds-input input::placeholder { color: #78716c; }"
+    },
+    {
+      "name": "Filter Chip (selected)",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Selected filter: Indigo Mist fill, indigo border and text.",
+      "html": "<span class=\"ds-chip-filter ds-selected\">Gates</span><span class=\"ds-chip-filter\">Shops</span>",
+      "css": ".ds-chip-filter { display: inline-flex; align-items: center; padding: 4px 10px; margin-right: 8px; border-radius: 999px; border: 1px solid #e7e5e4; background: transparent; color: #78716c; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 13px; font-weight: 500; line-height: 18px; cursor: pointer; } .ds-chip-filter:hover { background: #f5f5f4; } .ds-chip-filter.ds-selected { background: #eef2ff; border-color: #4f46e5; color: #4f46e5; }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Comment status with leading dot: indigo open, amber in-review.",
+      "html": "<span class=\"ds-chip-status\"><span class=\"ds-dot\" style=\"background:#4f46e5\"></span>Open</span><span class=\"ds-chip-status\"><span class=\"ds-dot\" style=\"background:#d97706\"></span>In review</span>",
+      "css": ".ds-chip-status { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; margin-right: 8px; border-radius: 999px; border: 1px solid #e7e5e4; color: #1c1917; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 13px; font-weight: 500; line-height: 18px; } .ds-dot { width: 6px; height: 6px; border-radius: 999px; }"
+    },
+    {
+      "name": "Floating Panel",
+      "kind": "card",
+      "refersTo": "floating-panel",
+      "description": "The container for Search / Layers / Comments / Warnings, floating over the map.",
+      "html": "<div class=\"ds-panel\"><div class=\"ds-panel-header\"><span>Search</span><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#78716c\" stroke-width=\"2\" stroke-linecap=\"round\"><polyline points=\"6 9 12 15 18 9\"/></svg></div><p class=\"ds-panel-caption\">RESULTS</p></div>",
+      "css": ".ds-panel { width: 320px; background: #ffffff; border-radius: 12px; padding: 16px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08); } .ds-panel-header { display: flex; align-items: center; justify-content: space-between; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 18px; font-weight: 600; line-height: 26px; color: #1c1917; } .ds-panel-caption { margin: 12px 0 0; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 12px; line-height: 16px; color: #78716c; letter-spacing: 0.02em; }"
+    },
+    {
+      "name": "List Row",
+      "kind": "custom",
+      "refersTo": "floating-panel",
+      "description": "58px result row: flat, Chip Stone hover, Indigo Mist selected.",
+      "html": "<div class=\"ds-row ds-row-selected\"><div><div class=\"ds-row-title\">Station Shop</div><div class=\"ds-row-meta\">occupant · 1F</div></div></div><div class=\"ds-row\"><div><div class=\"ds-row-title\">改札口</div><div class=\"ds-row-meta\">gate · 1F</div></div></div>",
+      "css": ".ds-row { display: flex; align-items: center; height: 58px; padding: 0 12px; border-radius: 8px; cursor: pointer; } .ds-row:hover { background: #f5f5f4; } .ds-row.ds-row-selected { background: #eef2ff; } .ds-row-title { font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 14px; line-height: 20px; color: #1c1917; } .ds-row-meta { font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 12px; line-height: 16px; color: #78716c; }"
+    },
+    {
+      "name": "Floor Stack",
+      "kind": "nav",
+      "refersTo": "floating-panel",
+      "description": "Signature map control: floor buttons, active floor in Ai Indigo.",
+      "html": "<div class=\"ds-floors\"><button class=\"ds-floor\">2F</button><button class=\"ds-floor ds-active\">1F</button><button class=\"ds-floor\">B1</button></div>",
+      "css": ".ds-floors { display: inline-flex; flex-direction: column; background: #ffffff; border-radius: 12px; padding: 4px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08); } .ds-floor { width: 40px; height: 36px; border: none; background: transparent; border-radius: 8px; font-family: Inter, 'Noto Sans JP', sans-serif; font-size: 13px; font-weight: 500; color: #1c1917; cursor: pointer; } .ds-floor:hover { background: #f5f5f4; } .ds-floor.ds-active { background: #4f46e5; color: #ffffff; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Cut Glass",
+    "overview": "Kiriko (切子) is named for Edo Kiriko cut glass, and the interface behaves like it: a precise, calm craft object where clarity is the whole point. Surfaces are quiet — warm stone neutrals under crisp white panels — and every line is a deliberate facet: 1px hairline borders, exact attribute tables, small confident labels. The one saturated color, a deep ai (藍) indigo, appears the way indigo appears in the glass — sparingly, and always meaning something. The map is the product; UI chrome floats above it on structural shadows and otherwise stays out of the way.",
+    "keyCharacteristics": [
+      "Warm stone neutrals; white panels; a single indigo voice",
+      "Hairline precision: 1px borders, exact values, small type",
+      "Panels float over the map on two structural shadow levels",
+      "Japanese and English typeset as peers (Inter + Noto Sans JP)",
+      "Data values in mono; chrome recedes, data leads"
+    ],
+    "rules": [
+      { "name": "The One Indigo Rule", "body": "Ai Indigo is the only voice in the room — it marks interaction and selection and covers well under 10% of any screen. If indigo appears on something that can't be clicked or isn't selected, it's wrong.", "section": "colors" },
+      { "name": "The Hairline Rule", "body": "Borders are 1px Hairline (#E7E5E4), full-perimeter, or absent. No 2px borders (except the focused input's Ai Indigo ring), no colored side-stripes, no double borders.", "section": "colors" },
+      { "name": "The Mono Data Rule", "body": "Machine values (SHP-1042, JRShinjukuSta.gdb, 42.5, hex IDs) are always IBM Plex Mono. Prose is never mono. The split is what makes attribute tables scannable.", "section": "typography" },
+      { "name": "The Float Rule", "body": "Shadow = layer above the map, nothing else. If an element sits in the page flow, it gets a hairline border, not a shadow. Two shadows exist; there is no third.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep Ai Indigo under 10% of any screen — it marks interaction and selection only.",
+      "Do use 1px Hairline full-perimeter borders for in-flow separation; reserve shadows for elements floating above the map.",
+      "Do set machine values — IDs, file names, numbers — in IBM Plex Mono.",
+      "Do test every label and layout with Japanese and English strings; line-height ≥ 1.35 wherever CJK can appear.",
+      "Do keep text at AA contrast: Sumi Ink or Stone Gray on white, nothing lighter.",
+      "Do give every interactive element a visible focus state and a 44px touch target on mobile."
+    ],
+    "donts": [
+      "Don't drift toward desktop GIS: no toolbar forests, no dockable panel mazes, no settings-dense chrome.",
+      "Don't build the generic SaaS dashboard: no stat cards, no gradient heroes, no marketing chrome inside the product.",
+      "Don't import heavy-enterprise weight (the ACC feel): no deep nav trees, no multi-level breadcrumbs, no permission bureaucracy in the UI.",
+      "Don't add a third shadow, a colored side-stripe border, gradient text, or glassmorphism.",
+      "Don't let map-layer colors compete with Ai Indigo — selection must always be the most saturated thing on the canvas.",
+      "Don't exceed 24px type anywhere in the app UI. The interface never shouts."
+    ]
+  }
+}
