@@ -6,8 +6,10 @@
   "packageManager": "pnpm@11.12.0",
   "scripts": {
     "dev": "vite",
+    "dev:server": "pnpm --filter kiriko-server dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
+    "test:server": "pnpm --filter kiriko-server test -- --run",
     "test:e2e": "playwright test",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
