@@ -6,6 +6,8 @@ import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import type { AppConfig } from "./config";
 import { openDb } from "./db/db";
 import { migrate } from "./db/migrate";
+import { ensureBootstrapUser } from "./auth/bootstrap";
+import { registerAuthRoutes } from "./auth/routes";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const db = openDb(config.dataDir);
@@ -22,6 +24,9 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   await app.register(swagger, {
     openapi: { info: { title: "Kiriko API", version: "0.1.0" } },
   });
+
+  ensureBootstrapUser(db, config);
+  registerAuthRoutes(app);
 
   app.get("/healthz", async () => ({ ok: true }));
   app.get("/api/openapi.json", async () => app.swagger());
