@@ -2,12 +2,13 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { ViewerLevel } from "../imdf/types";
+import type { FeatureType, ViewerLevel } from "../imdf/types";
 import { SelectedFeatureContent } from "./SelectedFeatureContent";
 import { ImdfDropzone } from "./ImdfDropzone";
 import { LevelSwitcher } from "./LevelSwitcher";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { GdbImportDialog } from "./GdbImportDialog";
+import { LayerControls } from "./LayerControls";
 import { suggestGdbMapping } from "../gdb/gdbMapping";
 import { ArchiveError } from "../errors/ArchiveError";
 import type {
@@ -843,5 +844,67 @@ describe("GdbImportDialog", () => {
     expect(importBtn.disabled).toBe(true);
     expect(screen.getByRole("alert").textContent).toMatch(/assign a building/i);
     expect(onImport).not.toHaveBeenCalled();
+  });
+});
+
+function layerProps(over: Partial<ComponentProps<typeof LayerControls>> = {}) {
+  return {
+    locale: "en" as const,
+    types: [
+      { featureType: "unit" as const, count: 142 },
+      { featureType: "opening" as const, count: 12 },
+    ],
+    buildings: [] as ComponentProps<typeof LayerControls>["buildings"],
+    hiddenTypes: new Set<FeatureType>(),
+    hiddenBuildings: new Set<string>(),
+    onToggleType: vi.fn(),
+    onToggleBuilding: vi.fn(),
+    onSetTypesHidden: vi.fn(),
+    onSetBuildingsHidden: vi.fn(),
+    onOpenChange: vi.fn(),
+    ...over,
+  };
+}
+
+describe("LayerControls", () => {
+  it("opens the panel and lists present types with counts", async () => {
+    const user = userEvent.setup();
+    render(<LayerControls {...layerProps()} />);
+    await user.click(screen.getByRole("button", { name: "Layers" }));
+    expect(screen.getByRole("checkbox", { name: "Units (142)" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Openings (12)" })).toBeTruthy();
+  });
+
+  it("reflects hidden state and fires onToggleType", async () => {
+    const user = userEvent.setup();
+    const props = layerProps({ hiddenTypes: new Set(["unit"]) });
+    render(<LayerControls {...props} />);
+    await user.click(screen.getByRole("button", { name: "Layers" }));
+    const unit = screen.getByRole("checkbox", { name: "Units (142)" }) as HTMLInputElement;
+    expect(unit.checked).toBe(false);
+    await user.click(unit);
+    expect(props.onToggleType).toHaveBeenCalledWith("unit");
+  });
+
+  it("omits the buildings section when fewer than two buildings", async () => {
+    const user = userEvent.setup();
+    render(<LayerControls {...layerProps({ buildings: [] })} />);
+    await user.click(screen.getByRole("button", { name: "Layers" }));
+    expect(screen.queryByRole("group", { name: "Buildings" })).toBeNull();
+  });
+
+  it("shows buildings and hide-all fires onSetBuildingsHidden with every id", async () => {
+    const user = userEvent.setup();
+    const props = layerProps({
+      buildings: [
+        { id: "b1", label: "A", count: 3 },
+        { id: "b2", label: "B", count: 4 },
+      ],
+    });
+    render(<LayerControls {...props} />);
+    await user.click(screen.getByRole("button", { name: "Layers" }));
+    const group = screen.getByRole("group", { name: "Buildings" });
+    await user.click(within(group).getByRole("button", { name: "Hide all" }));
+    expect(props.onSetBuildingsHidden).toHaveBeenCalledWith(["b1", "b2"]);
   });
 });
