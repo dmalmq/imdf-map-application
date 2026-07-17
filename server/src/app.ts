@@ -8,6 +8,7 @@ import { openDb } from "./db/db";
 import { migrate } from "./db/migrate";
 import { ensureBootstrapUser } from "./auth/bootstrap";
 import { registerAuthRoutes } from "./auth/routes";
+import { registerVenueRoutes } from "./venues/routes";
 import { BlobStore } from "./blobs/store";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
@@ -29,6 +30,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
 
   ensureBootstrapUser(db, config);
   registerAuthRoutes(app);
+  registerVenueRoutes(app);
 
   app.get("/healthz", async () => ({ ok: true }));
   app.get("/api/openapi.json", async () => app.swagger());
