@@ -63,7 +63,7 @@ The 320 px floating panel provides these views:
 - **Unassigned:** active issues with no assignee.
 - **Closed:** closed issues and deleted-root tombstones.
 
-Rows show stable pin number, summary, status, floor, optional feature context, reply count, assignee, and due date. Overdue and due-soon styling is supplementary to text; color is never the only signal.
+Rows show stable pin number, summary, status, floor, optional feature context, reply count, assignee, and due date. Summary is the first non-empty normalized Markdown source line with whitespace collapsed; keep its first 80 Unicode scalar values and append `…` if and only if it is longer. A deleted root uses **Comment deleted**. Overdue and due-soon styling is supplementary to text; color is never the only signal.
 
 Closed issues and their map pins are hidden by default. They remain filterable. A non-deleted closed issue may be reopened by a member or admin.
 
@@ -105,7 +105,7 @@ Signed-in users may add replies to open, in-review, or closed roots. A member/ad
 
 ### 4.6 Date semantics
 
-A due date is an ISO calendar date (`YYYY-MM-DD`), not a timestamp. It is stored and transported unchanged, avoiding hidden time-zone conversion. The client localizes its display and marks it overdue after the viewer’s local calendar passes that date. The API does not persist a derived `overdue` flag.
+A due date is an ISO calendar date (`YYYY-MM-DD`), not a timestamp. It is stored and transported unchanged, avoiding hidden time-zone conversion. The client localizes its display and compares calendar components in the viewer’s local time: a date before today is overdue; today through three local calendar days ahead is due soon. The API does not persist derived `overdue` or `dueSoon` flags.
 
 ## 5. Permissions
 
@@ -250,7 +250,7 @@ DELETE /api/issues/:issueId
 DELETE /api/replies/:replyId
 ```
 
-The version-scoped GET and event stream are public only while that exact public ID resolves to a published version. There is intentionally no mutable “latest issues” alias. Every mutation and reviewer-directory request requires a valid session. The mutation service resolves each opaque issue/reply ID back to its version and rechecks publication state and role permissions.
+The version-scoped GET and event stream are public only while that exact public ID resolves to a published version. There is intentionally no mutable “latest issues” alias. Collection, reviewer, and mutation JSON responses set `Cache-Control: no-store`; SSE uses its separate no-cache stream headers. Every mutation and reviewer-directory request requires a valid session. The mutation service resolves each opaque issue/reply ID back to its version and rechecks publication state and role permissions.
 
 Create accepts `requestId` plus root body, anchor, optional assignee, and optional due date. Reply create accepts `requestId` plus body. Patch is a typed discriminated operation for exactly one of:
 
@@ -261,7 +261,7 @@ Create accepts `requestId` plus root body, anchor, optional assignee, and option
 
 Every patch/delete includes `expectedVersion`. Successful mutations return `{ revision, resourceId }`; they do not return or partially replace canonical collection state. The client treats `revision` as an observed invalidation and refetches the collection. A stale row version returns `409 stale_issue` with the current resource so the client can preserve its draft and reconcile explicitly.
 
-Unknown tenant/venue/version, an unpublished version, or an unknown/cross-version resource returns `404 not_found`.
+An unknown/unpublished public version ID or an unknown/cross-version resource returns `404 not_found`.
 
 ### 8.1 Error contract
 
@@ -281,6 +281,7 @@ interface IssueApiError {
     | 'idempotency_conflict'
     | 'issue_deleted'
     | 'sse_capacity'
+    | 'internal_error'
   message: string
   details?: Array<{ field: string; reason: string }>
   current?: {
@@ -291,7 +292,7 @@ interface IssueApiError {
 }
 ```
 
-`400` uses the validation codes and optional field details; `401 unauthorized`, `403 forbidden`, and `404 not_found` do not expose private resource existence; `409` uses the three conflict codes and includes `current`/`revision` only for `stale_issue`; `503 sse_capacity` includes `Retry-After: 15`. Fastify TypeBox response schemas and the issue client preserve this exact shape.
+`400` uses the validation codes and optional field details; `401 unauthorized`, `403 forbidden`, and `404 not_found` do not expose private resource existence; `409` uses the three conflict codes and includes `current`/`revision` only for `stale_issue`; `500 internal_error` covers unexpected database, blob, and native/storage failures without exposing internals; `503 sse_capacity` includes `Retry-After: 15`. Fastify TypeBox response schemas and the issue client preserve this exact shape.
 
 ### 8.2 SSE event contract
 
@@ -303,7 +304,7 @@ event: revision
 data: {"revision":42}
 ```
 
-Each connection immediately emits the current revision, then periodic comment heartbeats and committed revision events. The stream does not send issue bodies or mutation deltas. No event log or `Last-Event-ID` replay store is required because every event is only an invalidation signal.
+Each connection immediately emits the current revision, then a `: heartbeat` comment every 15 seconds and committed revision events. The stream does not send issue bodies or mutation deltas. No event log or `Last-Event-ID` replay store is required because every event is only an invalidation signal.
 
 The server removes listeners on socket close and removes per-version fan-out state after its last subscriber. It accepts at most 512 issue SSE connections process-wide and 128 for one venue version; both limits are configurable. A connection that would exceed either limit is rejected before listener allocation with `503 sse_capacity` and `Retry-After: 15`. Tests prove capacity is released after disconnect.
 
