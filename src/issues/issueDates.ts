@@ -89,11 +89,17 @@ export function formatDueDate(dueDate: string, locale: LocaleCode): string {
   if (components === null) {
     return dueDate;
   }
+  // Two-digit years hit the legacy Date constructor's 1900 offset, so build
+  // in leap year 2000 (every parsed month/day is valid there) and set the
+  // real year afterwards. parseDueDate already rejected Feb 29 in non-leap
+  // years, so setFullYear cannot roll the date over.
+  const date = new Date(2000, components.month - 1, components.day);
+  date.setFullYear(components.year);
   return new Intl.DateTimeFormat(locale === "ja" ? "ja-JP" : "en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
-  }).format(new Date(components.year, components.month - 1, components.day));
+  }).format(date);
 }
 
 /**

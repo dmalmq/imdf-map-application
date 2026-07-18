@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { LocaleCode } from "../imdf/types";
 import {
   checkIssueBody,
-  ISSUE_MARKDOWN_MAX_SCALARS,
+  MarkdownEditorFeedback,
   normalizeIssueMarkdown,
 } from "./MarkdownBody";
 import type {
@@ -24,20 +24,11 @@ const ui = {
   heading: { ja: "新しい課題", en: "New issue" },
   bodyLabel: { ja: "課題の本文", en: "Issue body" },
   bodyPlaceholder: { ja: "課題の内容を入力…", en: "Describe the issue…" },
-  markdownHint: {
-    ja: "Markdown：**太字**、*斜体*、リスト、リンクが使えます",
-    en: "Markdown: **bold**, *italic*, lists, links",
-  },
-  tooLong: { ja: "4,000文字以内で入力してください", en: "Keep it under 4,000 characters." },
-  controlCharacters: {
-    ja: "使用できない制御文字が含まれています",
-    en: "Remove unsupported control characters.",
-  },
-  brokenCharacters: { ja: "不正な文字が含まれています", en: "The text contains broken characters." },
   assignee: { ja: "担当者", en: "Assignee" },
   dueDate: { ja: "期限", en: "Due date" },
   optional: { ja: "（任意）", en: "(optional)" },
   unassigned: { ja: "未割り当て", en: "Unassigned" },
+  floor: { ja: "フロア", en: "Floor" },
   pin: { ja: "ピン", en: "Pin" },
   feature: { ja: "地物", en: "Feature" },
   removeFeature: { ja: "地物を解除", en: "Remove feature" },
@@ -81,6 +72,35 @@ export function IssueComposer({
     textareaRef.current?.focus();
   }, []);
 
+  // A draft can outlive a sign-in flow; when the account becomes known
+  // again, return focus to the retained text.
+  const wasSignedOutRef = useRef(currentUser === null);
+  useEffect(() => {
+    if (wasSignedOutRef.current && currentUser !== null) {
+      textareaRef.current?.focus();
+    }
+    wasSignedOutRef.current = currentUser === null;
+  }, [currentUser]);
+
+  // A known viewer cannot set a due date or assign another account. Strip
+  // now-forbidden metadata through the controller so the submitted payload
+  // matches the visible form, preserving body, anchor, request ID, and any
+  // allowed self-assignment. An unknown (signed-out) account changes nothing.
+  useEffect(() => {
+    if (currentUser === null || currentUser.role !== "viewer") {
+      return;
+    }
+    const patch: IssueDraftPatch = {
+      ...(draft.dueDate !== null ? { dueDate: null } : {}),
+      ...(draft.assigneeId !== null && draft.assigneeId !== currentUser.id
+        ? { assigneeId: null }
+        : {}),
+    };
+    if (Object.keys(patch).length > 0) {
+      onUpdateDraft(patch);
+    }
+  }, [currentUser, draft.assigneeId, draft.dueDate, onUpdateDraft]);
+
   const normalized = normalizeIssueMarkdown(draft.bodyMarkdown);
   const check = checkIssueBody(normalized);
   const signedIn = currentUser !== null;
@@ -121,27 +141,7 @@ export function IssueComposer({
           onUpdateDraft({ bodyMarkdown: event.target.value });
         }}
       />
-      <div className="issue-composer__hint-row">
-        <p className="issue-composer__hint">{ui.markdownHint[locale]}</p>
-        <p className="issue-composer__count" aria-live="polite">
-          {`${check.scalars}/${ISSUE_MARKDOWN_MAX_SCALARS}`}
-        </p>
-      </div>
-      {check.problem === "too_long" ? (
-        <p className="issue-composer__error" role="alert">
-          {ui.tooLong[locale]}
-        </p>
-      ) : null}
-      {check.problem === "control_characters" ? (
-        <p className="issue-composer__error" role="alert">
-          {ui.controlCharacters[locale]}
-        </p>
-      ) : null}
-      {check.problem === "unpaired_surrogates" ? (
-        <p className="issue-composer__error" role="alert">
-          {ui.brokenCharacters[locale]}
-        </p>
-      ) : null}
+      <MarkdownEditorFeedback locale={locale} check={check} />
 
       {signedIn ? (
         <label className="issue-composer__field">
@@ -183,6 +183,10 @@ export function IssueComposer({
         </label>
       ) : null}
 
+      <p className="issue-composer__anchor">
+        {ui.floor[locale]}{" "}
+        <span className="issue-composer__mono">{draft.anchor.levelId}</span>
+      </p>
       <p className="issue-composer__anchor">
         {ui.pin[locale]}{" "}
         <span className="issue-composer__mono">

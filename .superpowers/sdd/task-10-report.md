@@ -36,5 +36,17 @@
 
 ## Concerns
 
-- Queue rows omit a floor label: the approved `IssuesPanelProps` carry no venue level data and `anchor.levelId` is a raw IMDF UUID (noise, not signal). If Task 12 wants localized floor names in rows, the panel needs a levels input added to the contract.
 - While a body editor is open in detail, the editor Save and the thread Reply button are both `btn-primary`; Task 12's styling pass may demote one if design review objects.
+
+## Gate fixes (second pass)
+
+RED-first for each; whole `src/issues` now 189/189, typecheck clean.
+
+1. Body editors (root + reply) no longer close on save: `IssueDetail` records the submitted `{bodyMarkdown, expectedVersion}` and closes only when the canonical projection carries that exact body at a newer row version (admission) or on explicit cancel — text/open state survive network failures and 409s; a remote refetch with someone else's newer body keeps the editor open.
+2. `ReplyComposer` dropped the `appliedRevision` heuristic. It keeps its local UUID + text through failures and, using only the UI-serialized `pendingMutations` + mutation outcome (submitted → inflight → settled), clears and rotates the ID solely on its own success. No new Task 9 public surface.
+3. Root/draft `requestId` is never rotated. An `idempotency_conflict` now renders its own copy (the key admitted different content; input kept; cancel and start again) — distinct from `stale_issue`, no deterministic auto-retry.
+4. On a known role change to viewer, `IssueComposer` routes removal of now-forbidden `dueDate`/other-assignee through `updateDraft` (body, anchor, requestId, self-assignment preserved); signed-out/unknown state changes nothing.
+5. Floor (`levelId`) and optional feature IDs now render as mono machine values with ja/en labels in queue rows, detail meta, and composer.
+6. `formatDueDate` builds in leap-year 2000 then `setFullYear`, so years 0000–0099 avoid the legacy Date 1900 offset; low-year cases tested.
+7. Every Markdown editor (composer, root edit, reply edit, reply box) shares `MarkdownEditorFeedback`: localized hint, `N/4000` count, `role="alert"` validation reason, and an empty-state note explaining a disabled Save/Post.
+8. An expired session auto-calls `onRequestSignIn` once per `authRequired` episode (explicit button retained; no repeat modal); signing back in returns focus to the retained composer textarea.

@@ -37,6 +37,8 @@ const ui = {
   duePrefix: { ja: "期限 ", en: "Due " },
   overdue: { ja: "期限切れ", en: "Overdue" },
   dueSoon: { ja: "期限が近い", en: "Due soon" },
+  floor: { ja: "フロア", en: "Floor" },
+  feature: { ja: "地物", en: "Feature" },
 } as const;
 
 /** Localized status text; shared by the queue, detail view, and map pins. */
@@ -207,6 +209,17 @@ export function IssueQueue({
                     {issueSummary(issue.bodyMarkdown, locale)}
                   </span>
                   <span className="list-row__meta">{meta.join(" · ")}</span>
+                  <span className="list-row__meta issue-queue__anchor">
+                    {ui.floor[locale]}{" "}
+                    <span className="issue-queue__mono">{issue.anchor.levelId}</span>
+                    {issue.anchor.featureId !== undefined ? (
+                      <>
+                        {" · "}
+                        {ui.feature[locale]}{" "}
+                        <span className="issue-queue__mono">{issue.anchor.featureId}</span>
+                      </>
+                    ) : null}
+                  </span>
                 </button>
               </li>
             );

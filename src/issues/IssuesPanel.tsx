@@ -37,6 +37,10 @@ const ui = {
     ja: "この課題は他の場所で更新されました。入力内容は保持されています。確認してからもう一度お試しください。",
     en: "This issue changed while you were working. Your input is safe — review it and try again.",
   },
+  idempotencyConflict: {
+    ja: "このリクエストは別の内容で送信済みです。入力内容は保持されています。キャンセルして新しく作成し直してください。",
+    en: "This request was already submitted with different content. Your input is kept — cancel and start again to post it.",
+  },
   mutationFailed: {
     ja: "変更を保存できませんでした。入力内容は保持されています。もう一度お試しください。",
     en: "The change couldn't be saved. Your input is safe — try again.",
@@ -93,6 +97,20 @@ export function IssuesPanel({
     hadDraftRef.current = state.draft !== null;
   }, [state.draft]);
 
+  // An expired session opens sign-in automatically, once per authRequired
+  // episode; the inline button stays as the explicit path.
+  const authPromptedRef = useRef(false);
+  useEffect(() => {
+    if (!state.authRequired) {
+      authPromptedRef.current = false;
+      return;
+    }
+    if (!authPromptedRef.current) {
+      authPromptedRef.current = true;
+      onRequestSignIn();
+    }
+  }, [state.authRequired, onRequestSignIn]);
+
   if (identityError) {
     return (
       <div className="issues-panel">
@@ -136,7 +154,7 @@ export function IssuesPanel({
         currentUser={currentUser}
         reviewers={reviewers}
         pending={pending}
-        appliedRevision={state.appliedRevision}
+        mutationFailed={mutationFailed || state.conflict !== null || state.authRequired}
         onBack={() => {
           controller.ui.selectIssue(null);
         }}
@@ -267,7 +285,9 @@ export function IssuesPanel({
 
       {state.conflict !== null ? (
         <p className="issues-panel__line" role="alert">
-          {ui.conflict[locale]}
+          {state.conflict.error === "idempotency_conflict"
+            ? ui.idempotencyConflict[locale]
+            : ui.conflict[locale]}
         </p>
       ) : null}
 

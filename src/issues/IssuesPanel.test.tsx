@@ -46,6 +46,7 @@ interface IssueOptions {
   id: string;
   pinNumber: number;
   levelId?: string;
+  featureId?: string;
   status?: IssueStatus;
   authorId?: number;
   authorName?: string;
@@ -68,6 +69,7 @@ function makeIssue(options: IssueOptions): ReviewIssue {
       levelId: options.levelId ?? "level-1f",
       longitude: 139.7,
       latitude: 35.68,
+      ...(options.featureId !== undefined ? { featureId: options.featureId } : {}),
     },
     status: options.status ?? ("open" as IssueStatus),
     author: { id: options.authorId ?? 2, username: options.authorName ?? "member1" },
@@ -135,6 +137,7 @@ interface PanelHarness {
     onCancelPlacement: Mock;
   };
   update(patch: Partial<IssueState>): void;
+  setUser(actor: IssueActor | null): void;
 }
 
 function renderPanel(
@@ -148,6 +151,7 @@ function renderPanel(
   } = {},
 ): PanelHarness {
   let state: IssueState = { ...initialIssueState(PUBLIC_ID), ...options.state };
+  let currentUser: IssueActor | null = options.currentUser ?? null;
   const commands = {
     createIssue: vi.fn(),
     createReply: vi.fn(),
@@ -180,7 +184,7 @@ function renderPanel(
     const props: IssuesPanelProps = {
       locale: options.locale ?? "en",
       controller: controller(),
-      currentUser: options.currentUser ?? null,
+      currentUser,
       reviewers: options.reviewers ?? REVIEWERS,
       identityError: options.identityError ?? false,
       authError: options.authError ?? false,
@@ -201,6 +205,10 @@ function renderPanel(
     callbacks,
     update(patch: Partial<IssueState>) {
       state = { ...state, ...patch };
+      view.rerender(element());
+    },
+    setUser(actor: IssueActor | null) {
+      currentUser = actor;
       view.rerender(element());
     },
   };
@@ -581,7 +589,7 @@ describe("tombstones and reply controls", () => {
     expect(screen.getByRole("button", { name: "Delete reply" })).toBeTruthy();
   });
 
-  it("edits and deletes a reply with its row version", async () => {
+  it("edits a reply, keeps the editor open, and closes it on canonical admission", async () => {
     const user = userEvent.setup();
     const issue = makeIssue({
       id: "i1",
@@ -599,9 +607,23 @@ describe("tombstones and reply controls", () => {
       bodyMarkdown: "Updated",
       expectedVersion: 4,
     });
+    // The editor survives until the canonical projection shows the new body.
+    expect(screen.getByRole("textbox", { name: "Edit reply body" })).toBeTruthy();
+
+    harness.update({
+      collection: collection(2, [
+        makeIssue({
+          id: "i1",
+          pinNumber: 1,
+          replies: [makeReply({ id: "r1", authorId: 1, body: "Updated", rowVersion: 5 })],
+        }),
+      ]),
+      appliedRevision: 2,
+    });
+    expect(screen.queryByRole("textbox", { name: "Edit reply body" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Delete reply" }));
-    expect(harness.commands.deleteReply).toHaveBeenCalledWith("r1", 4);
+    expect(harness.commands.deleteReply).toHaveBeenCalledWith("r1", 5);
   });
 
   it("edits the root body through the controller with normalized Markdown", async () => {
@@ -1044,5 +1066,360 @@ describe("localized copy", () => {
     expect(screen.getByRole("button", { name: "クローズ" })).toBeTruthy();
     expect(screen.getByText("1 件の進行中")).toBeTruthy();
     expect(screen.getByText("改札が塞がれている")).toBeTruthy();
+  });
+});
+
+describe("body editor persistence", () => {
+  it("keeps the root editor and its text through a failed mutation", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 8, body: "Before" });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "After" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    harness.update({ pendingMutations: 1 });
+    harness.update({
+      pendingMutations: 0,
+      error: { kind: "network", message: "offline" },
+      errorScope: "mutation",
+    });
+    const editor = screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement;
+    expect(editor.value).toBe("After");
+
+    // A stale-issue conflict also preserves the editor.
+    harness.update({
+      error: null,
+      errorScope: null,
+      conflict: { kind: "api", status: 409, error: "stale_issue", message: "stale" },
+    });
+    expect(
+      (screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement).value,
+    ).toBe("After");
+  });
+
+  it("closes the root editor only when the canonical body and version admit the edit", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 8, body: "Before" });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "After" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // A remote refetch with someone else's newer body must NOT close it.
+    harness.update({
+      collection: collection(2, [
+        makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 9, body: "Theirs" }),
+      ]),
+      appliedRevision: 2,
+    });
+    expect(screen.getByRole("textbox", { name: "Edit issue body" })).toBeTruthy();
+
+    harness.update({
+      collection: collection(3, [
+        makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 10, body: "After" }),
+      ]),
+      appliedRevision: 3,
+    });
+    expect(screen.queryByRole("textbox", { name: "Edit issue body" })).toBeNull();
+    expect(screen.getByText("After")).toBeTruthy();
+  });
+});
+
+describe("reply composer retention", () => {
+  const liveIssue = () => makeIssue({ id: "i1", pinNumber: 1, authorId: 2 });
+
+  it("keeps text and reuses the request ID after a failed submission", async () => {
+    const user = userEvent.setup();
+    const harness = renderDetail(liveIssue(), VIEWER);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply" }), {
+      target: { value: "First try" },
+    });
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    harness.update({ pendingMutations: 1 });
+    harness.update({
+      pendingMutations: 0,
+      error: { kind: "network", message: "offline" },
+      errorScope: "mutation",
+    });
+
+    const box = screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement;
+    expect(box.value).toBe("First try");
+
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    expect(harness.commands.createReply).toHaveBeenCalledTimes(2);
+    const first = harness.commands.createReply.mock.calls[0] as [string, { requestId: string }];
+    const second = harness.commands.createReply.mock.calls[1] as [string, { requestId: string }];
+    expect(second[1].requestId).toBe(first[1].requestId);
+  });
+
+  it("never clears on an arbitrary applied revision", async () => {
+    const user = userEvent.setup();
+    const harness = renderDetail(liveIssue(), VIEWER);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply" }), {
+      target: { value: "Waiting" },
+    });
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    harness.update({ appliedRevision: 42, highestObservedRevision: 42 });
+    expect((screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement).value).toBe(
+      "Waiting",
+    );
+  });
+
+  it("clears and rotates the request ID only after this submission succeeds", async () => {
+    const user = userEvent.setup();
+    const harness = renderDetail(liveIssue(), VIEWER);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply" }), {
+      target: { value: "Lands" },
+    });
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    harness.update({ pendingMutations: 1 });
+    harness.update({ pendingMutations: 0 });
+
+    const box = screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement;
+    expect(box.value).toBe("");
+
+    fireEvent.change(box, { target: { value: "Next one" } });
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    expect(harness.commands.createReply).toHaveBeenCalledTimes(2);
+    const first = harness.commands.createReply.mock.calls[0] as [string, { requestId: string }];
+    const second = harness.commands.createReply.mock.calls[1] as [string, { requestId: string }];
+    expect(second[1].requestId).not.toBe(first[1].requestId);
+    expect(UUID_V4.test(second[1].requestId)).toBe(true);
+  });
+});
+
+describe("idempotency conflict", () => {
+  it("explains that the request key admitted different content and offers restart, not retry", () => {
+    renderPanel({
+      currentUser: MEMBER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Draft body" }),
+        conflict: {
+          kind: "api",
+          status: 409,
+          error: "idempotency_conflict",
+          message: "conflict",
+        },
+      },
+    });
+    expect(
+      screen.getByText(
+        "This request was already submitted with different content. Your input is kept — cancel and start again to post it.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "This issue changed while you were working. Your input is safe — review it and try again.",
+      ),
+    ).toBeNull();
+    // The restart affordance is the composer's own Cancel.
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(
+      (screen.getByRole("textbox", { name: "Issue body" }) as HTMLTextAreaElement).value,
+    ).toBe("Draft body");
+  });
+});
+
+describe("viewer draft sanitation", () => {
+  it("routes removal of now-forbidden metadata through updateDraft for a known viewer", () => {
+    const harness = renderPanel({
+      currentUser: VIEWER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Keep me", dueDate: "2026-08-01", assigneeId: 3 }),
+      },
+    });
+    expect(harness.ui.updateDraft).toHaveBeenCalledTimes(1);
+    expect(harness.ui.updateDraft).toHaveBeenCalledWith({ dueDate: null, assigneeId: null });
+  });
+
+  it("keeps a viewer's self-assignment", () => {
+    const harness = renderPanel({
+      currentUser: VIEWER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Keep me", assigneeId: VIEWER.id }),
+      },
+    });
+    expect(harness.ui.updateDraft).not.toHaveBeenCalled();
+  });
+
+  it("preserves everything while the account is unknown", () => {
+    const harness = renderPanel({
+      currentUser: null,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Keep me", dueDate: "2026-08-01", assigneeId: 3 }),
+      },
+    });
+    expect(harness.ui.updateDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("anchor context", () => {
+  it("shows the floor and optional feature as machine values on queue rows", () => {
+    renderPanel({
+      currentUser: VIEWER,
+      state: {
+        collection: collection(1, [
+          makeIssue({ id: "i1", pinNumber: 1, levelId: "level-2f", featureId: "feat-9" }),
+          makeIssue({ id: "i2", pinNumber: 2, levelId: "level-b1" }),
+        ]),
+        appliedRevision: 1,
+      },
+    });
+    const rows = screen.getAllByRole("option");
+    expect(rows[0]?.textContent).toContain("Floor");
+    expect(rows[0]?.textContent).toContain("level-2f");
+    expect(rows[0]?.textContent).toContain("Feature");
+    expect(rows[0]?.textContent).toContain("feat-9");
+    expect(rows[1]?.textContent).toContain("level-b1");
+    expect(rows[1]?.textContent).not.toContain("Feature");
+  });
+
+  it("shows the floor row in the detail view", () => {
+    renderDetail(makeIssue({ id: "i1", pinNumber: 1, levelId: "level-2f" }), VIEWER);
+    expect(screen.getByText("Floor")).toBeTruthy();
+    expect(screen.getByText("level-2f")).toBeTruthy();
+  });
+
+  it("shows the captured floor in the composer", () => {
+    renderPanel({
+      currentUser: MEMBER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Body" }),
+      },
+    });
+    expect(screen.getByText("Floor")).toBeTruthy();
+    expect(screen.getByText("level-1f")).toBeTruthy();
+  });
+
+  it("localizes the floor label", () => {
+    renderPanel({
+      locale: "ja",
+      currentUser: VIEWER,
+      state: {
+        collection: collection(1, [makeIssue({ id: "i1", pinNumber: 1, levelId: "level-2f" })]),
+        appliedRevision: 1,
+      },
+    });
+    expect(screen.getByRole("option").textContent).toContain("フロア");
+  });
+});
+
+describe("editor feedback", () => {
+  it("gives the root editor a count, hint, and empty explanation", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, body: "Before" });
+    renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    const editorBox = screen
+      .getByRole("textbox", { name: "Edit issue body" })
+      .closest(".issue-editor") as HTMLElement;
+    expect(within(editorBox).getByText("6/4000")).toBeTruthy();
+    expect(
+      within(editorBox).getByText("Markdown: **bold**, *italic*, lists, links"),
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "" },
+    });
+    expect(within(editorBox).getByText("Enter some text.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("alerts on invalid reply input with the reason", () => {
+    renderDetail(makeIssue({ id: "i1", pinNumber: 1, authorId: 2 }), VIEWER);
+    const replyBox = screen
+      .getByRole("textbox", { name: "Reply" })
+      .closest(".issue-reply-composer") as HTMLElement;
+    expect(within(replyBox).getByText("0/4000")).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply" }), {
+      target: { value: "bad\u0000char" },
+    });
+    expect(within(replyBox).getByRole("alert").textContent).toBe(
+      "Remove unsupported control characters.",
+    );
+    expect((screen.getByRole("button", { name: "Reply" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("explains why an empty composer cannot post", () => {
+    renderPanel({
+      currentUser: MEMBER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft(),
+      },
+    });
+    expect(screen.getByText("Enter some text.")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Post issue" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+});
+
+describe("automatic sign-in flow", () => {
+  it("opens sign-in once per authRequired episode while keeping the explicit button", () => {
+    const harness = renderPanel({
+      currentUser: MEMBER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Draft" }),
+      },
+    });
+    expect(harness.callbacks.onRequestSignIn).not.toHaveBeenCalled();
+
+    harness.update({ authRequired: true });
+    expect(harness.callbacks.onRequestSignIn).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
+
+    harness.update({ authRequired: true, pendingMutations: 0 });
+    expect(harness.callbacks.onRequestSignIn).toHaveBeenCalledTimes(1);
+
+    harness.update({ authRequired: false });
+    harness.update({ authRequired: true });
+    expect(harness.callbacks.onRequestSignIn).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores focus to the retained draft after sign-in", () => {
+    const harness = renderPanel({
+      currentUser: null,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Preserved" }),
+      },
+    });
+    screen.getByRole("button", { name: "Sign in to post" }).focus();
+
+    harness.setUser(MEMBER);
+    const textarea = screen.getByRole("textbox", { name: "Issue body" }) as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.value).toBe("Preserved");
   });
 });

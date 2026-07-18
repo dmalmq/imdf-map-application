@@ -4,8 +4,8 @@ import { formatIssueInstant } from "./issueDates";
 import { dueDateText, issueStatusLabel, issueSummary } from "./IssueQueue";
 import {
   checkIssueBody,
-  ISSUE_MARKDOWN_MAX_SCALARS,
   MarkdownBody,
+  MarkdownEditorFeedback,
   normalizeIssueMarkdown,
 } from "./MarkdownBody";
 import type {
@@ -35,6 +35,7 @@ const ui = {
   dueDate: { ja: "期限", en: "Due date" },
   unassigned: { ja: "未割り当て", en: "Unassigned" },
   noDueDate: { ja: "なし", en: "None" },
+  floor: { ja: "フロア", en: "Floor" },
   pin: { ja: "ピン", en: "Pin" },
   feature: { ja: "地物", en: "Feature" },
   editIssue: { ja: "課題を編集", en: "Edit issue" },
@@ -62,8 +63,12 @@ export interface IssueDetailProps {
   reviewers: ReviewerSummary[];
   /** True while any mutation is in flight; submit controls disable. */
   pending: boolean;
-  /** Canonical revision; advancing past a reply submission clears its box. */
-  appliedRevision: number;
+  /**
+   * True when the most recent mutation outcome failed (mutation-scope error,
+   * conflict, or expired session). Mutations are UI-serialized, so together
+   * with `pending` this identifies the submitted command's own outcome.
+   */
+  mutationFailed: boolean;
   onBack: () => void;
   onRequestSignIn: () => void;
   onPatchIssue: (patch: IssuePatch) => void;
@@ -75,6 +80,11 @@ export interface IssueDetailProps {
 
 type Editing = { kind: "root" } | { kind: "reply"; replyId: string } | null;
 
+interface SubmittedEdit {
+  bodyMarkdown: string;
+  expectedVersion: number;
+}
+
 interface BodyEditorProps {
   locale: LocaleCode;
   label: string;
@@ -84,6 +94,11 @@ interface BodyEditorProps {
   onCancel: () => void;
 }
 
+/**
+ * Inline body editor. Saving never closes the editor by itself — the owner
+ * closes it when the canonical projection admits the edit, so text survives
+ * network failures and stale-issue conflicts.
+ */
 function BodyEditor({ locale, label, initial, pending, onSave, onCancel }: BodyEditorProps) {
   const [text, setText] = useState(initial);
   const normalized = normalizeIssueMarkdown(text);
@@ -99,6 +114,7 @@ function BodyEditor({ locale, label, initial, pending, onSave, onCancel }: BodyE
           setText(event.target.value);
         }}
       />
+      <MarkdownEditorFeedback locale={locale} check={check} />
       <div className="issue-editor__actions">
         <button type="button" className="btn-ghost" onClick={onCancel}>
           {ui.cancel[locale]}
@@ -121,31 +137,36 @@ function BodyEditor({ locale, label, initial, pending, onSave, onCancel }: BodyE
 interface ReplyComposerProps {
   locale: LocaleCode;
   pending: boolean;
-  appliedRevision: number;
+  mutationFailed: boolean;
   onSubmit: (input: CreateReplyInput) => void;
 }
 
 /**
  * Reply box. The request ID is allocated once per composed reply and reused
- * across failed retries so the server-side idempotency key stays stable; the
- * box clears only after the canonical revision advances past the submission
- * (the mutation landed and was refetched).
+ * across failed retries so the server-side idempotency key stays stable.
+ * Mutations are UI-serialized, so this submission's own outcome is observed
+ * through the pending flag: when the in-flight mutation settles without a
+ * failure, the box clears and the ID rotates; any failure keeps both. Remote
+ * revisions and refetches never touch the composed text.
  */
-function ReplyComposer({ locale, pending, appliedRevision, onSubmit }: ReplyComposerProps) {
+function ReplyComposer({ locale, pending, mutationFailed, onSubmit }: ReplyComposerProps) {
   const [text, setText] = useState("");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
-  const submittedAtRevisionRef = useRef<number | null>(null);
+  const phaseRef = useRef<"idle" | "submitted" | "inflight">("idle");
 
   useEffect(() => {
-    if (
-      submittedAtRevisionRef.current !== null
-      && appliedRevision > submittedAtRevisionRef.current
-    ) {
-      submittedAtRevisionRef.current = null;
-      setText("");
-      setRequestId(crypto.randomUUID());
+    if (phaseRef.current === "submitted" && pending) {
+      phaseRef.current = "inflight";
+      return;
     }
-  }, [appliedRevision]);
+    if (phaseRef.current === "inflight" && !pending) {
+      phaseRef.current = "idle";
+      if (!mutationFailed) {
+        setText("");
+        setRequestId(crypto.randomUUID());
+      }
+    }
+  }, [pending, mutationFailed]);
 
   const normalized = normalizeIssueMarkdown(text);
   const check = checkIssueBody(normalized);
@@ -161,16 +182,14 @@ function ReplyComposer({ locale, pending, appliedRevision, onSubmit }: ReplyComp
           setText(event.target.value);
         }}
       />
+      <MarkdownEditorFeedback locale={locale} check={check} />
       <div className="issue-reply-composer__actions">
-        <span className="issue-reply-composer__count">
-          {`${check.scalars}/${ISSUE_MARKDOWN_MAX_SCALARS}`}
-        </span>
         <button
           type="button"
           className="btn-primary"
           disabled={pending || check.problem !== null}
           onClick={() => {
-            submittedAtRevisionRef.current = appliedRevision;
+            phaseRef.current = "submitted";
             onSubmit({ requestId, bodyMarkdown: normalized });
           }}
         >
@@ -189,7 +208,7 @@ interface ReplyRowProps {
   editing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
-  onPatchReply: (replyId: string, patch: ReplyBodyPatch) => void;
+  onSaveEdit: (normalized: string) => void;
   onDeleteReply: (replyId: string, expectedVersion: number) => void;
 }
 
@@ -201,7 +220,7 @@ function ReplyRow({
   editing,
   onStartEdit,
   onCancelEdit,
-  onPatchReply,
+  onSaveEdit,
   onDeleteReply,
 }: ReplyRowProps) {
   const isAuthor = currentUser !== null && currentUser.id === reply.author.id;
@@ -223,14 +242,7 @@ function ReplyRow({
           label={ui.editReplyBody[locale]}
           initial={reply.bodyMarkdown ?? ""}
           pending={pending}
-          onSave={(normalized) => {
-            onPatchReply(reply.id, {
-              type: "body",
-              bodyMarkdown: normalized,
-              expectedVersion: reply.rowVersion,
-            });
-            onCancelEdit();
-          }}
+          onSave={onSaveEdit}
           onCancel={onCancelEdit}
         />
       ) : live ? (
@@ -275,7 +287,7 @@ export function IssueDetail({
   currentUser,
   reviewers,
   pending,
-  appliedRevision,
+  mutationFailed,
   onBack,
   onRequestSignIn,
   onPatchIssue,
@@ -285,6 +297,37 @@ export function IssueDetail({
   onDeleteReply,
 }: IssueDetailProps) {
   const [editing, setEditing] = useState<Editing>(null);
+  // The body edit submitted from the currently open editor. The editor closes
+  // only when the canonical projection carries this exact body at a newer row
+  // version (admission) or on explicit cancel — never on failure.
+  const submittedEditRef = useRef<SubmittedEdit | null>(null);
+
+  useEffect(() => {
+    const submitted = submittedEditRef.current;
+    if (submitted === null || editing === null) {
+      return;
+    }
+    let canonicalBody: string | null = null;
+    let canonicalVersion = 0;
+    if (editing.kind === "root") {
+      canonicalBody = issue.bodyMarkdown;
+      canonicalVersion = issue.rowVersion;
+    } else {
+      const reply = issue.replies.find(({ id }) => id === editing.replyId);
+      if (reply === undefined) {
+        return;
+      }
+      canonicalBody = reply.bodyMarkdown;
+      canonicalVersion = reply.rowVersion;
+    }
+    if (
+      canonicalVersion > submitted.expectedVersion
+      && canonicalBody === submitted.bodyMarkdown
+    ) {
+      submittedEditRef.current = null;
+      setEditing(null);
+    }
+  }, [issue, editing]);
 
   const live = issue.deletedAt === null;
   const isAuthor = currentUser !== null && currentUser.id === issue.author.id;
@@ -292,6 +335,11 @@ export function IssueDetail({
     currentUser !== null && (currentUser.role === "member" || currentUser.role === "admin");
   const canEditRoot = live && isAuthor;
   const canDeleteRoot = live && (isAuthor || currentUser?.role === "admin");
+
+  const closeEditor = () => {
+    submittedEditRef.current = null;
+    setEditing(null);
+  };
 
   const assigneeOptions: ReviewerSummary[] = [];
   {
@@ -325,16 +373,17 @@ export function IssueDetail({
           initial={issue.bodyMarkdown ?? ""}
           pending={pending}
           onSave={(normalized) => {
+            submittedEditRef.current = {
+              bodyMarkdown: normalized,
+              expectedVersion: issue.rowVersion,
+            };
             onPatchIssue({
               type: "body",
               bodyMarkdown: normalized,
               expectedVersion: issue.rowVersion,
             });
-            setEditing(null);
           }}
-          onCancel={() => {
-            setEditing(null);
-          }}
+          onCancel={closeEditor}
         />
       ) : live ? (
         <div className="issue-detail__body">
@@ -518,6 +567,10 @@ export function IssueDetail({
           </dd>
         </div>
         <div className="issue-detail__row">
+          <dt>{ui.floor[locale]}</dt>
+          <dd className="issue-detail__mono">{issue.anchor.levelId}</dd>
+        </div>
+        <div className="issue-detail__row">
           <dt>{ui.pin[locale]}</dt>
           <dd className="issue-detail__mono">
             {issue.anchor.longitude}, {issue.anchor.latitude}
@@ -548,10 +601,18 @@ export function IssueDetail({
                 onStartEdit={() => {
                   setEditing({ kind: "reply", replyId: reply.id });
                 }}
-                onCancelEdit={() => {
-                  setEditing(null);
+                onCancelEdit={closeEditor}
+                onSaveEdit={(normalized) => {
+                  submittedEditRef.current = {
+                    bodyMarkdown: normalized,
+                    expectedVersion: reply.rowVersion,
+                  };
+                  onPatchReply(reply.id, {
+                    type: "body",
+                    bodyMarkdown: normalized,
+                    expectedVersion: reply.rowVersion,
+                  });
                 }}
-                onPatchReply={onPatchReply}
                 onDeleteReply={onDeleteReply}
               />
             ))}
@@ -562,7 +623,7 @@ export function IssueDetail({
             <ReplyComposer
               locale={locale}
               pending={pending}
-              appliedRevision={appliedRevision}
+              mutationFailed={mutationFailed}
               onSubmit={onCreateReply}
             />
           ) : (

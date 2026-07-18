@@ -113,6 +113,14 @@ describe("formatDueDate", () => {
   it("returns an invalid value unchanged", () => {
     expect(formatDueDate("not-a-date", "en")).toBe("not-a-date");
   });
+
+  it("formats accepted years 0000–0099 without the legacy Date 1900 offset", () => {
+    expect(formatDueDate("0050-07-19", "en")).toBe("Jul 19, 50");
+    expect(formatDueDate("0050-07-19", "ja")).toBe("50年7月19日");
+    expect(formatDueDate("0001-01-01", "en")).toBe("Jan 1, 1");
+    expect(formatDueDate("0001-01-01", "ja")).toBe("1年1月1日");
+    expect(formatDueDate("0004-02-29", "en")).toBe("Feb 29, 4");
+  });
 });
 
 describe("formatIssueInstant", () => {
