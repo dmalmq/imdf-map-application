@@ -1,13 +1,13 @@
 //! Stable importer error codes and error type.
 //!
-//! [`ImportErrorCode::as_str`] returns the exact string values the existing
-//! TypeScript local-ZIP viewer uses (see `src/errors/ArchiveError.ts`), so
-//! browser and server publish failures can be compared directly.
+//! [`ImportErrorCode::as_str`] returns the exact string values the TypeScript
+//! local-ZIP viewer uses (see `src/errors/VenueLoadError.ts`), so browser and
+//! server publish failures can be compared directly.
 
 use std::fmt;
 
 /// Stable error code for [`ImportError`]. String values mirror
-/// `ArchiveErrorCode` in `src/errors/ArchiveError.ts`.
+/// `VenueLoadErrorCode` in `src/errors/VenueLoadError.ts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportErrorCode {
     UnsupportedFile,
@@ -68,9 +68,9 @@ impl ImportError {
         self
     }
 
-    /// Corrective user-facing copy. Matches `archiveErrorCopy` in
-    /// `src/errors/ArchiveError.ts` so local and published load failures render
-    /// identically in the browser.
+    /// Corrective user-facing copy. Matches `venueLoadErrorCopy` in
+    /// `src/errors/VenueLoadError.ts` for importer codes so local viewer and
+    /// publish failures can present the same safe guidance.
     #[must_use]
     pub fn corrective_copy(&self) -> &'static str {
         match self.code {

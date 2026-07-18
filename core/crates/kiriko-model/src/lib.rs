@@ -26,7 +26,7 @@ use crate::model::VenueModel;
 /// `source` must be the raw bytes of an Apple IMDF `.zip` archive. Every
 /// structural, security, and normalization failure is reported as an
 /// [`ImportError`] whose `code.as_str()` matches the existing browser
-/// `ArchiveErrorCode` strings.
+/// `VenueLoadErrorCode` strings.
 pub fn import_imdf(source: &[u8]) -> Result<VenueModel, ImportError> {
     let parsed = archive::parse(source)?;
     normalize::normalize(parsed)
