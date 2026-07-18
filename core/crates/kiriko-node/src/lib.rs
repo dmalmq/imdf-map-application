@@ -167,12 +167,12 @@ pub struct NativeInspectResponse {
 }
 
 /// Outcome of the blocking inspection step, computed off the event loop.
-/// Success carries the inspection pre-serialized to JSON so decode, hash,
-/// *and* serialization all run on the thread pool; a rejected bundle is
-/// domain data, not a bridge failure.
+/// Both variants carry pre-serialized JSON so decode, hash, *and*
+/// serialization all run on the thread pool and `resolve` only wraps
+/// strings; a rejected bundle is domain data, not a bridge failure.
 pub enum InspectOutcome {
     Success(String),
-    Failure(BundleError),
+    Failure(String),
 }
 
 pub struct InspectTask {
@@ -192,7 +192,7 @@ impl Task for InspectTask {
                 })?;
                 InspectOutcome::Success(json)
             }
-            Err(err) => InspectOutcome::Failure(err),
+            Err(err) => InspectOutcome::Failure(bundle_error_json(&err).to_string()),
         })
     }
 
@@ -203,10 +203,10 @@ impl Task for InspectTask {
                 inspection_json: Some(inspection_json),
                 error_json: None,
             },
-            InspectOutcome::Failure(err) => NativeInspectResponse {
+            InspectOutcome::Failure(error_json) => NativeInspectResponse {
                 ok: false,
                 inspection_json: None,
-                error_json: Some(bundle_error_json(&err).to_string()),
+                error_json: Some(error_json),
             },
         })
     }

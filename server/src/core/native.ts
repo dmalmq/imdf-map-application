@@ -320,15 +320,29 @@ function parseInspectJson(json: string, field: string): unknown {
 }
 
 /**
- * Validated inspection payload: hash form, level id uniqueness, tuple
- * arity, feature id uniqueness, and level-reference closure are all
- * checked before the `Set`/`Map` are handed to the caller, so neither
- * collection can silently deduplicate malformed native output.
+ * The only error codes the native inspect addon can legitimately emit: the
+ * four stable `kiriko-bundle` codec codes. Anything else in `errorJson`
+ * (client codes like `invalid_anchor`, importer codes, or the
+ * wrapper-generated `bundle_hash_mismatch`) is a bridge contract violation.
+ */
+const BUNDLE_CODEC_CODES: Record<string, true> = {
+  invalid_bundle: true,
+  unsupported_bundle_version: true,
+  bundle_integrity_failed: true,
+  bundle_too_large: true,
+};
+
+/**
+ * Validated inspection payload as plain scalars/arrays: hash form, level id
+ * uniqueness, tuple arity, feature id uniqueness, and level-reference
+ * closure are all checked here, but the final `Set`/`Map` are only
+ * constructed by the caller after the expected-hash equality check passes,
+ * so no index collection ever exists for a bundle that failed validation.
  */
 function parseInspection(json: string): {
   bundleHash: string;
-  levelIds: Set<string>;
-  featureLevels: Map<string, string | null>;
+  levelIds: string[];
+  featureLevels: Array<[string, string | null]>;
 } {
   const parsed = parseInspectJson(json, "inspectionJson");
   if (!isRecord(parsed)) {
@@ -340,20 +354,23 @@ function parseInspection(json: string): {
   if (!Array.isArray(parsed.levelIds)) {
     throw inspectBridgeError("native inspectionJson levelIds is not an array");
   }
-  const levelIds = new Set<string>();
+  const levelIds: string[] = [];
+  const seenLevels = new Set<string>();
   for (const levelId of parsed.levelIds) {
     if (typeof levelId !== "string") {
       throw inspectBridgeError("native inspectionJson levelIds entry is not a string");
     }
-    if (levelIds.has(levelId)) {
+    if (seenLevels.has(levelId)) {
       throw inspectBridgeError(`native inspectionJson levelIds contains a duplicate: ${levelId}`);
     }
-    levelIds.add(levelId);
+    seenLevels.add(levelId);
+    levelIds.push(levelId);
   }
   if (!Array.isArray(parsed.featureLevels)) {
     throw inspectBridgeError("native inspectionJson featureLevels is not an array");
   }
-  const featureLevels = new Map<string, string | null>();
+  const featureLevels: Array<[string, string | null]> = [];
+  const seenFeatures = new Set<string>();
   for (const entry of parsed.featureLevels) {
     if (!Array.isArray(entry) || entry.length !== 2) {
       throw inspectBridgeError("native inspectionJson featureLevels entry is not a 2-tuple");
@@ -365,13 +382,14 @@ function parseInspection(json: string): {
     if (levelId !== null && typeof levelId !== "string") {
       throw inspectBridgeError("native inspectionJson featureLevels entry level is neither a string nor null");
     }
-    if (levelId !== null && !levelIds.has(levelId)) {
+    if (levelId !== null && !seenLevels.has(levelId)) {
       throw inspectBridgeError(`native inspectionJson featureLevels references an unknown level: ${levelId}`);
     }
-    if (featureLevels.has(featureId)) {
+    if (seenFeatures.has(featureId)) {
       throw inspectBridgeError(`native inspectionJson featureLevels contains a duplicate feature id: ${featureId}`);
     }
-    featureLevels.set(featureId, levelId);
+    seenFeatures.add(featureId);
+    featureLevels.push([featureId, levelId]);
   }
   return { bundleHash: parsed.bundleHash, levelIds, featureLevels };
 }
@@ -387,6 +405,9 @@ function parseInspectError(json: string): CoreInspectError {
       throw inspectBridgeError("native errorJson details is not an object");
     }
     details = parsed.details;
+  }
+  if (!BUNDLE_CODEC_CODES[parsed.code]) {
+    throw inspectBridgeError(`native errorJson has an unknown code: ${parsed.code}`);
   }
   return new CoreInspectError(parsed.code, parsed.message, details);
 }
@@ -414,14 +435,21 @@ export async function inspectVenueBundle(
     if (!response.ok) {
       throw parseInspectError(response.errorJson);
     }
-    const { bundleHash, levelIds, featureLevels } = parseInspection(response.inspectionJson);
+    const parsed = parseInspection(response.inspectionJson);
+    const { bundleHash } = parsed;
     if (!SHA256_HEX.test(expectedBundleHash) || bundleHash !== expectedBundleHash) {
       throw new CoreInspectError(
         "bundle_hash_mismatch",
         `bundle bytes hash to ${bundleHash} but ${JSON.stringify(expectedBundleHash)} was expected`,
       );
     }
-    return { bundleHash, levelIds, featureLevels };
+    // The final Set/Map are only built once the bytes' hash equals the
+    // stored content address exactly.
+    return {
+      bundleHash,
+      levelIds: new Set(parsed.levelIds),
+      featureLevels: new Map(parsed.featureLevels),
+    };
   } catch (error) {
     if (error instanceof CoreInspectError) {
       throw error;

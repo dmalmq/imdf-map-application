@@ -672,6 +672,29 @@ describe("inspectVenueBundle", () => {
         ["v1", null],
       ]);
     });
+
+    it("validates the payload before comparing the expected hash: a duplicate feature id plus a mismatched hash is bridge_error", async () => {
+      const inspection = {
+        ...goldenInspection(),
+        bundleHash: "f".repeat(64),
+        featureLevels: [
+          ["l1", "l1"],
+          ["l2", "l2"],
+          ["u1", "l1"],
+          ["u1", "l2"],
+        ],
+      };
+      await expect(
+        inspectVenueBundle(Buffer.from(""), GOLDEN_BUNDLE_HASH, fakeInspect(okResponse(inspection))),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code: "bridge_error" });
+    });
+
+    it("checks expected-hash equality on a well-formed injected payload before returning any index", async () => {
+      const inspection = { ...goldenInspection(), bundleHash: "f".repeat(64) };
+      await expect(
+        inspectVenueBundle(Buffer.from(""), GOLDEN_BUNDLE_HASH, fakeInspect(okResponse(inspection))),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code: "bundle_hash_mismatch" });
+    });
   });
 
   describe("validates errorJson defensively", () => {
@@ -708,6 +731,36 @@ describe("inspectVenueBundle", () => {
       expect(caught).toBeInstanceOf(CoreInspectError);
       expect((caught as CoreInspectError).code).toBe("invalid_bundle");
       expect((caught as CoreInspectError).details).toEqual({ at: 12 });
+    });
+
+    it.each([
+      ["a client code (invalid_anchor)", "invalid_anchor"],
+      ["the wrapper-generated bundle_hash_mismatch", "bundle_hash_mismatch"],
+      ["an importer code (unsupported_file)", "unsupported_file"],
+      ["an arbitrary unknown code", "totally_made_up"],
+    ])("normalizes %s from the native side to bridge_error", async (_, code) => {
+      await expect(
+        inspectVenueBundle(
+          Buffer.from(""),
+          GOLDEN_BUNDLE_HASH,
+          fakeInspect({ ok: false, errorJson: JSON.stringify({ code, message: "m" }) }),
+        ),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code: "bridge_error" });
+    });
+
+    it.each([
+      ["invalid_bundle"],
+      ["unsupported_bundle_version"],
+      ["bundle_integrity_failed"],
+      ["bundle_too_large"],
+    ])("passes through the stable codec code %s", async (code) => {
+      await expect(
+        inspectVenueBundle(
+          Buffer.from(""),
+          GOLDEN_BUNDLE_HASH,
+          fakeInspect({ ok: false, errorJson: JSON.stringify({ code, message: "m" }) }),
+        ),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code });
     });
   });
 });

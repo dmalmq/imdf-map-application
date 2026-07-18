@@ -604,6 +604,21 @@ fn inspect_bundle_rejects_a_feature_referencing_an_unknown_level() {
 }
 
 #[test]
+fn inspect_bundle_rejects_a_level_feature_carrying_an_unknown_level_id() {
+    use kiriko_model::model::FeatureType;
+    // A Level feature self-maps, but a non-null `level_id` it carries is
+    // still a level reference and must resolve to an existing level row.
+    let mut level = minimal_feature("l1", FeatureType::Level);
+    level.level_id = Some("nope".to_string());
+    let mut document = minimal_document(vec![level]);
+    document.levels = vec![level_row("l1", 0.0)];
+    let bytes = encode_bundle(&document).expect("encode does not validate level semantics");
+    let err = inspect_bundle(&bytes)
+        .expect_err("a level feature with an unknown level_id must be rejected");
+    assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
 fn inspect_bundle_accepts_a_semantically_consistent_document() {
     use kiriko_model::model::FeatureType;
     let mut unit = minimal_feature("u1", FeatureType::Unit);

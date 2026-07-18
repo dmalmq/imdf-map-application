@@ -223,6 +223,20 @@ pub fn inspect_bundle(bytes: &[u8]) -> Result<BundleInspection, BundleError> {
     let mut level_features: HashSet<&str> = HashSet::with_capacity(document.levels.len());
     let mut feature_levels = Vec::with_capacity(document.features.len());
     for feature in &document.features {
+        // Every non-null level reference must resolve, regardless of the
+        // feature's own type — a Level feature self-maps below, but a
+        // dangling `level_id` it carries is still a broken relationship.
+        if let Some(level_id) = &feature.level_id
+            && !level_rows.contains(level_id.as_str())
+        {
+            return Err(BundleError::new(
+                BundleErrorCode::InvalidBundle,
+                format!(
+                    "feature {:?} references unknown level {:?}",
+                    feature.id, level_id
+                ),
+            ));
+        }
         let level = if feature.feature_type == FeatureType::Level {
             if !level_rows.contains(feature.id.as_str()) {
                 return Err(BundleError::new(
@@ -233,17 +247,6 @@ pub fn inspect_bundle(bytes: &[u8]) -> Result<BundleInspection, BundleError> {
             level_features.insert(feature.id.as_str());
             Some(feature.id.clone())
         } else {
-            if let Some(level_id) = &feature.level_id
-                && !level_rows.contains(level_id.as_str())
-            {
-                return Err(BundleError::new(
-                    BundleErrorCode::InvalidBundle,
-                    format!(
-                        "feature {:?} references unknown level {:?}",
-                        feature.id, level_id
-                    ),
-                ));
-            }
             feature.level_id.clone()
         };
         feature_levels.push((feature.id.clone(), level));
