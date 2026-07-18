@@ -738,6 +738,10 @@ describe("inspectVenueBundle", () => {
       ["the wrapper-generated bundle_hash_mismatch", "bundle_hash_mismatch"],
       ["an importer code (unsupported_file)", "unsupported_file"],
       ["an arbitrary unknown code", "totally_made_up"],
+      ["an inherited Object.prototype key (toString)", "toString"],
+      ["an inherited Object.prototype key (constructor)", "constructor"],
+      ["an inherited Object.prototype key (hasOwnProperty)", "hasOwnProperty"],
+      ["the __proto__ accessor key", "__proto__"],
     ])("normalizes %s from the native side to bridge_error", async (_, code) => {
       await expect(
         inspectVenueBundle(

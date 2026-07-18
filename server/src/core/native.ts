@@ -406,7 +406,10 @@ function parseInspectError(json: string): CoreInspectError {
     }
     details = parsed.details;
   }
-  if (!BUNDLE_CODEC_CODES[parsed.code]) {
+  // Own-key membership only: a plain index would accept inherited
+  // Object.prototype keys ("toString", "constructor", "__proto__") as
+  // truthy and let them masquerade as stable codec codes.
+  if (!Object.hasOwn(BUNDLE_CODEC_CODES, parsed.code)) {
     throw inspectBridgeError(`native errorJson has an unknown code: ${parsed.code}`);
   }
   return new CoreInspectError(parsed.code, parsed.message, details);
