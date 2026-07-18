@@ -192,11 +192,14 @@ pub struct ImdfManifest {
     pub rest: Object,
 }
 
-/// Aggregated level row.
+/// Aggregated level row. `ordinal` preserves the full finite IEEE-754 domain
+/// the browser accepts (fractional, negative, or beyond `i32` range) rather
+/// than truncating to an integer; only non-finite/non-numeric values default
+/// to `0.0`. Matches `normalizeVenue.ts`'s `ordinalRaw` handling exactly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewerLevel {
     pub id: String,
-    pub ordinal: i32,
+    pub ordinal: f64,
     pub label: BTreeMap<String, String>,
     pub short_name: BTreeMap<String, String>,
 }

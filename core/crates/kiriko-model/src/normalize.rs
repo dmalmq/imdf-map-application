@@ -138,7 +138,7 @@ pub(crate) fn normalize(archive: ParsedArchive) -> Result<VenueModel, ImportErro
             short_name: localized_record(entry.feature.source_properties.get("short_name")),
         });
     }
-    levels.sort_by(|a, b| b.ordinal.cmp(&a.ordinal));
+    levels.sort_by(|a, b| b.ordinal.total_cmp(&a.ordinal));
 
     // Per-level bounds computed from the render collection (anchors excluded,
     // null-geometry occupants contribute their resolved center point).
@@ -372,21 +372,18 @@ fn build_manifest(mut object: Object, language: String) -> ImdfManifest {
     }
 }
 
-/// Coerce an `ordinal` property into a stable i32. Matches the TS contract:
-/// non-finite or non-numeric -> 0. Integers fit into i32 as-is; anything else
-/// falls back to 0.
-fn extract_ordinal(properties: &Object) -> i32 {
-    let raw = match properties.get("ordinal").and_then(Value::as_f64) {
-        Some(value) => value,
-        None => return 0,
-    };
-    if !raw.is_finite() || raw.fract() != 0.0 {
-        return 0;
+/// Extract the `ordinal` property as `f64`, matching the TS contract exactly:
+/// `typeof ordinalRaw === "number" && Number.isFinite(ordinalRaw) ? ordinalRaw : 0`.
+/// Every finite value — fractional, negative, or beyond `i32` range — is
+/// preserved as-is; only a missing/non-numeric/non-finite property defaults
+/// to `0.0`. `canonical::canonicalize` already rejects non-finite numbers
+/// during archive parsing, so the `is_finite` check here is unreachable in
+/// practice but kept as an explicit contract guard.
+fn extract_ordinal(properties: &Object) -> f64 {
+    match properties.get("ordinal").and_then(Value::as_f64) {
+        Some(value) if value.is_finite() => value,
+        _ => 0.0,
     }
-    if raw < i32::MIN as f64 || raw > i32::MAX as f64 {
-        return 0;
-    }
-    raw as i32
 }
 
 fn has_language_label(labels: &BTreeMap<String, String>, language: &str) -> bool {

@@ -32,7 +32,7 @@ fn imports_minimal_fixture_into_canonical_model() {
             .iter()
             .map(|level| level.ordinal)
             .collect::<Vec<_>>(),
-        vec![1, 0, -1],
+        vec![1.0, 0.0, -1.0],
         "levels are sorted by descending ordinal"
     );
     assert_eq!(venue.levels.len(), 3);
@@ -177,4 +177,54 @@ fn find_feature<'a>(features: &'a [VenueFeature], id: &str) -> &'a VenueFeature 
         .iter()
         .find(|f| f.id == id)
         .unwrap_or_else(|| panic!("feature {id} must be present"))
+}
+
+#[test]
+fn preserves_full_finite_ordinal_domain_and_orders_by_it() {
+    // Fractional, beyond-i32-range, and negative-beyond-i32-range ordinals
+    // must all be preserved exactly (never coerced to 0) and used verbatim
+    // for descending sort, matching the browser's
+    // `Number.isFinite(ordinalRaw) ? ordinalRaw : 0` contract.
+    const FRACTIONAL_ID: &str = "9a000001-0000-4000-8000-000000000f01";
+    const HIGH_ID: &str = "9a000002-0000-4000-8000-000000000f02";
+    const LOW_ID: &str = "9a000003-0000-4000-8000-000000000f03";
+
+    let levels = format!(
+        r#"{{"type":"FeatureCollection","features":[
+            {{"id":"{FRACTIONAL_ID}","type":"Feature","feature_type":"level","geometry":null,"properties":{{"ordinal":2.5}}}},
+            {{"id":"{HIGH_ID}","type":"Feature","feature_type":"level","geometry":null,"properties":{{"ordinal":3000000000}}}},
+            {{"id":"{LOW_ID}","type":"Feature","feature_type":"level","geometry":null,"properties":{{"ordinal":-3000000000}}}}
+        ]}}"#
+    );
+    let bytes = support::ZipBuilder::new()
+        .replace("level.geojson", levels.into_bytes())
+        .build();
+    let venue = import_imdf(&bytes).expect("replaced levels must still import");
+
+    assert_eq!(venue.levels.len(), 3);
+    let by_id = |id: &str| {
+        venue
+            .levels
+            .iter()
+            .find(|l| l.id == id)
+            .unwrap_or_else(|| panic!("level {id} must be present"))
+    };
+    assert_eq!(by_id(FRACTIONAL_ID).ordinal, 2.5, "fractional ordinal preserved exactly");
+    assert_eq!(
+        by_id(HIGH_ID).ordinal,
+        3_000_000_000.0,
+        "ordinal beyond i32::MAX preserved exactly, not coerced to 0"
+    );
+    assert_eq!(
+        by_id(LOW_ID).ordinal,
+        -3_000_000_000.0,
+        "ordinal below i32::MIN preserved exactly, not coerced to 0"
+    );
+
+    // Descending sort uses the real values, not any truncated/coerced form.
+    assert_eq!(
+        venue.levels.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
+        vec![HIGH_ID, FRACTIONAL_ID, LOW_ID],
+        "levels sorted descending by the full-precision ordinal"
+    );
 }

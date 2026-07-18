@@ -124,6 +124,20 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
     let cursor = Cursor::new(source);
     let mut archive = ZipArchive::new(cursor).map_err(map_zip_open_error)?;
 
+    // Reject archives whose compressed entry data overlaps: not always
+    // structurally invalid, but every real IMDF exporter produces
+    // non-overlapping entries, and overlap is a classic archive-bomb /
+    // confusion vector. Checked immediately after opening, before any other
+    // validation or content read.
+    match archive.has_overlapping_files() {
+        Ok(true) => {
+            return Err(fail(ImportErrorCode::InvalidArchive, "invalid_archive")
+                .with_detail("reason", "overlapping_entries"));
+        }
+        Ok(false) => {}
+        Err(err) => return Err(map_zip_error(err)),
+    }
+
     if archive.len() > MAX_ARCHIVE_ENTRIES {
         return Err(
             fail(ImportErrorCode::ArchiveTooLarge, "archive_too_large")
@@ -149,6 +163,7 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
     entries.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
 
     validate_entries(&entries)?;
+    validate_required_files(&entries)?;
 
     // Pass 2: read content (bounded by both per-entry and cumulative actual
     // byte counts) and dispatch to manifest / collection / unknown buckets.
@@ -158,7 +173,7 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
     let mut unknown_entries: Vec<String> = Vec::new();
 
     for entry in &entries {
-        let lower = entry.name.to_ascii_lowercase();
+        let lower = entry.name.to_lowercase();
         let bytes = read_entry(&mut archive, entry, &mut total_bytes)?;
 
         if lower == "manifest.json" {
@@ -193,7 +208,6 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
             .with_detail("missing", "manifest.json")
     })?;
 
-    validate_required_files(&entries)?;
     validate_collection_shapes(&collections)?;
     let manifest_language = manifest
         .get("language")
@@ -234,7 +248,7 @@ fn validate_entries(entries: &[EntryMeta]) -> Result<(), ImportError> {
         if declared_total > MAX_TOTAL_UNCOMPRESSED_BYTES {
             return Err(fail(ImportErrorCode::ArchiveTooLarge, "archive_too_large"));
         }
-        if !seen.insert(entry.name.to_ascii_lowercase()) {
+        if !seen.insert(entry.name.to_lowercase()) {
             return Err(fail(ImportErrorCode::InvalidArchive, "invalid_archive")
                 .with_detail("entry", entry.name.clone())
                 .with_detail("reason", "duplicate_name"));
@@ -246,7 +260,7 @@ fn validate_entries(entries: &[EntryMeta]) -> Result<(), ImportError> {
 fn validate_required_files(entries: &[EntryMeta]) -> Result<(), ImportError> {
     let present: BTreeSet<String> = entries
         .iter()
-        .map(|e| e.name.to_ascii_lowercase())
+        .map(|e| e.name.to_lowercase())
         .collect();
     for required in REQUIRED_FILES {
         if !present.contains(*required) {

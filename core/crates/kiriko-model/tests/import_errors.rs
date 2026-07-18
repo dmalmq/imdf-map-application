@@ -315,3 +315,41 @@ fn rejects_unknown_safe_entry_with_warning_not_error() {
         "Ignored unknown archive entry extra.txt."
     );
 }
+
+#[test]
+fn rejects_overlapping_compressed_data_ranges() {
+    // Force b.json's central-directory record to point at a.json's local
+    // header. `zip::ZipArchive::has_overlapping_files` must detect the
+    // resulting coincident compressed-data ranges.
+    let bytes = support::write_zip(vec![
+        ("a.json", b"{\"x\":1}".as_slice()),
+        ("b.json", b"{\"y\":2}".as_slice()),
+    ]);
+    let a_offset = support::find_local_header_offset(&bytes, "a.json");
+    let overlapped = support::patch_central_directory_offset(bytes, "b.json", a_offset);
+    assert_eq!(reject(&overlapped), ImportErrorCode::InvalidArchive);
+}
+
+#[test]
+fn rejects_duplicate_names_after_unicode_lowercasing() {
+    // ASCII-only lowercasing treats "É" (U+00C9) and "é" (U+00E9) as
+    // distinct bytes; Unicode-aware lowercasing (matching the browser's
+    // `String.prototype.toLowerCase()`) folds them to the same name.
+    let bytes = support::ZipBuilder::new()
+        .extra("RÉSUMÉ.json", b"{}".to_vec())
+        .extra("résumé.json", b"{}".to_vec())
+        .build();
+    assert_eq!(reject(&bytes), ImportErrorCode::InvalidArchive);
+}
+
+#[test]
+fn missing_required_file_takes_precedence_over_malformed_content() {
+    // address.geojson is missing AND manifest.json is malformed JSON.
+    // Required-file presence must be checked before any entry content is
+    // parsed, so the missing-file error wins over the malformed-JSON error.
+    let bytes = support::ZipBuilder::new()
+        .omit("address.geojson")
+        .replace("manifest.json", b"{not-json".to_vec())
+        .build();
+    assert_eq!(reject(&bytes), ImportErrorCode::MissingRequiredFile);
+}

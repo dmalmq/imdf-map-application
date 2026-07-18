@@ -255,3 +255,59 @@ pub fn patch_encrypted_flag(mut zip: Vec<u8>, name: &str) -> Vec<u8> {
     );
     zip
 }
+
+/// Find the byte offset of the local-file header for `name`. Used together
+/// with [`patch_central_directory_offset`] to construct archives with
+/// overlapping compressed-data ranges.
+pub fn find_local_header_offset(zip: &[u8], name: &str) -> u32 {
+    let name_bytes = name.as_bytes();
+    let mut i = 0usize;
+    while i + 4 <= zip.len() {
+        let sig = u32::from_le_bytes([zip[i], zip[i + 1], zip[i + 2], zip[i + 3]]);
+        if sig == 0x0403_4b50 {
+            let name_offset = i + 30;
+            if name_offset + name_bytes.len() <= zip.len()
+                && &zip[name_offset..name_offset + name_bytes.len()] == name_bytes
+            {
+                return i as u32;
+            }
+        }
+        i += 1;
+    }
+    panic!("find_local_header_offset: local header for {name:?} not found");
+}
+
+/// Patch the central-directory "relative offset of local header" field for
+/// `name` to `new_offset`. Pointing two entries' central-directory records at
+/// the same local-header offset makes their compressed-data ranges coincide,
+/// which `zip::ZipArchive::has_overlapping_files` must detect.
+pub fn patch_central_directory_offset(mut zip: Vec<u8>, name: &str, new_offset: u32) -> Vec<u8> {
+    let name_bytes = name.as_bytes();
+    let mut patched = 0usize;
+    let mut i = 0usize;
+    while i + 4 <= zip.len() {
+        let sig = u32::from_le_bytes([zip[i], zip[i + 1], zip[i + 2], zip[i + 3]]);
+        if sig != 0x0201_4b50 {
+            i += 1;
+            continue;
+        }
+        let offset_field = i + 42;
+        let name_offset = i + 46;
+        if name_offset + name_bytes.len() > zip.len() {
+            i += 1;
+            continue;
+        }
+        if &zip[name_offset..name_offset + name_bytes.len()] != name_bytes {
+            i += 1;
+            continue;
+        }
+        zip[offset_field..offset_field + 4].copy_from_slice(&new_offset.to_le_bytes());
+        patched += 1;
+        i = name_offset + name_bytes.len();
+    }
+    assert!(
+        patched >= 1,
+        "patch_central_directory_offset: expected a central directory header for {name:?}, found {patched}"
+    );
+    zip
+}
