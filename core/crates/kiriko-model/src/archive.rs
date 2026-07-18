@@ -124,11 +124,21 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
     let cursor = Cursor::new(source);
     let mut archive = ZipArchive::new(cursor).map_err(map_zip_open_error)?;
 
+    // Bound entry count before the O(n^2) overlap scan below can run: a
+    // crafted central directory with a huge entry count must be rejected on
+    // cheap metadata (`archive.len()`) alone, not after pairwise range work.
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(
+            fail(ImportErrorCode::ArchiveTooLarge, "archive_too_large")
+                .with_detail("entryCount", archive.len().to_string()),
+        );
+    }
+
     // Reject archives whose compressed entry data overlaps: not always
     // structurally invalid, but every real IMDF exporter produces
     // non-overlapping entries, and overlap is a classic archive-bomb /
-    // confusion vector. Checked immediately after opening, before any other
-    // validation or content read.
+    // confusion vector. Checked immediately after opening (and after the
+    // entry-count cap above), before any other validation or content read.
     match archive.has_overlapping_files() {
         Ok(true) => {
             return Err(fail(ImportErrorCode::InvalidArchive, "invalid_archive")
@@ -136,13 +146,6 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
         }
         Ok(false) => {}
         Err(err) => return Err(map_zip_error(err)),
-    }
-
-    if archive.len() > MAX_ARCHIVE_ENTRIES {
-        return Err(
-            fail(ImportErrorCode::ArchiveTooLarge, "archive_too_large")
-                .with_detail("entryCount", archive.len().to_string()),
-        );
     }
 
     // Pass 1: collect metadata for every entry, then sort bytewise by name so
