@@ -40,6 +40,7 @@ export const LAYER_AMENITY_CIRCLE = "indoor-amenity-circle";
 export const LAYER_OCCUPANT_CIRCLE = "indoor-occupant-circle";
 export const LAYER_HOVER_OUTLINE = "indoor-hover-outline";
 export const LAYER_SELECTED_OUTLINE = "indoor-selected-outline";
+export const LAYER_ISSUE_HIGHLIGHT_OUTLINE = "indoor-issue-highlight-outline";
 
 /** Layers that participate in click / hover hit-testing. */
 export const CLICKABLE_LAYER_IDS: readonly string[] = [
@@ -489,6 +490,23 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
         ],
       },
     },
+    // Issue-review highlight: independent of hover/selected feature-state so an
+    // opened issue can outline its feature without driving map selection.
+    {
+      id: LAYER_ISSUE_HIGHLIGHT_OUTLINE,
+      type: "line",
+      source: INDOOR_SOURCE_ID,
+      paint: {
+        "line-color": c.warning,
+        "line-width": 3.5,
+        "line-opacity": [
+          "case",
+          ["boolean", ["feature-state", "issueHighlight"], false],
+          1,
+          0,
+        ],
+      },
+    },
   ];
 
   return layers;
@@ -536,6 +554,7 @@ export function applyThemePaintProperties(
 
   setPaintProperty(LAYER_HOVER_OUTLINE, "line-color", c.accent);
   setPaintProperty(LAYER_SELECTED_OUTLINE, "line-color", c.selected);
+  setPaintProperty(LAYER_ISSUE_HIGHLIGHT_OUTLINE, "line-color", c.warning);
 
   setPaintProperty(BACKGROUND_LAYER_ID, "background-color", c.canvas);
 }

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import type { LocaleCode } from "../imdf/types";
+import type { LocaleCode, ViewerLevel } from "../imdf/types";
 import type { IssueFilter, IssueStatus, ReviewIssue } from "../issues/types";
 import { filterIssues, issueStatusLabel, issueSummary } from "../issues/IssueQueue";
 
@@ -53,12 +53,14 @@ export interface UseIssuePinsArgs {
   pins: MapIssuePin[];
   selectedIssueId: string | null;
   locale: LocaleCode;
+  /** Venue levels, used to localize the floor context in each pin's name. */
+  levels: ViewerLevel[];
   /** Stable callback; pin click opens the matching issue. */
   onSelect: (issueId: string) => void;
 }
 
-function pinAriaLabel(pin: MapIssuePin, locale: LocaleCode): string {
-  return `Issue #${pin.pinNumber}: ${pin.summary} — ${issueStatusLabel(pin.status, locale)}`;
+function pinAriaLabel(pin: MapIssuePin, locale: LocaleCode, floor: string): string {
+  return `Issue #${pin.pinNumber}: ${pin.summary} — ${issueStatusLabel(pin.status, locale)} — ${floor}`;
 }
 
 /**
@@ -76,6 +78,7 @@ export function useIssuePins({
   pins,
   selectedIssueId,
   locale,
+  levels,
   onSelect,
 }: UseIssuePinsArgs): void {
   useEffect(() => {
@@ -103,6 +106,15 @@ export function useIssuePins({
       }
     };
 
+    const levelsById = new Map(levels.map((level) => [level.id, level]));
+    const floorLabelFor = (id: string): string => {
+      const level = levelsById.get(id);
+      if (level == null) {
+        return id;
+      }
+      return level.label[locale] ?? level.shortName[locale] ?? Object.values(level.label)[0] ?? id;
+    };
+
     const floorPins = pins
       .filter((pin) => pin.levelId === levelId)
       .slice()
@@ -118,7 +130,7 @@ export function useIssuePins({
       }
       el.className = classes.join(" ");
       el.textContent = String(pin.pinNumber);
-      el.setAttribute("aria-label", pinAriaLabel(pin, locale));
+      el.setAttribute("aria-label", pinAriaLabel(pin, locale, floorLabelFor(pin.levelId)));
       el.setAttribute("aria-pressed", selected ? "true" : "false");
       el.dataset.issueId = pin.id;
       el.addEventListener("click", (event) => {
@@ -149,5 +161,5 @@ export function useIssuePins({
       map.off("resize", reposition);
       overlay.remove();
     };
-  }, [map, levelId, pins, selectedIssueId, locale, onSelect]);
+  }, [map, levelId, pins, selectedIssueId, locale, levels, onSelect]);
 }

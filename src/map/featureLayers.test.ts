@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { LineLayerSpecification } from "maplibre-gl";
 import { themes } from "../theme/presets";
 import {
   applyThemePaintProperties,
   buildFeatureLayers,
   CLICKABLE_LAYER_IDS,
+  LAYER_ISSUE_HIGHLIGHT_OUTLINE,
+  LAYER_SELECTED_OUTLINE,
   LAYER_NONPUBLIC_FILL,
   LAYER_NONPUBLIC_OUTLINE,
   LAYER_OPENING_LINE,
@@ -130,5 +133,31 @@ describe("applyThemePaintProperties", () => {
     ]) {
       expect(calls).toContainEqual(expected);
     }
+  });
+});
+
+describe("issue highlight outline", () => {
+  it("gates a dedicated outline on the issueHighlight feature-state, distinct from selection", () => {
+    const layer = findLayer(LAYER_ISSUE_HIGHLIGHT_OUTLINE) as LineLayerSpecification;
+    expect(layer.type).toBe("line");
+    expect(layer.paint?.["line-opacity"]).toEqual([
+      "case",
+      ["boolean", ["feature-state", "issueHighlight"], false],
+      1,
+      0,
+    ]);
+    expect(layer.paint?.["line-color"]).toBe(theme.colors.warning);
+
+    const selected = findLayer(LAYER_SELECTED_OUTLINE) as LineLayerSpecification;
+    expect(layer.paint?.["line-color"]).not.toBe(selected.paint?.["line-color"]);
+    expect(JSON.stringify(selected.paint?.["line-opacity"])).not.toContain("issueHighlight");
+  });
+
+  it("repaints the issue highlight color on theme switch", () => {
+    const calls: [string, string, unknown][] = [];
+    applyThemePaintProperties((layerId, name, value) => {
+      calls.push([layerId, name, value]);
+    }, theme);
+    expect(calls).toContainEqual([LAYER_ISSUE_HIGHLIGHT_OUTLINE, "line-color", theme.colors.warning]);
   });
 });

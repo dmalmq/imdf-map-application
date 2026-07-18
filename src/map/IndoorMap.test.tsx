@@ -235,12 +235,15 @@ const READY_EVENT: FakeMapEvent = {
   dataType: "source",
 };
 
+const originalMatchMedia = window.matchMedia;
+
 beforeEach(() => {
   mapState.instances.length = 0;
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  window.matchMedia = originalMatchMedia;
 });
 
 describe("IndoorMap placement", () => {
@@ -377,7 +380,7 @@ describe("IndoorMap anchor camera", () => {
     expect(map.easeToCalls).toEqual([{ center: [5, 6], duration: 450 }]);
   });
 
-  it("applies a repeated camera key only once even when the request object changes", () => {
+  it("applies a repeated camera key only once after it has centered", () => {
     const { map, rerender } = renderMap(baseProps({ issueReview: review({ cameraRequest: null }) }));
     map.sourceLoaded = false;
 
@@ -386,6 +389,11 @@ describe("IndoorMap anchor camera", () => {
         issueReview: review({ cameraRequest: { key: 7, levelId: "level-1", longitude: 1, latitude: 2 } }),
       }),
     );
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    // A later render carrying the same key must not re-center, even with new coords.
     rerender(
       baseProps({
         issueReview: review({ cameraRequest: { key: 7, levelId: "level-1", longitude: 9, latitude: 9 } }),
@@ -426,6 +434,31 @@ describe("IndoorMap anchor camera", () => {
     expect(map.jumpToCalls).toEqual([{ center: [5, 6] }]);
     expect(map.easeToCalls).toHaveLength(0);
   });
+
+  it("survives floor2-wait -> floor1 -> stale ready -> floor2 without wrong-floor centering", () => {
+    const request = { key: 1, levelId: "level-2", longitude: 5, latitude: 6 };
+    const { map, rerender } = renderMap(
+      baseProps({ levelId: "level-2", issueReview: review({ cameraRequest: null }) }),
+    );
+    map.sourceLoaded = false;
+
+    // Request on floor 2 while its source is still loading.
+    rerender(baseProps({ levelId: "level-2", issueReview: review({ cameraRequest: request }) }));
+
+    // App switches to floor 1 before floor 2 became ready; a stale ready fires.
+    rerender(baseProps({ levelId: "level-1", issueReview: review({ cameraRequest: request }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+    expect(map.easeToCalls).toHaveLength(0);
+
+    // App returns to floor 2; the retry must still center once ready.
+    rerender(baseProps({ levelId: "level-2", issueReview: review({ cameraRequest: request }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+    expect(map.easeToCalls).toEqual([{ center: [5, 6], duration: 450 }]);
+  });
 });
 
 describe("IndoorMap issue highlight", () => {
@@ -454,6 +487,19 @@ describe("IndoorMap issue highlight", () => {
     rerender(baseProps({ issueReview: review({ featureId: null }) }));
 
     expect(map.removedStates).toContainEqual({ id: "unit-7", key: "issueHighlight" });
+  });
+
+  it("does not apply an obsolete highlight after the feature is cleared before ready", () => {
+    const { map, rerender } = renderMap(baseProps({ issueReview: review({ featureId: null }) }));
+    map.sourceLoaded = false;
+
+    rerender(baseProps({ issueReview: review({ featureId: "unit-A" }) }));
+    rerender(baseProps({ issueReview: review({ featureId: null }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    expect(map.featureStates.some((s) => s.state.issueHighlight === true)).toBe(false);
   });
 });
 

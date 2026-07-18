@@ -1,6 +1,7 @@
 import { renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import type { LocaleCode, ViewerLevel } from "../imdf/types";
 import type { IssueStatus, ReviewIssue } from "../issues/types";
 import { MARKER_OVERLAY_CLASS } from "./useFeatureMarkers";
 import {
@@ -9,6 +10,7 @@ import {
   projectPins,
   useIssuePins,
   type MapIssuePin,
+  type UseIssuePinsArgs,
 } from "./useIssuePins";
 
 function issue(
@@ -84,8 +86,38 @@ class FakeMap {
   }
 }
 
-function asMap(fake: FakeMap): MapLibreMap {
-  return fake as unknown as MapLibreMap;
+const LEVELS: ViewerLevel[] = [
+  { id: "1f", ordinal: 0, label: { en: "Level 1", ja: "1階" }, shortName: { en: "1F", ja: "1F" } },
+  { id: "2f", ordinal: 1, label: { en: "Level 2", ja: "2階" }, shortName: { en: "2F", ja: "2F" } },
+];
+
+function pins(): MapIssuePin[] {
+  return [
+    { id: "i1", pinNumber: 1, levelId: "1f", longitude: 10, latitude: 20, summary: "Gate blocked", status: "open" },
+    { id: "i4", pinNumber: 4, levelId: "1f", longitude: 30, latitude: 40, summary: "Sign", status: "in_review" },
+    { id: "i9", pinNumber: 9, levelId: "2f", longitude: 50, latitude: 60, summary: "Other floor", status: "open" },
+  ];
+}
+
+function mountPins(overrides: Partial<UseIssuePinsArgs> = {}): {
+  map: FakeMap;
+  onSelect: Mock;
+  unmount: () => void;
+} {
+  const map = new FakeMap();
+  const onSelect = (overrides.onSelect as Mock | undefined) ?? vi.fn();
+  const args: UseIssuePinsArgs = {
+    map: map as unknown as MapLibreMap,
+    levelId: "1f",
+    pins: pins(),
+    selectedIssueId: null,
+    locale: "en",
+    levels: LEVELS,
+    onSelect,
+    ...overrides,
+  };
+  const { unmount } = renderHook(() => useIssuePins(args));
+  return { map, onSelect, unmount };
 }
 
 describe("projectPins", () => {
@@ -134,78 +166,45 @@ describe("projectPins", () => {
   });
 });
 
-function pins(): MapIssuePin[] {
-  return [
-    { id: "i1", pinNumber: 1, levelId: "1f", longitude: 10, latitude: 20, summary: "Gate blocked", status: "open" },
-    { id: "i4", pinNumber: 4, levelId: "1f", longitude: 30, latitude: 40, summary: "Sign", status: "in_review" },
-    { id: "i9", pinNumber: 9, levelId: "2f", longitude: 50, latitude: 60, summary: "Other floor", status: "open" },
-  ];
-}
-
 describe("useIssuePins", () => {
   it("renders a distinct overlay independent of the Labels marker overlay", () => {
-    const map = new FakeMap();
-    renderHook(() =>
-      useIssuePins({
-        map: asMap(map),
-        levelId: "1f",
-        pins: pins(),
-        selectedIssueId: null,
-        locale: "en",
-        onSelect: vi.fn(),
-      }),
-    );
-    const overlay = map.container.querySelector(`.${ISSUE_PIN_OVERLAY_CLASS}`);
-    expect(overlay).toBeTruthy();
+    const { map } = mountPins();
+    expect(map.container.querySelector(`.${ISSUE_PIN_OVERLAY_CLASS}`)).toBeTruthy();
     expect(ISSUE_PIN_OVERLAY_CLASS).not.toBe(MARKER_OVERLAY_CLASS);
     expect(map.container.querySelector(`.${MARKER_OVERLAY_CLASS}`)).toBeNull();
   });
 
   it("renders only current-floor pins as buttons in pin-number order", () => {
-    const map = new FakeMap();
-    renderHook(() =>
-      useIssuePins({
-        map: asMap(map),
-        levelId: "1f",
-        pins: pins(),
-        selectedIssueId: null,
-        locale: "en",
-        onSelect: vi.fn(),
-      }),
-    );
+    const { map } = mountPins();
     const buttons = [...map.container.querySelectorAll("button")];
     expect(buttons.map((b) => b.textContent)).toEqual(["1", "4"]);
   });
 
-  it("gives each pin an accessible name including its number", () => {
-    const map = new FakeMap();
-    renderHook(() =>
-      useIssuePins({
-        map: asMap(map),
-        levelId: "1f",
-        pins: pins(),
-        selectedIssueId: null,
-        locale: "en",
-        onSelect: vi.fn(),
-      }),
-    );
-    const first = map.container.querySelector("button")!;
-    expect(first.getAttribute("aria-label")).toContain("Issue #1");
-    expect(first.getAttribute("aria-label")).toContain("Gate blocked");
+  it("gives each pin an accessible name with number, summary, status, and floor", () => {
+    const { map } = mountPins();
+    const label = map.container.querySelector("button")!.getAttribute("aria-label") ?? "";
+    expect(label).toContain("Issue #1");
+    expect(label).toContain("Gate blocked");
+    expect(label).toContain("Level 1");
+  });
+
+  it("localizes the floor context in the accessible name", () => {
+    const { map } = mountPins({ locale: "ja" as LocaleCode });
+    const label = map.container.querySelector("button")!.getAttribute("aria-label") ?? "";
+    expect(label).toContain("1階");
+  });
+
+  it("falls back to the raw level id when the floor is unknown", () => {
+    const orphan: MapIssuePin[] = [
+      { id: "iX", pinNumber: 2, levelId: "b1", longitude: 1, latitude: 2, summary: "S", status: "open" },
+    ];
+    const { map } = mountPins({ levelId: "b1", pins: orphan, levels: [] });
+    const label = map.container.querySelector("button")!.getAttribute("aria-label") ?? "";
+    expect(label).toContain("b1");
   });
 
   it("marks the selected pin through ARIA state", () => {
-    const map = new FakeMap();
-    renderHook(() =>
-      useIssuePins({
-        map: asMap(map),
-        levelId: "1f",
-        pins: pins(),
-        selectedIssueId: "i4",
-        locale: "en",
-        onSelect: vi.fn(),
-      }),
-    );
+    const { map } = mountPins({ selectedIssueId: "i4" });
     const buttons = [...map.container.querySelectorAll("button")];
     const selected = buttons.find((b) => b.textContent === "4")!;
     const other = buttons.find((b) => b.textContent === "1")!;
@@ -215,20 +214,9 @@ describe("useIssuePins", () => {
   });
 
   it("selects on click and stops propagation to the map", () => {
-    const map = new FakeMap();
-    const onSelect = vi.fn();
     const background = vi.fn();
+    const { map, onSelect } = mountPins();
     map.container.addEventListener("click", background);
-    renderHook(() =>
-      useIssuePins({
-        map: asMap(map),
-        levelId: "1f",
-        pins: pins(),
-        selectedIssueId: null,
-        locale: "en",
-        onSelect,
-      }),
-    );
     const first = map.container.querySelector("button")!;
     first.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onSelect).toHaveBeenCalledWith("i1");
@@ -236,17 +224,7 @@ describe("useIssuePins", () => {
   });
 
   it("repositions pins on map move using integral translate", () => {
-    const map = new FakeMap();
-    renderHook(() =>
-      useIssuePins({
-        map: asMap(map),
-        levelId: "1f",
-        pins: pins(),
-        selectedIssueId: null,
-        locale: "en",
-        onSelect: vi.fn(),
-      }),
-    );
+    const { map } = mountPins();
     const first = map.container.querySelector("button")!;
     expect(first.style.transform).toBe("translate(10px, 20px)");
     map.projectImpl = () => ({ x: 100, y: 200 });
@@ -255,17 +233,7 @@ describe("useIssuePins", () => {
   });
 
   it("removes the overlay and listeners on unmount", () => {
-    const map = new FakeMap();
-    const { unmount } = renderHook(() =>
-      useIssuePins({
-        map: asMap(map),
-        levelId: "1f",
-        pins: pins(),
-        selectedIssueId: null,
-        locale: "en",
-        onSelect: vi.fn(),
-      }),
-    );
+    const { map, unmount } = mountPins();
     expect(map.container.querySelector(`.${ISSUE_PIN_OVERLAY_CLASS}`)).toBeTruthy();
     unmount();
     expect(map.container.querySelector(`.${ISSUE_PIN_OVERLAY_CLASS}`)).toBeNull();

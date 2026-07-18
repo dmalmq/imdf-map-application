@@ -323,6 +323,7 @@ export function IndoorMap({
     pins: issueReview?.pins ?? [],
     selectedIssueId: issueReview?.selectedIssueId ?? null,
     locale,
+    levels: venue.levels,
     onSelect: onIssueSelect,
   });
 
@@ -586,8 +587,13 @@ export function IndoorMap({
     if (map == null || !map.isStyleLoaded()) {
       return;
     }
-    const nextId = issueReview?.featureId ?? null;
 
+    // Cancel any pending readiness work before clearing/reapplying so a
+    // superseded highlight can never fire late.
+    issueHighlightCancelRef.current?.();
+    issueHighlightCancelRef.current = null;
+
+    const nextId = issueReview?.featureId ?? null;
     if (appliedIssueHighlightRef.current != null) {
       clearFeatureState(map, appliedIssueHighlightRef.current, "issueHighlight");
       appliedIssueHighlightRef.current = null;
@@ -596,8 +602,15 @@ export function IndoorMap({
       return;
     }
 
-    issueHighlightCancelRef.current?.();
     issueHighlightCancelRef.current = whenSourceReady(map, () => {
+      // Re-check the current requested feature + active floor so a stale source
+      // event cannot set an obsolete highlight after the selection changed.
+      if ((issueReviewRef.current?.featureId ?? null) !== nextId) {
+        return;
+      }
+      if (levelIdRef.current !== levelId) {
+        return;
+      }
       applyFeatureState(map, nextId, { issueHighlight: true });
       appliedIssueHighlightRef.current = nextId;
     });
@@ -610,6 +623,12 @@ export function IndoorMap({
     if (map == null || !map.isStyleLoaded()) {
       return;
     }
+
+    // Cancel any pending readiness work before every early return / key / floor
+    // change, so a superseded or wrong-floor request can never center late.
+    cameraCancelRef.current?.();
+    cameraCancelRef.current = null;
+
     const request = issueReview?.cameraRequest ?? null;
     if (request == null || request.key === appliedCameraKeyRef.current) {
       return;
@@ -620,9 +639,18 @@ export function IndoorMap({
       return;
     }
 
-    appliedCameraKeyRef.current = request.key;
-    cameraCancelRef.current?.();
     cameraCancelRef.current = whenSourceReady(map, () => {
+      // Re-check against the live request + active floor. A stale source event
+      // must not center wrong-floor coordinates, and the key is marked applied
+      // only here so an interrupted request can still retry later.
+      const current = issueReviewRef.current?.cameraRequest ?? null;
+      if (current == null || current.key !== request.key) {
+        return;
+      }
+      if (levelIdRef.current !== request.levelId) {
+        return;
+      }
+      appliedCameraKeyRef.current = request.key;
       const center: [number, number] = [request.longitude, request.latitude];
       if (prefersReducedMotion()) {
         map.jumpTo({ center });
