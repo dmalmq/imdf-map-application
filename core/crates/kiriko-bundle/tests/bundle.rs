@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use kiriko_bundle::{
     BundleDocument, BundleErrorCode, BundleMetadata, BundleStats, compile_imdf, decode_bundle,
-    encode_bundle,
+    encode_bundle, inspect_bundle,
 };
 
 fn metadata() -> BundleMetadata {
@@ -464,5 +464,195 @@ fn golden_fixture_matches_committed_bytes_and_checksum() {
     assert_eq!(
         checksum_file, expected_line,
         "the committed sha256 file must match the golden bytes"
+    );
+}
+
+// -- Phase Three Task 2: pure bundle inspection ------------------------------
+
+/// SHA-256 of the complete committed golden bundle file (envelope included),
+/// i.e. the exact content of `tests/fixtures/minimal.kvb.sha256`.
+const GOLDEN_BUNDLE_HASH: &str = "3e1add8208f77c98fdddf5253c98bb18f533e5b3bf3d35d92ac444525080e136";
+
+const LEVEL_B1: &str = "b1000001-0000-4000-8000-0000000000b1";
+const LEVEL_1F: &str = "b1000002-0000-4000-8000-00000000001f";
+const LEVEL_2F: &str = "b1000003-0000-4000-8000-00000000002f";
+
+fn golden_bytes() -> Vec<u8> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    fs::read(repo_root.join("tests/fixtures/minimal.kvb"))
+        .expect("tests/fixtures/minimal.kvb must be committed")
+}
+
+fn level_row(id: &str, ordinal: f64) -> kiriko_model::model::ViewerLevel {
+    kiriko_model::model::ViewerLevel {
+        id: id.to_string(),
+        ordinal,
+        label: BTreeMap::new(),
+        short_name: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn inspect_bundle_projects_the_committed_golden_fixture() {
+    let bytes = golden_bytes();
+    let inspected = inspect_bundle(&bytes).expect("golden inspection");
+
+    // Whole-file hash, not the envelope's payload digest.
+    assert_eq!(inspected.bundle_hash, GOLDEN_BUNDLE_HASH);
+
+    // Level rows in canonical decoded order (ordinal descending: 1, 0, -1).
+    assert_eq!(inspected.level_ids, vec![LEVEL_2F, LEVEL_1F, LEVEL_B1]);
+    assert_eq!(inspected.level_ids.len(), 3);
+
+    // One entry per decoded feature, in canonical decoded order.
+    let document = decode_bundle(&bytes).expect("golden bundle decodes");
+    assert_eq!(inspected.feature_levels.len(), 27);
+    assert_eq!(
+        inspected
+            .feature_levels
+            .iter()
+            .map(|(feature, _)| feature.as_str())
+            .collect::<Vec<_>>(),
+        document
+            .features
+            .iter()
+            .map(|f| f.id.as_str())
+            .collect::<Vec<_>>(),
+        "feature_levels must preserve the canonical decoded feature order"
+    );
+
+    // Every level feature maps to its own id.
+    for level_id in [LEVEL_2F, LEVEL_1F, LEVEL_B1] {
+        assert!(
+            inspected
+                .feature_levels
+                .iter()
+                .any(|(feature, level)| feature == level_id
+                    && level.as_deref() == Some(level_id)),
+            "level feature {level_id} must map to its own id"
+        );
+    }
+    assert!(
+        inspected
+            .feature_levels
+            .iter()
+            .any(|(feature, level)| level.as_deref() == Some(feature.as_str())),
+        "at least the level features must self-map"
+    );
+
+    // A direct feature -> level mapping from the fixture's unit collection.
+    assert!(inspected.feature_levels.contains(&(
+        "c1000001-0000-4000-8000-0000000000b1".to_string(),
+        Some(LEVEL_B1.to_string()),
+    )));
+
+    // Level-independent features map to null.
+    assert!(
+        inspected
+            .feature_levels
+            .contains(&("a1000001-0000-4000-8000-000000000001".to_string(), None)),
+        "the venue feature is level-independent"
+    );
+    assert!(
+        inspected
+            .feature_levels
+            .contains(&("a1000002-0000-4000-8000-000000000002".to_string(), None)),
+        "the address feature is level-independent"
+    );
+}
+
+#[test]
+fn inspect_bundle_rejects_duplicate_level_rows() {
+    use kiriko_model::model::FeatureType;
+    let mut document = minimal_document(vec![minimal_feature("l1", FeatureType::Level)]);
+    document.levels = vec![level_row("l1", 1.0), level_row("l1", 0.0)];
+    let bytes = encode_bundle(&document).expect("encode does not validate level semantics");
+    let err = inspect_bundle(&bytes).expect_err("duplicate level rows must be rejected");
+    assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
+fn inspect_bundle_rejects_a_level_feature_without_a_level_row() {
+    use kiriko_model::model::FeatureType;
+    let document = minimal_document(vec![minimal_feature("l1", FeatureType::Level)]);
+    let bytes = encode_bundle(&document).expect("encode does not validate level semantics");
+    let err = inspect_bundle(&bytes).expect_err("a level feature without a row must be rejected");
+    assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
+fn inspect_bundle_rejects_a_level_row_without_a_level_feature() {
+    let mut document = minimal_document(vec![]);
+    document.levels = vec![level_row("l1", 0.0)];
+    let bytes = encode_bundle(&document).expect("encode does not validate level semantics");
+    let err = inspect_bundle(&bytes).expect_err("a level row without a feature must be rejected");
+    assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
+fn inspect_bundle_rejects_a_feature_referencing_an_unknown_level() {
+    use kiriko_model::model::FeatureType;
+    let mut unit = minimal_feature("u1", FeatureType::Unit);
+    unit.level_id = Some("nope".to_string());
+    let mut document =
+        minimal_document(vec![minimal_feature("l1", FeatureType::Level), unit]);
+    document.levels = vec![level_row("l1", 0.0)];
+    let bytes = encode_bundle(&document).expect("encode does not validate level semantics");
+    let err =
+        inspect_bundle(&bytes).expect_err("an unknown level reference must be rejected");
+    assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
+fn inspect_bundle_accepts_a_semantically_consistent_document() {
+    use kiriko_model::model::FeatureType;
+    let mut unit = minimal_feature("u1", FeatureType::Unit);
+    unit.level_id = Some("l1".to_string());
+    let mut document =
+        minimal_document(vec![minimal_feature("l1", FeatureType::Level), unit]);
+    document.levels = vec![level_row("l1", 0.0)];
+    let bytes = encode_bundle(&document).expect("encodes");
+    let inspected = inspect_bundle(&bytes).expect("consistent document inspects");
+    assert_eq!(inspected.level_ids, vec!["l1"]);
+    assert_eq!(
+        inspected.feature_levels,
+        vec![
+            ("l1".to_string(), Some("l1".to_string())),
+            ("u1".to_string(), Some("l1".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn inspect_bundle_propagates_all_four_decode_error_codes() {
+    let golden = golden_bytes();
+
+    let mut magic = golden.clone();
+    magic[0] ^= 0xFF;
+    assert_eq!(
+        inspect_bundle(&magic).expect_err("corrupted magic").code,
+        BundleErrorCode::InvalidBundle
+    );
+
+    let mut major = golden.clone();
+    major[4..6].copy_from_slice(&2u16.to_le_bytes());
+    assert_eq!(
+        inspect_bundle(&major).expect_err("unsupported major").code,
+        BundleErrorCode::UnsupportedBundleVersion
+    );
+
+    let mut frame = golden.clone();
+    let last = frame.len() - 1;
+    frame[last] ^= 0xFF;
+    assert_eq!(
+        inspect_bundle(&frame).expect_err("corrupted frame").code,
+        BundleErrorCode::BundleIntegrityFailed
+    );
+
+    let mut oversized = golden;
+    oversized[12..20].copy_from_slice(&(512u64 * 1024 * 1024 + 1).to_le_bytes());
+    assert_eq!(
+        inspect_bundle(&oversized).expect_err("oversized declared length").code,
+        BundleErrorCode::BundleTooLarge
     );
 }

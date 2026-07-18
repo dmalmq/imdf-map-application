@@ -1,14 +1,25 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileImdf } from "@kiriko/node";
+import { compileImdf, inspectBundle } from "@kiriko/node";
 import { describe, expect, it } from "vitest";
 import { buildMinimalImdfZip } from "../../tests/fixtures/buildMinimalImdfZip";
-import { CoreCompileError, compileVenueBundle, type NativeCompileResponse } from "../src/core/native";
+import {
+  CoreCompileError,
+  CoreInspectError,
+  compileVenueBundle,
+  inspectVenueBundle,
+  type NativeCompileResponse,
+  type NativeInspectResponse,
+} from "../src/core/native";
 
 const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../tests/fixtures");
 const KVB_MAGIC = Buffer.from([0x4b, 0x56, 0x42, 0x00]); // "KVB\0"
 const LEVEL_1F = "b1000001-0000-4000-8000-0000000000b1";
+const LEVEL_2F = "b1000003-0000-4000-8000-00000000002f";
+const VENUE_ID = "a1000001-0000-4000-8000-000000000001";
+const UNIT_B1 = "c1000001-0000-4000-8000-0000000000b1";
+const GOLDEN_BUNDLE_HASH = "3e1add8208f77c98fdddf5253c98bb18f533e5b3bf3d35d92ac444525080e136";
 
 function syntheticUnitId(i: number): string {
   // 8-4-4-4-12 hex groups, exactly `is_valid_feature_id`'s 36-byte contract.
@@ -378,6 +389,325 @@ describe("compileVenueBundle", () => {
       await expect(
         compileVenueBundle(Buffer.from(""), { datasetId: "x", version: 1 }, fake),
       ).rejects.toMatchObject({ name: "CoreCompileError", code: "bridge_error" });
+    });
+  });
+});
+
+describe("@kiriko/node inspectBundle (raw native contract)", () => {
+  it("exports a callable inspectBundle", () => {
+    expect(typeof inspectBundle).toBe("function");
+  });
+
+  it("resolves ok:true with the golden projection: whole-file hash, ordered levels, feature mappings", async () => {
+    const golden = await readFile(join(FIXTURES_DIR, "minimal.kvb"));
+    const response = await inspectBundle(golden);
+
+    expect(response.ok).toBe(true);
+    expect(response.errorJson).toBeUndefined();
+    const inspection = JSON.parse(response.inspectionJson ?? "null") as {
+      bundleHash: string;
+      levelIds: string[];
+      featureLevels: Array<[string, string | null]>;
+    };
+    expect(inspection.bundleHash).toBe(GOLDEN_BUNDLE_HASH);
+    expect(inspection.levelIds).toEqual([
+      LEVEL_2F,
+      "b1000002-0000-4000-8000-00000000001f",
+      LEVEL_1F,
+    ]);
+    expect(inspection.featureLevels).toHaveLength(27);
+    // A level feature maps to its own id; a unit maps to its level; the
+    // venue feature is level-independent (null).
+    expect(inspection.featureLevels).toContainEqual([LEVEL_1F, LEVEL_1F]);
+    expect(inspection.featureLevels).toContainEqual([UNIT_B1, LEVEL_1F]);
+    expect(inspection.featureLevels).toContainEqual([VENUE_ID, null]);
+  });
+
+  it("resolves ok:false with invalid_bundle for garbage bytes, never rejecting or crashing", async () => {
+    const response = await inspectBundle(Buffer.from("not a bundle"));
+    expect(response.ok).toBe(false);
+    expect(response.inspectionJson).toBeUndefined();
+    const error = JSON.parse(response.errorJson ?? "null") as { code: string; message: string };
+    expect(error.code).toBe("invalid_bundle");
+    expect(typeof error.message).toBe("string");
+  });
+
+  it("resolves every decode error code as data", async () => {
+    const golden = await readFile(join(FIXTURES_DIR, "minimal.kvb"));
+
+    const magic = Buffer.from(golden);
+    magic.writeUInt8(magic.readUInt8(0) ^ 0xff, 0);
+    const major = Buffer.from(golden);
+    major.writeUInt16LE(2, 4);
+    const frame = Buffer.from(golden);
+    frame.writeUInt8(frame.readUInt8(frame.length - 1) ^ 0xff, frame.length - 1);
+    const oversized = Buffer.from(golden);
+    oversized.writeBigUInt64LE(BigInt(512 * 1024 * 1024 + 1), 12);
+
+    const cases: Array<[Buffer, string]> = [
+      [magic, "invalid_bundle"],
+      [major, "unsupported_bundle_version"],
+      [frame, "bundle_integrity_failed"],
+      [oversized, "bundle_too_large"],
+    ];
+    for (const [bytes, code] of cases) {
+      const response = await inspectBundle(bytes);
+      expect(response.ok).toBe(false);
+      const error = JSON.parse(response.errorJson ?? "null") as { code: string };
+      expect(error.code).toBe(code);
+    }
+  });
+
+  it("inspects off the Node.js event loop: a setImmediate macrotask runs before the promise settles", async () => {
+    // Same construction as the compile event-loop test: `AsyncTask` must
+    // round-trip through libuv's thread pool, so the "check"-phase
+    // immediate always fires before the promise's microtask can settle.
+    const golden = await readFile(join(FIXTURES_DIR, "minimal.kvb"));
+    let settled = false;
+    const inspectPromise = inspectBundle(golden).then((r) => {
+      settled = true;
+      return r;
+    });
+    const immediateFiredBeforeSettle = await new Promise<boolean>((resolve) => {
+      setImmediate(() => resolve(!settled));
+    });
+    const result = await inspectPromise;
+    expect(result.ok).toBe(true);
+    expect(immediateFiredBeforeSettle).toBe(true);
+  });
+});
+
+describe("inspectVenueBundle", () => {
+  const goldenInspection = () => ({
+    bundleHash: GOLDEN_BUNDLE_HASH,
+    levelIds: ["l1", "l2"],
+    featureLevels: [
+      ["l1", "l1"],
+      ["l2", "l2"],
+      ["u1", "l1"],
+      ["v1", null],
+    ],
+  });
+
+  const fakeInspect =
+    (raw: unknown): ((bundle: Buffer) => Promise<unknown>) =>
+    async () =>
+      raw;
+
+  const okResponse = (inspection: unknown): NativeInspectResponse => ({
+    ok: true,
+    inspectionJson: JSON.stringify(inspection),
+  });
+
+  it("returns the anchor index for the golden bundle and stays responsive while inspecting", async () => {
+    const golden = await readFile(join(FIXTURES_DIR, "minimal.kvb"));
+    let immediate = false;
+    setImmediate(() => {
+      immediate = true;
+    });
+    const index = await inspectVenueBundle(golden, GOLDEN_BUNDLE_HASH);
+    expect(immediate).toBe(true);
+    expect(index.bundleHash).toBe(GOLDEN_BUNDLE_HASH);
+    expect(index.levelIds.size).toBe(3);
+    expect(index.levelIds.has(LEVEL_1F)).toBe(true);
+    expect(index.featureLevels.size).toBe(27);
+    expect(index.featureLevels.get(LEVEL_1F)).toBe(LEVEL_1F);
+    expect(index.featureLevels.get(UNIT_B1)).toBe(LEVEL_1F);
+    expect(index.featureLevels.get(VENUE_ID)).toBeNull();
+  });
+
+  it("rejects with bundle_hash_mismatch when the stored hash does not match the bytes", async () => {
+    const golden = await readFile(join(FIXTURES_DIR, "minimal.kvb"));
+    const wrong = "0".repeat(64);
+    await expect(inspectVenueBundle(golden, wrong)).rejects.toMatchObject({
+      name: "CoreInspectError",
+      code: "bundle_hash_mismatch",
+    });
+  });
+
+  it("rejects with bundle_hash_mismatch when the expected hash is not 64 lowercase hex chars", async () => {
+    const golden = await readFile(join(FIXTURES_DIR, "minimal.kvb"));
+    await expect(inspectVenueBundle(golden, GOLDEN_BUNDLE_HASH.toUpperCase())).rejects.toMatchObject({
+      name: "CoreInspectError",
+      code: "bundle_hash_mismatch",
+    });
+  });
+
+  it("maps corrupt stored bytes to the native decode codes as CoreInspectError", async () => {
+    const golden = await readFile(join(FIXTURES_DIR, "minimal.kvb"));
+    const magic = Buffer.from(golden);
+    magic.writeUInt8(magic.readUInt8(0) ^ 0xff, 0);
+    const major = Buffer.from(golden);
+    major.writeUInt16LE(2, 4);
+    const frame = Buffer.from(golden);
+    frame.writeUInt8(frame.readUInt8(frame.length - 1) ^ 0xff, frame.length - 1);
+    const oversized = Buffer.from(golden);
+    oversized.writeBigUInt64LE(BigInt(512 * 1024 * 1024 + 1), 12);
+
+    const cases: Array<[Buffer, string]> = [
+      [magic, "invalid_bundle"],
+      [major, "unsupported_bundle_version"],
+      [frame, "bundle_integrity_failed"],
+      [oversized, "bundle_too_large"],
+    ];
+    for (const [bytes, code] of cases) {
+      let caught: unknown;
+      try {
+        await inspectVenueBundle(bytes, GOLDEN_BUNDLE_HASH);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(CoreInspectError);
+      expect((caught as CoreInspectError).code).toBe(code);
+    }
+  });
+
+  describe("treats the native envelope as untrusted", () => {
+    const cases: Array<[string, unknown]> = [
+      ["null", null],
+      ["an array", ["ok"]],
+      ["a string", "ok"],
+      ["missing ok", { inspectionJson: "{}" }],
+      ["a truthy non-boolean ok", { ok: "yes", inspectionJson: "{}" }],
+      ["ok:true with inspectionJson absent", { ok: true }],
+      ["a non-string inspectionJson", { ok: true, inspectionJson: 42 }],
+      ["ok:false with errorJson absent", { ok: false }],
+      ["a non-string errorJson", { ok: false, errorJson: 42 }],
+    ];
+
+    it.each(cases)("rejects with bridge_error, never a raw TypeError, when the envelope is %s", async (_, raw) => {
+      let caught: unknown;
+      try {
+        await inspectVenueBundle(Buffer.from(""), GOLDEN_BUNDLE_HASH, fakeInspect(raw));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(CoreInspectError);
+      expect((caught as CoreInspectError).code).toBe("bridge_error");
+    });
+
+    it("normalizes a raw thrown error from the native function into CoreInspectError", async () => {
+      const fake = async (): Promise<unknown> => {
+        throw new TypeError("napi bridge exploded");
+      };
+      let caught: unknown;
+      try {
+        await inspectVenueBundle(Buffer.from(""), GOLDEN_BUNDLE_HASH, fake);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(CoreInspectError);
+      expect(caught).not.toBeInstanceOf(TypeError);
+      expect((caught as CoreInspectError).code).toBe("bridge_error");
+      expect((caught as CoreInspectError).message).toContain("napi bridge exploded");
+    });
+  });
+
+  describe("validates inspectionJson defensively before building the Set/Map", () => {
+    it("rejects inspectionJson that is not valid JSON", async () => {
+      await expect(
+        inspectVenueBundle(Buffer.from(""), GOLDEN_BUNDLE_HASH, fakeInspect({ ok: true, inspectionJson: "{nope" })),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code: "bridge_error" });
+    });
+
+    const malformed: Array<[string, unknown]> = [
+      ["a non-object payload", [1, 2]],
+      ["a missing bundleHash", { ...goldenInspection(), bundleHash: undefined }],
+      ["a non-string bundleHash", { ...goldenInspection(), bundleHash: 42 }],
+      ["an uppercase bundleHash", { ...goldenInspection(), bundleHash: GOLDEN_BUNDLE_HASH.toUpperCase() }],
+      ["a short bundleHash", { ...goldenInspection(), bundleHash: "abc123" }],
+      ["a non-array levelIds", { ...goldenInspection(), levelIds: "l1" }],
+      ["a non-string levelIds entry", { ...goldenInspection(), levelIds: ["l1", 2] }],
+      ["a duplicate levelIds entry", { ...goldenInspection(), levelIds: ["l1", "l1"], featureLevels: [["l1", "l1"]] }],
+      ["a non-array featureLevels", { ...goldenInspection(), featureLevels: "u1" }],
+      ["a non-array featureLevels entry", { ...goldenInspection(), featureLevels: ["u1"] }],
+      ["a 1-tuple featureLevels entry", { ...goldenInspection(), featureLevels: [["u1"]] }],
+      ["a 3-tuple featureLevels entry", { ...goldenInspection(), featureLevels: [["u1", "l1", "x"]] }],
+      ["a non-string feature id", { ...goldenInspection(), featureLevels: [[42, "l1"]] }],
+      ["a numeric level mapping", { ...goldenInspection(), featureLevels: [["u1", 42]] }],
+      ["an undefined level mapping", { ...goldenInspection(), featureLevels: [["u1"]] }],
+      [
+        "a duplicate feature id",
+        {
+          ...goldenInspection(),
+          featureLevels: [
+            ["l1", "l1"],
+            ["l2", "l2"],
+            ["u1", "l1"],
+            ["u1", "l2"],
+          ],
+        },
+      ],
+      [
+        "a level mapping that references an unknown level",
+        {
+          ...goldenInspection(),
+          featureLevels: [
+            ["l1", "l1"],
+            ["l2", "l2"],
+            ["u1", "l9"],
+          ],
+        },
+      ],
+    ];
+
+    it.each(malformed)("rejects %s with bridge_error", async (_, inspection) => {
+      await expect(
+        inspectVenueBundle(Buffer.from(""), GOLDEN_BUNDLE_HASH, fakeInspect(okResponse(inspection))),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code: "bridge_error" });
+    });
+
+    it("accepts a well-formed inspection and preserves null mappings and insertion order", async () => {
+      const index = await inspectVenueBundle(
+        Buffer.from(""),
+        GOLDEN_BUNDLE_HASH,
+        fakeInspect(okResponse(goldenInspection())),
+      );
+      expect(index.bundleHash).toBe(GOLDEN_BUNDLE_HASH);
+      expect([...index.levelIds]).toEqual(["l1", "l2"]);
+      expect([...index.featureLevels.entries()]).toEqual([
+        ["l1", "l1"],
+        ["l2", "l2"],
+        ["u1", "l1"],
+        ["v1", null],
+      ]);
+    });
+  });
+
+  describe("validates errorJson defensively", () => {
+    it("rejects a failure payload whose errorJson is not valid JSON", async () => {
+      await expect(
+        inspectVenueBundle(Buffer.from(""), GOLDEN_BUNDLE_HASH, fakeInspect({ ok: false, errorJson: "not json" })),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code: "bridge_error" });
+    });
+
+    it("rejects a failure payload whose errorJson has a non-string code", async () => {
+      await expect(
+        inspectVenueBundle(
+          Buffer.from(""),
+          GOLDEN_BUNDLE_HASH,
+          fakeInspect({ ok: false, errorJson: JSON.stringify({ code: 42, message: "m" }) }),
+        ),
+      ).rejects.toMatchObject({ name: "CoreInspectError", code: "bridge_error" });
+    });
+
+    it("preserves details from a structured native error", async () => {
+      let caught: unknown;
+      try {
+        await inspectVenueBundle(
+          Buffer.from(""),
+          GOLDEN_BUNDLE_HASH,
+          fakeInspect({
+            ok: false,
+            errorJson: JSON.stringify({ code: "invalid_bundle", message: "bad", details: { at: 12 } }),
+          }),
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(CoreInspectError);
+      expect((caught as CoreInspectError).code).toBe("invalid_bundle");
+      expect((caught as CoreInspectError).details).toEqual({ at: 12 });
     });
   });
 });

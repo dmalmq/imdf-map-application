@@ -1,10 +1,14 @@
 //! Public codec surface: compile IMDF source into a `kvb1` bundle, and
 //! encode/decode a [`BundleDocument`] to/from bundle bytes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::fmt::Write;
 
 use kiriko_model::import_imdf;
-use kiriko_model::model::{Bounds, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning};
+use kiriko_model::model::{
+    Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning,
+};
+use sha2::{Digest, Sha256};
 use serde::Deserialize;
 
 use crate::error::{BundleError, BundleErrorCode, CompileError};
@@ -177,6 +181,94 @@ pub fn decode_bundle(bytes: &[u8]) -> Result<BundleDocument, BundleError> {
     )?;
 
     sections::manifest_into_document(manifest_dto, features)
+}
+
+/// A pure anchor-level projection of a decoded bundle: the whole-file
+/// content hash, the level rows, and each feature's level relationship.
+///
+/// `bundle_hash` is the lowercase SHA-256 of the complete bundle bytes
+/// (envelope included) — the same value `blobs` content-addresses — not the
+/// envelope's payload digest. `level_ids` and `feature_levels` preserve the
+/// canonical decoded order.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleInspection {
+    pub bundle_hash: String,
+    pub level_ids: Vec<String>,
+    pub feature_levels: Vec<(String, Option<String>)>,
+}
+
+/// Decode `bytes` once via [`decode_bundle`] and project its level/feature
+/// relationships, validating the semantic invariants the codec itself does
+/// not enforce: level row IDs are unique, level rows and
+/// [`FeatureType::Level`] features correspond exactly, and every non-null
+/// `feature.level_id` references an existing level row. A
+/// [`FeatureType::Level`] feature maps to its own ID; every other feature
+/// maps to its `level_id` (null when level-independent).
+pub fn inspect_bundle(bytes: &[u8]) -> Result<BundleInspection, BundleError> {
+    let document = decode_bundle(bytes)?;
+
+    let mut level_ids = Vec::with_capacity(document.levels.len());
+    let mut level_rows: HashSet<&str> = HashSet::with_capacity(document.levels.len());
+    for level in &document.levels {
+        if !level_rows.insert(level.id.as_str()) {
+            return Err(BundleError::new(
+                BundleErrorCode::InvalidBundle,
+                format!("duplicate level row id {:?}", level.id),
+            ));
+        }
+        level_ids.push(level.id.clone());
+    }
+
+    let mut level_features: HashSet<&str> = HashSet::with_capacity(document.levels.len());
+    let mut feature_levels = Vec::with_capacity(document.features.len());
+    for feature in &document.features {
+        let level = if feature.feature_type == FeatureType::Level {
+            if !level_rows.contains(feature.id.as_str()) {
+                return Err(BundleError::new(
+                    BundleErrorCode::InvalidBundle,
+                    format!("level feature {:?} has no level row", feature.id),
+                ));
+            }
+            level_features.insert(feature.id.as_str());
+            Some(feature.id.clone())
+        } else {
+            if let Some(level_id) = &feature.level_id
+                && !level_rows.contains(level_id.as_str())
+            {
+                return Err(BundleError::new(
+                    BundleErrorCode::InvalidBundle,
+                    format!(
+                        "feature {:?} references unknown level {:?}",
+                        feature.id, level_id
+                    ),
+                ));
+            }
+            feature.level_id.clone()
+        };
+        feature_levels.push((feature.id.clone(), level));
+    }
+
+    for level_id in &level_ids {
+        if !level_features.contains(level_id.as_str()) {
+            return Err(BundleError::new(
+                BundleErrorCode::InvalidBundle,
+                format!("level row {level_id:?} has no level feature"),
+            ));
+        }
+    }
+
+    let digest = Sha256::digest(bytes);
+    let mut bundle_hash = String::with_capacity(64);
+    for byte in digest {
+        write!(bundle_hash, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+
+    Ok(BundleInspection {
+        bundle_hash,
+        level_ids,
+        feature_levels,
+    })
 }
 
 #[cfg(test)]
