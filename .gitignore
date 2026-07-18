@@ -6,3 +6,9 @@ playwright-report
 .pnpm-store
 .superpowers/
 .e2e-data/
+# Kiriko Rust core build outputs
+/core/target/
+core/crates/kiriko-node/index.js
+core/crates/kiriko-node/index.d.ts
+core/crates/kiriko-node/*.node
+core/crates/kiriko-wasm/pkg/

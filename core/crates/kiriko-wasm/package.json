@@ -1,0 +1,11 @@
+{
+  "name": "@kiriko/wasm",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "pkg"
+  ],
+  "scripts": {
+    "build": "wasm-pack build --target web --release --out-dir pkg"
+  }
+}

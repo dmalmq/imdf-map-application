@@ -1,0 +1,19 @@
+[package]
+name = "kiriko-node"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native Node.js bindings for Kiriko venue compilation (napi-rs)."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kiriko-model = { path = "../kiriko-model" }
+kiriko-bundle = { path = "../kiriko-bundle" }
+napi = { workspace = true }
+napi-derive = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }

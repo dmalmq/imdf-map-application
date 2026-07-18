@@ -1,0 +1,22 @@
+[package]
+name = "kiriko-wasm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Browser WASM bindings for Kiriko venue bundle decoding."
+
+[package.metadata.wasm-pack.profile.release]
+# The wasm-pack-bundled `wasm-opt` binary predates bulk-memory ops emitted by
+# the modern wasm32 target. Disable the optimizer pass; the emitted module is
+# valid and bulk-memory is universally supported by current browsers.
+wasm-opt = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kiriko-model = { path = "../kiriko-model" }
+kiriko-bundle = { path = "../kiriko-bundle" }
+wasm-bindgen = { workspace = true }
+serde-wasm-bindgen = { workspace = true }
