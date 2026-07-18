@@ -2,7 +2,9 @@ import { expect, test, type Request } from "@playwright/test";
 import {
   AMENITY_JA,
   clickBelowMarker,
+  collectIssueRequests,
   corruptZipBuffer,
+  dropZip,
   expectDetailsContain,
   expectWarningCodes,
   floorButton,
@@ -16,6 +18,7 @@ import {
   LEVEL_B1_SHORT,
   mapCanvas,
   mapContainer,
+  minimalImdfZipBuffer,
   markerByLabel,
   OCCUPANT_ALT_JA,
   OCCUPANT_EN,
@@ -39,6 +42,7 @@ test.describe("local IMDF ZIP viewer journey", () => {
   test("local upload → map → level → search → selection → details → warnings → compact → recovery", async ({
     page,
   }) => {
+    const issueRequests = collectIssueRequests(page);
     // No external network: after the static app load event, the only allowed
     // requests are same-origin font subsets (Noto Sans JP ships unicode-range
     // subsets that the browser fetches on demand as CJK glyphs render).
@@ -157,6 +161,18 @@ test.describe("local IMDF ZIP viewer journey", () => {
       networkRequests,
       `unexpected post-load network requests:\n${networkRequests.join("\n")}`,
     ).toEqual([]);
+    expect(issueRequests.requests).toEqual([]);
+    issueRequests.dispose();
+  });
+
+  test("genuine DataTransfer ZIP drop stays issue-free", async ({ page }) => {
+    const issueRequests = collectIssueRequests(page);
+    await page.goto(VIEWER_URL);
+    await dropZip(page, await minimalImdfZipBuffer());
+    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await expect(mapCanvas(page)).toBeVisible();
+    expect(issueRequests.requests).toEqual([]);
+    issueRequests.dispose();
   });
 
   test("search-selecting the B1 stairs unit switches level and shows details", async ({

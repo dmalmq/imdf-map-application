@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  collectIssueRequests,
   floorButton,
   LEVEL_2F_SHORT,
   LEVEL_B1_SHORT,
@@ -16,6 +17,7 @@ test.describe("embed deep links", () => {
   test("embed src deep link uses the ZIP path, hides chrome, and preselects the level", async ({
     page,
   }) => {
+    const issueRequests = collectIssueRequests(page);
     const sourceRequests: string[] = [];
     const datasetRequests: string[] = [];
     page.on("request", (request) => {
@@ -50,9 +52,12 @@ test.describe("embed deep links", () => {
     await expect(page.locator('input[type="file"]')).toHaveCount(1);
     expect(sourceRequests).toEqual([SRC_PARAM]);
     expect(datasetRequests).toEqual([]);
+    expect(issueRequests.requests).toEqual([]);
+    issueRequests.dispose();
   });
 
   test("non-embed deep link matches short_name case-insensitively", async ({ page }) => {
+    const issueRequests = collectIssueRequests(page);
     const buffer = await minimalImdfZipBuffer();
     await page.route(ZIP_ROUTE, (route) =>
       route.fulfill({ body: buffer, contentType: "application/zip" }),
@@ -63,6 +68,8 @@ test.describe("embed deep links", () => {
 
     // Query "2f" matched short_name "2F".
     await expect(floorButton(page, LEVEL_2F_SHORT)).toHaveAttribute("aria-pressed", "true");
+    expect(issueRequests.requests).toEqual([]);
+    issueRequests.dispose();
   });
 
   test("fetch failure surfaces the error and retry re-fetches", async ({ page }) => {
