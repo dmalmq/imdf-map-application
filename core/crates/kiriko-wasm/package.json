@@ -2,9 +2,19 @@
   "name": "@kiriko/wasm",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "files": [
     "pkg"
   ],
+  "main": "./pkg/kiriko_wasm.js",
+  "types": "./pkg/kiriko_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/kiriko_wasm.d.ts",
+      "default": "./pkg/kiriko_wasm.js"
+    },
+    "./pkg/*": "./pkg/*"
+  },
   "scripts": {
     "build": "wasm-pack build --target web --release --out-dir pkg"
   }

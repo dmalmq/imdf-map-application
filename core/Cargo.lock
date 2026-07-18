@@ -632,6 +632,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "serde_json",
 ]
 
 [[package]]
@@ -640,7 +641,9 @@ version = "0.1.0"
 dependencies = [
  "kiriko-bundle",
  "kiriko-model",
+ "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "wasm-bindgen",
 ]
 

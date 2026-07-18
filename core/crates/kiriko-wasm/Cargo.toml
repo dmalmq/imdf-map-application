@@ -20,3 +20,5 @@ kiriko-model = { path = "../kiriko-model" }
 kiriko-bundle = { path = "../kiriko-bundle" }
 wasm-bindgen = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
