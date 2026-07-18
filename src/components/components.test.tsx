@@ -10,6 +10,8 @@ import { InspectorPanel } from "./InspectorPanel";
 import { LayersPanel } from "./LayersPanel";
 import { SearchPanel } from "./SearchPanel";
 import { WarningsPanel } from "./WarningsPanel";
+import { ViewerErrorNotice } from "./ViewerNotice";
+import { VenueLoadError, venueLoadErrorCopy } from "../errors/VenueLoadError";
 
 const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
@@ -351,5 +353,70 @@ describe("ImdfDropzone", () => {
     openBtn.focus();
     await user.keyboard(" ");
     expect(onOpenPicker).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ViewerErrorNotice", () => {
+  it("shows bundle download copy for a bundle-provenance fetch_failed error", () => {
+    const error = new VenueLoadError(
+      "fetch_failed",
+      "Could not download the Kiriko bundle.",
+      { src: "/v/default/tokyo/bundle" },
+      "bundle",
+    );
+    render(<ViewerErrorNotice error={error} locale="en" onRetry={() => {}} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("bundle");
+    expect(alert.textContent).not.toContain("archive");
+    expect(alert.textContent).not.toContain("CORS");
+  });
+
+  it("shows bundle retry copy for a bundle-provenance worker_failed error", () => {
+    const error = new VenueLoadError(
+      "worker_failed",
+      "wasm trap: unreachable executed",
+      undefined,
+      "bundle",
+    );
+    render(<ViewerErrorNotice error={error} locale="en" />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("bundle");
+    expect(alert.textContent).not.toContain("archive");
+    expect(alert.textContent).not.toContain("wasm trap");
+  });
+
+  it("keeps ZIP archive copy for direct-archive fetch_failed and worker_failed errors", () => {
+    const fetchError = new VenueLoadError("fetch_failed", "Could not download IMDF archive.");
+    const { unmount } = render(<ViewerErrorNotice error={fetchError} locale="en" />);
+    expect(screen.getByRole("alert").textContent).toContain(venueLoadErrorCopy.fetch_failed);
+    expect(screen.getByRole("alert").textContent).toContain("Could not load archive");
+    unmount();
+
+    const workerError = new VenueLoadError("worker_failed", "boom");
+    render(<ViewerErrorNotice error={workerError} locale="en" />);
+    expect(screen.getByRole("alert").textContent).toContain(venueLoadErrorCopy.worker_failed);
+    expect(screen.getByRole("alert").textContent).toContain("archive");
+  });
+
+  it("keeps the four stable bundle codes corrective and never leaks message or details", () => {
+    const codes = [
+      "invalid_bundle",
+      "unsupported_bundle_version",
+      "bundle_integrity_failed",
+      "bundle_too_large",
+    ] as const;
+    for (const code of codes) {
+      const error = new VenueLoadError(
+        code,
+        "kvb sha mismatch: deadbeef",
+        { expected: "deadbeef" },
+        "bundle",
+      );
+      const { unmount } = render(<ViewerErrorNotice error={error} locale="en" />);
+      const alert = screen.getByRole("alert");
+      expect(alert.textContent).toContain(venueLoadErrorCopy[code]);
+      expect(alert.textContent).not.toContain("deadbeef");
+      unmount();
+    }
   });
 });

@@ -528,6 +528,57 @@ describe("IMDF archive boundary (loadArchive)", () => {
     // Entry was not parsed as IMDF: venue still loads and retains fixture labels.
     expect(result.venue.venue.labels["en"]).toBe(VENUE_EN);
   });
+  it("projects features in canonical feature-type order for mixed-case standard filenames", async () => {
+    const lowerBytes = await buildMinimalImdfZip();
+    // Same accepted standard file, uppercase first letter: 'V' (0x56) sorts
+    // before 'a' (0x61) in any naive lexicographic filename sort, so casing
+    // must not leak into the feature projection order.
+    const mixedBytes = patchZipEntryName(lowerBytes, "venue.geojson", "Venue.geojson");
+
+    const lowerResult = await tryLoadArchive(asFile(lowerBytes, "lower.zip"));
+    const mixedResult = await tryLoadArchive(asFile(mixedBytes, "mixed.zip"));
+    expect(lowerResult.type).toBe("loaded");
+    expect(mixedResult.type).toBe("loaded");
+    if (lowerResult.type !== "loaded" || mixedResult.type !== "loaded") {
+      return;
+    }
+
+    // Identical projection order regardless of accepted-name casing.
+    expect([...mixedResult.venue.featuresById.keys()]).toEqual([
+      ...lowerResult.venue.featuresById.keys(),
+    ]);
+    // Canonical FEATURE_TYPE_ORDER: address first, venue last (matches Rust).
+    const types = [...mixedResult.venue.featuresById.values()].map(
+      (feature) => feature.featureType,
+    );
+    expect(types[0]).toBe("address");
+    expect(types[types.length - 1]).toBe("venue");
+    expect(mixedResult.venue.warnings).toEqual(lowerResult.venue.warnings);
+    expect(mixedResult.venue.searchEntries).toEqual(lowerResult.venue.searchEntries);
+  });
+
+  it("orders unknown-entry warnings by UTF-8 byte order, not UTF-16 code units", async () => {
+    // U+FF41 FULLWIDTH LATIN SMALL A: UTF-8 EF BD 81, UTF-16 code unit 0xFF41.
+    const fullwidth = "\uFF41.txt";
+    // U+10000 LINEAR B SYLLABLE B008 A: UTF-8 F0 90 80 80, UTF-16 D800 DC00.
+    // UTF-16 sorts it BEFORE U+FF41 (0xD800 < 0xFF41); UTF-8 byte order (the
+    // Rust importer's order) sorts it AFTER (0xF0 > 0xEF).
+    const astral = "\u{10000}.txt";
+    const bytes = await buildMinimalImdfZip({
+      extraEntries: { [fullwidth]: "not imdf", [astral]: "not imdf" },
+    });
+    const result = await tryLoadArchive(asFile(bytes));
+    expect(result.type).toBe("loaded");
+    if (result.type !== "loaded") {
+      return;
+    }
+    const unknown = result.venue.warnings.filter(
+      (warning) => warning.code === "unknown_archive_entry",
+    );
+    expect(unknown.map((warning) => warning.archiveEntry)).toEqual([fullwidth, astral]);
+    expect(unknown[0]?.message).toBe(`Ignored unknown archive entry ${fullwidth}.`);
+    expect(unknown[1]?.message).toBe(`Ignored unknown archive entry ${astral}.`);
+  });
 
   it("produces an equivalent LoadedVenue projection and warning order regardless of ZIP record order", async () => {
     const fixtureDir = path.join(

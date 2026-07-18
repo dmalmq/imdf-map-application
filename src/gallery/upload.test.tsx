@@ -66,6 +66,70 @@ describe("UploadModal", () => {
     expect(await screen.findByText(/not a ZIP archive/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Publish" })).toBeTruthy();
   });
+  it("renders corrective copy instead of raw structured JSON for a failed publish job", async () => {
+    createVenue.mockResolvedValue({ id: 10, slug: "bad-imdf", name: "bad-imdf" });
+    uploadVersion.mockResolvedValue({ jobId: "j3" });
+    waitForJob.mockResolvedValue({
+      status: "error",
+      error: JSON.stringify({
+        code: "missing_required_file",
+        message: "importer: manifest.json is missing from the archive root",
+        details: { entry: "manifest.json" },
+      }),
+    });
+    const user = userEvent.setup();
+    render(<UploadModal locale="en" onClose={() => {}} onPublished={() => {}} />);
+
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("bad-imdf.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("missing a required IMDF file");
+    expect(alert.textContent).not.toContain("{");
+    expect(alert.textContent).not.toContain("manifest.json");
+    expect(alert.textContent).not.toContain("missing_required_file");
+  });
+
+  it("hides internal structured error messages behind generic corrective copy", async () => {
+    createVenue.mockResolvedValue({ id: 11, slug: "crash", name: "crash" });
+    uploadVersion.mockResolvedValue({ jobId: "j4" });
+    waitForJob.mockResolvedValue({
+      status: "error",
+      error: JSON.stringify({
+        code: "internal_error",
+        message: "SQLITE_BUSY: database is locked at /var/lib/kiriko/data.db",
+      }),
+    });
+    const user = userEvent.setup();
+    render(<UploadModal locale="en" onClose={() => {}} onPublished={() => {}} />);
+
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("crash.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).not.toContain("SQLITE_BUSY");
+    expect(alert.textContent).not.toContain("{");
+    expect(alert.textContent?.length).toBeGreaterThan(0);
+  });
+
+  it("never renders malformed JSON job errors verbatim", async () => {
+    createVenue.mockResolvedValue({ id: 12, slug: "weird", name: "weird" });
+    uploadVersion.mockResolvedValue({ jobId: "j5" });
+    waitForJob.mockResolvedValue({
+      status: "error",
+      error: '{"unexpected":true,"stack":["a","b"]}',
+    });
+    const user = userEvent.setup();
+    render(<UploadModal locale="en" onClose={() => {}} onPublished={() => {}} />);
+
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("weird.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).not.toContain("{");
+    expect(alert.textContent).not.toContain("unexpected");
+    expect(alert.textContent?.length).toBeGreaterThan(0);
+  });
 
   it("disables the header close button while uploading", async () => {
     createVenue.mockResolvedValue({ id: 9, slug: "slow", name: "slow" });

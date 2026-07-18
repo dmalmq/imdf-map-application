@@ -33,6 +33,49 @@ export class ApiError extends Error {
 export function datasetBundleUrl(slug: string): string {
   return `/v/default/${slug}/bundle`;
 }
+/**
+ * Corrective copy for the stable structured error codes a failed publish job
+ * persists as `{"code","message","details"?}` JSON (kiriko-model importer
+ * codes plus publish-runner codes). Server messages and details are internal
+ * and never shown to the user.
+ */
+const publishErrorCopy: Record<string, string | undefined> = {
+  unsupported_file: "This file is not a valid IMDF ZIP archive.",
+  archive_too_large:
+    "This archive exceeds the 100 MiB compressed or 300 MiB uncompressed limit.",
+  unsafe_archive_path: "This archive contains an unsafe file path and was rejected.",
+  invalid_archive: "This ZIP is encrypted, damaged, or has conflicting archive records.",
+  missing_required_file: "This archive is missing a required IMDF file.",
+  invalid_json: "One of the IMDF files is not valid JSON.",
+  invalid_manifest_version: "This archive must use IMDF manifest version 1.0.0.",
+  invalid_feature_collection: "One of the IMDF GeoJSON files has an invalid feature collection.",
+  duplicate_feature_id: "The archive contains the same IMDF feature ID more than once.",
+  stale_version: "This upload was replaced before publishing finished. Upload the archive again.",
+};
+
+const publishFailedFallback = "Publishing failed on the server. Try uploading the archive again.";
+
+/**
+ * Turns a persisted publish-job error string into readable corrective copy.
+ * Structured JSON errors map by stable code; unknown or malformed JSON falls
+ * back to generic copy (never raw JSON or internal messages); pre-structured
+ * plain text (legacy rows, client-side "timed out") passes through unchanged.
+ */
+export function publishErrorMessage(raw: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const code = (parsed as { code?: unknown }).code;
+    if (typeof code === "string") {
+      return publishErrorCopy[code] ?? publishFailedFallback;
+    }
+  }
+  return publishFailedFallback;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {

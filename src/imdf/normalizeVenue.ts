@@ -11,6 +11,33 @@ import type {
   ViewerWarning,
 } from "./types";
 
+/**
+ * Canonical IMDF feature-type order shared with the Rust importer
+ * (`core/crates/kiriko-model/src/model.rs::FEATURE_TYPE_ORDER`). Feature
+ * projection iterates collections in this order — never in object/Map
+ * insertion order — so the result is independent of ZIP record order and
+ * accepted-filename casing. Within each collection, source array order is
+ * retained.
+ */
+export const FEATURE_TYPE_ORDER: readonly FeatureType[] = [
+  "address",
+  "amenity",
+  "anchor",
+  "building",
+  "detail",
+  "fixture",
+  "footprint",
+  "geofence",
+  "kiosk",
+  "level",
+  "occupant",
+  "opening",
+  "relationship",
+  "section",
+  "unit",
+  "venue",
+];
+
 const DISPLAY_POINT_FEATURE_TYPES: Partial<Record<FeatureType, true>> = {
   unit: true,
   opening: true,
@@ -195,7 +222,7 @@ export function normalizeVenue(archive: ParsedImdfArchive): LoadedVenue {
   const featuresById = new Map<string, ViewerFeature>();
   const rawById = new Map<string, RawFeature>();
 
-  for (const featureType of Object.keys(archive.collections) as FeatureType[]) {
+  for (const featureType of FEATURE_TYPE_ORDER) {
     const collection = archive.collections[featureType];
     if (collection === undefined) {
       continue;

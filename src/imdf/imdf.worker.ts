@@ -19,7 +19,7 @@ import {
   MAX_TOTAL_UNCOMPRESSED_BYTES,
 } from "./archiveLimits";
 import type { ImdfWorkerRequest, ImdfWorkerResponse } from "./loadImdfArchive";
-import { normalizeVenue } from "./normalizeVenue";
+import { FEATURE_TYPE_ORDER, normalizeVenue } from "./normalizeVenue";
 import type {
   FeatureType,
   ImdfManifest,
@@ -84,6 +84,18 @@ function isUnsafePath(filename: string): boolean {
     return true;
   }
   return false;
+}
+
+/** Lexicographic UTF-8 byte comparison; a strict prefix sorts first. */
+function compareUtf8(a: Uint8Array, b: Uint8Array): number {
+  const shared = Math.min(a.length, b.length);
+  for (let i = 0; i < shared; i++) {
+    const diff = a[i]! - b[i]!;
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return a.length - b.length;
 }
 
 function isZipMagic(bytes: Uint8Array): boolean {
@@ -336,20 +348,28 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
     mapZipJsError(error);
   }
 
-  // Sort entries bytewise by filename before validation/import so archives
-  // with identical root files in different ZIP record order produce
-  // identical `LoadedVenue` projections and warning order. Matches the Rust
-  // importer's canonical `tests/support/mod.rs` archive-builder sort.
-  entries = [...entries].sort((a, b) =>
-    a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0,
-  );
-
   try {
     if (entries.length > MAX_ARCHIVE_ENTRIES) {
       fail("archive_too_large", venueLoadErrorCopy.archive_too_large, {
         entryCount: entries.length,
       });
     }
+
+    // Sort entries by UTF-8 byte order of their exact filenames before
+    // validation/import so archives with identical root files in different
+    // ZIP record order produce identical `LoadedVenue` projections and
+    // warning order. Matches the Rust importer's bytewise
+    // `sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()))`; JS `<`/`>`
+    // and localeCompare compare UTF-16 code units, which order
+    // supplementary-plane names differently. Filename bytes are encoded once
+    // per entry (entry count is bounded above).
+    const encoder = new TextEncoder();
+    const sortable = entries.map((entry) => ({
+      entry,
+      nameBytes: encoder.encode(entry.filename),
+    }));
+    sortable.sort((a, b) => compareUtf8(a.nameBytes, b.nameBytes));
+    entries = sortable.map((item) => item.entry);
 
     let declaredTotal = 0;
     const seenNames = new Map<string, true>();
@@ -486,9 +506,8 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
     }
 
     const seenIds = new Map<string, true>();
-    for (const [featureType, collection] of Object.entries(collections) as Array<
-      [FeatureType, GeoJSON.FeatureCollection | undefined]
-    >) {
+    for (const featureType of FEATURE_TYPE_ORDER) {
+      const collection = collections[featureType];
       if (collection === undefined) {
         continue;
       }

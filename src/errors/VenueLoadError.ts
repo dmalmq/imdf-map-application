@@ -15,11 +15,15 @@ export type VenueLoadErrorCode =
   | "bundle_integrity_failed"
   | "bundle_too_large";
 
+/** Which loader produced the error: direct ZIP archive paths or published `.kvb` bundles. */
+export type VenueLoadSource = "archive" | "bundle";
+
 export class VenueLoadError extends Error {
   constructor(
     readonly code: VenueLoadErrorCode,
     message: string,
     readonly details?: Record<string, unknown>,
+    readonly source: VenueLoadSource = "archive",
   ) {
     super(message);
     this.name = "VenueLoadError";
@@ -47,3 +51,24 @@ export const venueLoadErrorCopy: Record<VenueLoadErrorCode, string> = {
   bundle_integrity_failed: "This venue bundle failed an integrity check and could not be trusted.",
   bundle_too_large: "This venue bundle exceeds the viewer\u2019s size limit.",
 };
+
+/**
+ * Bundle-provenance overrides for the codes shared with the ZIP loader.
+ * Codes without an override (including the four kvb1-only codes, whose
+ * base copy is already bundle-specific) fall through to `venueLoadErrorCopy`.
+ */
+const bundleLoadErrorCopy: Partial<Record<VenueLoadErrorCode, string>> = {
+  fetch_failed: "The venue bundle could not be downloaded. Check the link and try the bundle again.",
+  worker_failed: "The venue could not be processed. Try loading the bundle again.",
+};
+
+/** Corrective copy for `error`, honoring bundle vs archive provenance; never the raw message or details. */
+export function venueLoadErrorMessage(error: VenueLoadError): string {
+  if (error.source === "bundle") {
+    const override = bundleLoadErrorCopy[error.code];
+    if (override !== undefined) {
+      return override;
+    }
+  }
+  return venueLoadErrorCopy[error.code];
+}

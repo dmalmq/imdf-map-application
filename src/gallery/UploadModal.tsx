@@ -1,6 +1,6 @@
 import { useRef, useState, type DragEvent } from "react";
 import type { LocaleCode } from "../imdf/types";
-import { api } from "./api";
+import { api, publishErrorMessage } from "./api";
 import { IconClose } from "../components/icons";
 
 const ui = {
@@ -70,7 +70,7 @@ export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) 
           setPhase({ step: "done", slug: venue.slug });
           onPublished();
         } else {
-          setPhase({ step: "failed", message: job.error });
+          setPhase({ step: "failed", message: publishErrorMessage(job.error) });
         }
       } catch (error) {
         setPhase({ step: "failed", message: error instanceof Error ? error.message : String(error) });

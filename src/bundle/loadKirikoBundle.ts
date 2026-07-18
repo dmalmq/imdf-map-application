@@ -70,14 +70,11 @@ function rebuildVenueLoadError(payload: {
   message: string;
   details?: Record<string, unknown>;
 }): VenueLoadError {
-  if (payload.details !== undefined) {
-    return new VenueLoadError(payload.code, payload.message, payload.details);
-  }
-  return new VenueLoadError(payload.code, payload.message);
+  return new VenueLoadError(payload.code, payload.message, payload.details, "bundle");
 }
 
 function workerFailedError(): VenueLoadError {
-  return new VenueLoadError("worker_failed", BUNDLE_WORKER_FAILED_MESSAGE);
+  return new VenueLoadError("worker_failed", BUNDLE_WORKER_FAILED_MESSAGE, undefined, "bundle");
 }
 
 /**
@@ -100,13 +97,15 @@ export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promi
     if (error instanceof DOMException && error.name === "AbortError") {
       throw error;
     }
-    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", { src });
+    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", { src }, "bundle");
   }
   if (!response.ok) {
-    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", {
-      src,
-      status: response.status,
-    });
+    throw new VenueLoadError(
+      "fetch_failed",
+      "Could not download the Kiriko bundle.",
+      { src, status: response.status },
+      "bundle",
+    );
   }
 
   let buffer: ArrayBuffer;
@@ -116,7 +115,7 @@ export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promi
     if (error instanceof DOMException && error.name === "AbortError") {
       throw error;
     }
-    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", { src });
+    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", { src }, "bundle");
   }
 
   if (signal?.aborted) {

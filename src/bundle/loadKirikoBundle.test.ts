@@ -447,6 +447,53 @@ describe("loadKirikoBundle", () => {
     );
     expect(worker.terminate).toHaveBeenCalledTimes(1);
   });
+  it("marks fetch_failed rejections with bundle provenance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 404 } as unknown as Response),
+    );
+
+    const error = await loadKirikoBundle(SRC).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("fetch_failed");
+    expect((error as VenueLoadError).source).toBe("bundle");
+  });
+
+  it("marks worker_failed rejections with bundle provenance", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(new Event("error"));
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("worker_failed");
+    expect((error as VenueLoadError).source).toBe("bundle");
+  });
+
+  it("marks rebuilt structured worker failures with bundle provenance", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          type: "failed",
+          error: { code: "bundle_integrity_failed", message: "sha mismatch", details: { expected: "aa" } },
+        },
+      }),
+    );
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("bundle_integrity_failed");
+    expect((error as VenueLoadError).details).toMatchObject({ expected: "aa" });
+    expect((error as VenueLoadError).source).toBe("bundle");
+  });
 
   it("creates independent workers for truly concurrent calls, each resolving and terminating independently", async () => {
     const buffer1 = new ArrayBuffer(4);

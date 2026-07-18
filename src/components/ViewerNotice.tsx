@@ -1,9 +1,12 @@
-import { venueLoadErrorCopy } from "../errors/VenueLoadError";
+import { venueLoadErrorMessage } from "../errors/VenueLoadError";
 import type { VenueLoadError } from "../errors/VenueLoadError";
 import type { LocaleCode } from "../imdf/types";
 
 const ui = {
-  errorTitle: { ja: "読み込みに失敗しました", en: "Could not load archive" },
+  errorTitle: {
+    archive: { ja: "読み込みに失敗しました", en: "Could not load archive" },
+    bundle: { ja: "読み込みに失敗しました", en: "Could not load venue bundle" },
+  },
   retry: { ja: "再試行", en: "Retry" },
 } as const;
 
@@ -14,10 +17,10 @@ export interface ViewerErrorNoticeProps {
 }
 
 export function ViewerErrorNotice({ error, locale, onRetry }: ViewerErrorNoticeProps) {
-  const copy = venueLoadErrorCopy[error.code];
+  const copy = venueLoadErrorMessage(error);
   return (
     <div className="viewer-notice viewer-notice--error" role="alert">
-      <p className="viewer-notice__title">{ui.errorTitle[locale]}</p>
+      <p className="viewer-notice__title">{ui.errorTitle[error.source][locale]}</p>
       <p className="viewer-notice__body">{copy}</p>
       {onRetry ? (
         <button type="button" className="viewer-notice__retry" onClick={onRetry}>
