@@ -1,14 +1,16 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IssueApiError, type IssueApiClient } from "./api";
 import type {
   CreateIssueInput,
   IssueCollection,
   IssueMutationResponse,
+  IssueState,
   ReviewIssue,
 } from "./types";
 import {
   useIssueSync,
+  type IssueController,
   type IssueEventSource,
   type IssueSyncOptions,
 } from "./useIssueSync";
@@ -532,5 +534,69 @@ describe("useIssueSync", () => {
     unmount();
     expect(signal.aborted).toBe(true);
     expect(sources[0]!.closed).toBe(true);
+  });
+
+  it("never exposes previous-version state to consumers during an identity change render", async () => {
+    const first = deferred<IssueCollection>();
+    const getIssues = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValue(new Promise<IssueCollection>(() => {}));
+    const { options } = harness(api({ getIssues }));
+    const snapshots: Array<{ prop: string | null; state: IssueState }> = [];
+    let controller!: IssueController;
+
+    function Consumer({ prop, value }: { prop: string | null; value: IssueController }) {
+      snapshots.push({ prop, state: value.state });
+      controller = value;
+      return null;
+    }
+    function Probe({ prop }: { prop: string | null }) {
+      return <Consumer prop={prop} value={useIssueSync(prop, options)} />;
+    }
+
+    const view = render(<Probe prop={PUBLIC_A} />);
+    await act(async () => {
+      first.resolve(collection(3, [issue("issue-a")]));
+    });
+    act(() => {
+      controller.ui.selectIssue("issue-a");
+      controller.ui.startDraft({ levelId: "level-1", longitude: 1, latitude: 2 });
+    });
+    expect(controller.state.collection).toEqual(collection(3, [issue("issue-a")]));
+    expect(controller.state.draft?.requestId).toBe(REQUEST_ID);
+
+    view.rerender(<Probe prop={PUBLIC_B} />);
+    view.rerender(<Probe prop={null} />);
+
+    for (const { prop, state } of snapshots) {
+      expect(state.publicVersionId).toBe(prop);
+      if (prop !== PUBLIC_A) {
+        expect(state.collection).toBeNull();
+        expect(state.selectedIssueId).toBeNull();
+        expect(state.draft).toBeNull();
+        expect(state.highestObservedRevision).toBe(0);
+        expect(state.appliedRevision).toBe(0);
+      }
+    }
+  });
+
+  it("synchronously releases the draft UUID guard when the identity changes", async () => {
+    const randomUUID = vi.fn()
+      .mockReturnValueOnce(REQUEST_ID)
+      .mockReturnValueOnce("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const { options } = harness(api(), randomUUID);
+    const { result, rerender } = renderHook(
+      ({ publicId }) => useIssueSync(publicId, options),
+      { initialProps: { publicId: PUBLIC_A as string | null } },
+    );
+    await flush();
+    act(() => result.current.ui.startDraft({ levelId: "level-1", longitude: 1, latitude: 2 }));
+    expect(result.current.state.draft?.requestId).toBe(REQUEST_ID);
+
+    rerender({ publicId: PUBLIC_B });
+    expect(result.current.state.draft).toBeNull();
+    act(() => result.current.ui.startDraft({ levelId: "level-2", longitude: 3, latitude: 4 }));
+    expect(result.current.state.draft?.requestId).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect(randomUUID).toHaveBeenCalledTimes(2);
   });
 });

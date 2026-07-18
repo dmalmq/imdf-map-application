@@ -33,3 +33,7 @@ Controlled promises and a fake EventSource cover initial GET, immediate/burst re
 ## Self-review
 
 Four review passes found and verified fixes for six adversarial ordering defects; the final reviewer marked the implementation ready with 0.98 confidence. No App, panel, map, viewer reducer, `VenueLoadError`, or canonical optimistic-patch integration was added. No known concerns remain.
+
+## Post-commit fix: render-phase identity gate
+
+Main's controller review found that `version_reset` was effect-only, so the A→B or A→null transition render could expose the previous version's collection/selection/draft/revisions beside the new identity. RED first: a consumer-component snapshot test proved a committed render carried prop B with state A; a second test covers synchronous draft-UUID guard release. Fix: `useIssueSync` now dispatches `version_reset` during render whenever `state.publicVersionId !== publicVersionId` (React's adjust-state-while-rendering pattern; no conditional hooks), so consumers only ever see identity-consistent state while effects retain network cleanup/setup. GREEN: 38 focused tests and `pnpm typecheck` pass.

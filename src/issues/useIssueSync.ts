@@ -106,6 +106,14 @@ export function useIssueSync(
   const createEventSource = options.createEventSource ?? createNativeEventSource;
   const randomUUID = options.randomUUID ?? createUuid;
   const [state, dispatch] = useReducer(issueReducer, publicVersionId, initialIssueState);
+
+  // Render-phase identity gate: an A→B or A→null transition must never expose
+  // the previous version's collection, selection, draft, or revisions to a
+  // consumer render. React reprocesses this dispatch before children render;
+  // effects below still own network cleanup/setup for the new identity.
+  if (state.publicVersionId !== publicVersionId) {
+    dispatch({ type: "version_reset", publicVersionId });
+  }
   const stateRef = useRef(state);
   const publicIdRef = useRef(publicVersionId);
   const generationRef = useRef(0);
