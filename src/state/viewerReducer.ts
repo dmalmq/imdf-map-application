@@ -1,4 +1,4 @@
-import type { ArchiveError } from "../errors/ArchiveError";
+import type { VenueLoadError } from "../errors/VenueLoadError";
 import type { LoadedVenue, LocaleCode, ViewerLevel } from "../imdf/types";
 import type { SearchCategory } from "../search/searchVenue";
 
@@ -22,7 +22,7 @@ export type ViewerState =
   | ({ status: "ready"; locale: LocaleCode } & ReadyVenueState)
   | {
       status: "error";
-      error: ArchiveError;
+      error: VenueLoadError;
       locale: LocaleCode;
       previous?: ReadyVenueState;
     };
@@ -30,7 +30,7 @@ export type ViewerState =
 export type ViewerAction =
   | { type: "load_started"; fileName: string }
   | { type: "load_succeeded"; fileName: string; venue: LoadedVenue; requestedLevel?: string }
-  | { type: "load_failed"; fileName: string; error: ArchiveError }
+  | { type: "load_failed"; fileName: string; error: VenueLoadError }
   | { type: "select_level"; levelId: string }
   | { type: "select_feature"; featureId: string | null; levelId?: string }
   | { type: "set_search_text"; text: string }

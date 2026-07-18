@@ -11,7 +11,7 @@ import type {
   ViewerLevel,
   ViewerWarning,
 } from "../imdf/types";
-import { ArchiveError, archiveErrorCopy } from "../errors/ArchiveError";
+import { VenueLoadError, venueLoadErrorCopy } from "../errors/VenueLoadError";
 
 const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
@@ -259,7 +259,7 @@ describe("App", () => {
     expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
   });
 
-  it("shows archiveErrorCopy in role=alert and keeps the previous venue when replacement fails", async () => {
+  it("shows venueLoadErrorCopy in role=alert and keeps the previous venue when replacement fails", async () => {
     const venue = buildMinimalVenue();
     loadImdfArchiveMock.mockResolvedValueOnce(venue);
 
@@ -270,13 +270,13 @@ describe("App", () => {
     });
     const mapBefore = screen.getByTestId("indoor-map-stub");
 
-    const failure = new ArchiveError("invalid_archive", "bad zip");
+    const failure = new VenueLoadError("invalid_archive", "bad zip");
     loadImdfArchiveMock.mockRejectedValueOnce(failure);
 
     await uploadViaHiddenInput(zipFile("bad.zip"));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(archiveErrorCopy.invalid_archive);
+    expect(alert.textContent).toContain(venueLoadErrorCopy.invalid_archive);
     // Previous venue name remains visible.
     expect(screen.getByText("テスト駅")).toBeTruthy();
     // Map still present (previous venue retained).
@@ -462,13 +462,13 @@ describe("App deep links", () => {
 
   it("fetch failure shows fetch_failed copy and retry re-fetches", async () => {
     const user = userEvent.setup();
-    fetchImdfFileMock.mockRejectedValueOnce(new ArchiveError("fetch_failed", "download failed"));
+    fetchImdfFileMock.mockRejectedValueOnce(new VenueLoadError("fetch_failed", "download failed"));
     window.history.replaceState(null, "", "/?src=/venues/minimal.zip&embed=1");
 
     render(<App />);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(archiveErrorCopy.fetch_failed);
+    expect(alert.textContent).toContain(venueLoadErrorCopy.fetch_failed);
     expect(fetchImdfFileMock).toHaveBeenCalledTimes(1);
 
     const venue = buildMinimalVenue();

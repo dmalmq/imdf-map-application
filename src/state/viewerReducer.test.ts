@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ArchiveError } from "../errors/ArchiveError";
+import { VenueLoadError } from "../errors/VenueLoadError";
 import type { LoadedVenue, ViewerFeature, ViewerLevel } from "../imdf/types";
 import {
   initialViewerState,
@@ -267,7 +267,7 @@ describe("viewerReducer stale suppression", () => {
     ).toBe(initialViewerState);
     const failed: ViewerState = {
       status: "error",
-      error: new ArchiveError("invalid_archive", "bad"),
+      error: new VenueLoadError("invalid_archive", "bad"),
       locale: "ja",
     };
     expect(
@@ -280,7 +280,7 @@ describe("viewerReducer stale suppression", () => {
       type: "load_started",
       fileName: "current.zip",
     });
-    const error = new ArchiveError("invalid_archive", "bad");
+    const error = new VenueLoadError("invalid_archive", "bad");
     expect(
       viewerReducer(loading, { type: "load_failed", fileName: "stale.zip", error }),
     ).toBe(loading);
@@ -298,7 +298,7 @@ describe("viewerReducer replacement / valid-map preservation", () => {
     if (loading.status !== "loading") return;
     expect(loading.previous?.fileName).toBe("good.zip");
 
-    const error = new ArchiveError("invalid_json", "broken");
+    const error = new VenueLoadError("invalid_json", "broken");
     const failed = viewerReducer(loading, {
       type: "load_failed",
       fileName: "bad.zip",
@@ -320,7 +320,7 @@ describe("viewerReducer replacement / valid-map preservation", () => {
     const failed = viewerReducer(loading, {
       type: "load_failed",
       fileName: "bad.zip",
-      error: new ArchiveError("invalid_archive", "nope"),
+      error: new VenueLoadError("invalid_archive", "nope"),
     });
     const again = viewerReducer(failed, { type: "load_started", fileName: "retry.zip" });
     expect(again.status).toBe("loading");
@@ -334,7 +334,7 @@ describe("viewerReducer replacement / valid-map preservation", () => {
       type: "load_started",
       fileName: "a.zip",
     });
-    const error = new ArchiveError("unsupported_file", "nope");
+    const error = new VenueLoadError("unsupported_file", "nope");
     const failed = viewerReducer(loading, {
       type: "load_failed",
       fileName: "a.zip",
@@ -427,7 +427,7 @@ describe("viewerReducer set_locale", () => {
       readyState(),
       {
         status: "error",
-        error: new ArchiveError("worker_failed", "x"),
+        error: new VenueLoadError("worker_failed", "x"),
         locale: "ja",
       },
     ];

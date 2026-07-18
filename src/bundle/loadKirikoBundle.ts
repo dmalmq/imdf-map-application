@@ -1,19 +1,8 @@
 import { VenueLoadError, type VenueLoadErrorCode } from "../errors/VenueLoadError";
-import type { LoadedVenue } from "./types";
-import ImdfWorker from "./imdf.worker?worker&inline";
-
-export type ImdfWorkerRequest = { type: "load"; file: File };
-
-export type ImdfWorkerResponse =
-  | { type: "loaded"; venue: LoadedVenue }
-  | {
-      type: "failed";
-      error: {
-        code: VenueLoadErrorCode;
-        message: string;
-        details?: Record<string, unknown>;
-      };
-    };
+import type { LoadedVenue } from "../imdf/types";
+import { hydrateVenue } from "./hydrateVenue";
+import type { BundleDecodeRequest, BundleWorkerResponse } from "./types";
+import BundleWorker from "./bundle.worker?worker&inline";
 
 function isVenueLoadErrorCode(value: unknown): value is VenueLoadErrorCode {
   return (
@@ -27,11 +16,15 @@ function isVenueLoadErrorCode(value: unknown): value is VenueLoadErrorCode {
     value === "invalid_feature_collection" ||
     value === "duplicate_feature_id" ||
     value === "worker_failed" ||
-    value === "fetch_failed"
+    value === "fetch_failed" ||
+    value === "invalid_bundle" ||
+    value === "unsupported_bundle_version" ||
+    value === "bundle_integrity_failed" ||
+    value === "bundle_too_large"
   );
 }
 
-function isWorkerResponse(value: unknown): value is ImdfWorkerResponse {
+function isWorkerResponse(value: unknown): value is BundleWorkerResponse {
   if (value === null || typeof value !== "object") {
     return false;
   }
@@ -70,24 +63,54 @@ function rebuildVenueLoadError(payload: {
 function workerFailedError(): VenueLoadError {
   return new VenueLoadError(
     "worker_failed",
-    "The venue could not be processed. Try the archive again.",
+    "The venue could not be processed. Try loading the bundle again.",
   );
 }
 
 /**
- * Load and normalize an IMDF ZIP on a dedicated module worker. Creates one
- * worker per call and always terminates it. AbortSignal termination rejects
- * with a DOMException named `AbortError`.
+ * Fetches and decodes a Kiriko `.kvb` bundle on a dedicated module worker.
+ * Creates one worker per call, transfers the fetched buffer to it (never
+ * cloned), and always terminates it on every terminal path. `AbortSignal`
+ * termination — before the fetch starts, mid-fetch, or mid-decode — rejects
+ * with `DOMException("Aborted", "AbortError")`. Responses arriving after an
+ * abort are ignored.
  */
-export async function loadImdfArchive(
-  file: File,
-  signal?: AbortSignal,
-): Promise<LoadedVenue> {
+export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promise<LoadedVenue> {
   if (signal?.aborted) {
-    throw new DOMException("The IMDF load was aborted.", "AbortError");
+    throw new DOMException("Aborted", "AbortError");
   }
 
-  const worker = new ImdfWorker();
+  let response: Response;
+  try {
+    response = await fetch(src, { signal: signal ?? null });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
+    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", { src });
+  }
+  if (!response.ok) {
+    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", {
+      src,
+      status: response.status,
+    });
+  }
+
+  let buffer: ArrayBuffer;
+  try {
+    buffer = await response.arrayBuffer();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
+    throw new VenueLoadError("fetch_failed", "Could not download the Kiriko bundle.", { src });
+  }
+
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  const worker = new BundleWorker();
 
   return new Promise<LoadedVenue>((resolve, reject) => {
     let settled = false;
@@ -111,7 +134,7 @@ export async function loadImdfArchive(
     const onAbort = (): void => {
       settle(() => {
         worker.terminate();
-        reject(new DOMException("The IMDF load was aborted.", "AbortError"));
+        reject(new DOMException("Aborted", "AbortError"));
       });
     };
 
@@ -124,16 +147,26 @@ export async function loadImdfArchive(
         });
         return;
       }
-      if (data.type === "loaded") {
+      if (data.type === "failed") {
         settle(() => {
           worker.terminate();
-          resolve(data.venue);
+          reject(rebuildVenueLoadError(data.error));
+        });
+        return;
+      }
+      let venue: LoadedVenue;
+      try {
+        venue = hydrateVenue(data.venue);
+      } catch (error) {
+        settle(() => {
+          worker.terminate();
+          reject(error instanceof VenueLoadError ? error : workerFailedError());
         });
         return;
       }
       settle(() => {
         worker.terminate();
-        reject(rebuildVenueLoadError(data.error));
+        resolve(venue);
       });
     };
 
@@ -156,9 +189,9 @@ export async function loadImdfArchive(
     worker.addEventListener("messageerror", onMessageError);
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    const request: ImdfWorkerRequest = { type: "load", file };
+    const request: BundleDecodeRequest = { type: "decode", buffer };
     try {
-      worker.postMessage(request);
+      worker.postMessage(request, [buffer]);
     } catch {
       settle(() => {
         worker.terminate();

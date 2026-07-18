@@ -20,7 +20,7 @@ import { SearchPanel } from "../components/SearchPanel";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { WarningsPanel } from "../components/WarningsPanel";
 import { ZoomCluster } from "../components/ZoomCluster";
-import { ArchiveError } from "../errors/ArchiveError";
+import { VenueLoadError } from "../errors/VenueLoadError";
 import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
 import { loadImdfArchive } from "../imdf/loadImdfArchive";
 import { localizedLabel } from "../imdf/localize";
@@ -97,12 +97,12 @@ function isAbortError(error: unknown): boolean {
   return false;
 }
 
-function toArchiveError(error: unknown): ArchiveError {
-  if (error instanceof ArchiveError) {
+function toVenueLoadError(error: unknown): VenueLoadError {
+  if (error instanceof VenueLoadError) {
     return error;
   }
   const message = error instanceof Error ? error.message : "Unknown worker failure";
-  return new ArchiveError("worker_failed", message);
+  return new VenueLoadError("worker_failed", message);
 }
 
 function activeVenue(state: ViewerState): ReadyVenueState | null {
@@ -251,7 +251,7 @@ export function App() {
           if (isAbortError(error)) {
             return;
           }
-          dispatch({ type: "load_failed", fileName, error: toArchiveError(error) });
+          dispatch({ type: "load_failed", fileName, error: toVenueLoadError(error) });
         })
         .finally(() => {
           if (token === attemptTokenRef.current) {

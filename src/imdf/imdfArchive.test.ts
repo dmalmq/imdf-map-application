@@ -9,7 +9,7 @@ import {
   configure,
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
-import { ArchiveError } from "../errors/ArchiveError";
+import { VenueLoadError } from "../errors/VenueLoadError";
 import {
   MAX_ARCHIVE_ENTRIES,
   MAX_ENTRY_UNCOMPRESSED_BYTES,
@@ -36,7 +36,7 @@ function asFile(bytes: Uint8Array, name = "venue.zip"): File {
 }
 
 /**
- * `loadArchive` throws ArchiveError on the worker path; the message handler
+ * `loadArchive` throws VenueLoadError on the worker path; the message handler
  * serializes those into `{type:"failed"}`. Tests exercise the same boundary
  * by mapping throws to the worker response shape.
  */
@@ -44,7 +44,7 @@ async function tryLoadArchive(file: File): Promise<ImdfWorkerResponse> {
   try {
     return await loadArchive(file);
   } catch (error) {
-    if (error instanceof ArchiveError) {
+    if (error instanceof VenueLoadError) {
       if (error.details !== undefined) {
         return {
           type: "failed",

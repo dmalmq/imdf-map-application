@@ -1,5 +1,5 @@
-import { archiveErrorCopy } from "../errors/ArchiveError";
-import type { ArchiveError } from "../errors/ArchiveError";
+import { venueLoadErrorCopy } from "../errors/VenueLoadError";
+import type { VenueLoadError } from "../errors/VenueLoadError";
 import type { LocaleCode } from "../imdf/types";
 
 const ui = {
@@ -8,13 +8,13 @@ const ui = {
 } as const;
 
 export interface ViewerErrorNoticeProps {
-  error: ArchiveError;
+  error: VenueLoadError;
   locale: LocaleCode;
   onRetry?: () => void;
 }
 
 export function ViewerErrorNotice({ error, locale, onRetry }: ViewerErrorNoticeProps) {
-  const copy = archiveErrorCopy[error.code];
+  const copy = venueLoadErrorCopy[error.code];
   return (
     <div className="viewer-notice viewer-notice--error" role="alert">
       <p className="viewer-notice__title">{ui.errorTitle[locale]}</p>

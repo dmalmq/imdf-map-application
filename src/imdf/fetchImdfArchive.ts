@@ -1,4 +1,4 @@
-import { ArchiveError } from "../errors/ArchiveError";
+import { VenueLoadError } from "../errors/VenueLoadError";
 
 /**
  * Display/File name derived from the src URL's last path segment; ".zip" is
@@ -26,7 +26,7 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-/** Downloads an IMDF ZIP; failures surface as ArchiveError "fetch_failed" except aborts, which rethrow as-is. */
+/** Downloads an IMDF ZIP; failures surface as VenueLoadError "fetch_failed" except aborts, which rethrow as-is. */
 export async function fetchImdfFile(src: string, signal?: AbortSignal): Promise<File> {
   let response: Response;
   try {
@@ -35,10 +35,10 @@ export async function fetchImdfFile(src: string, signal?: AbortSignal): Promise<
     if (isAbortError(error)) {
       throw error;
     }
-    throw new ArchiveError("fetch_failed", "Could not download IMDF archive.", { src });
+    throw new VenueLoadError("fetch_failed", "Could not download IMDF archive.", { src });
   }
   if (!response.ok) {
-    throw new ArchiveError("fetch_failed", "Could not download IMDF archive.", {
+    throw new VenueLoadError("fetch_failed", "Could not download IMDF archive.", {
       src,
       status: response.status,
     });
@@ -50,7 +50,7 @@ export async function fetchImdfFile(src: string, signal?: AbortSignal): Promise<
     if (isAbortError(error)) {
       throw error;
     }
-    throw new ArchiveError("fetch_failed", "Could not download IMDF archive.", { src });
+    throw new VenueLoadError("fetch_failed", "Could not download IMDF archive.", { src });
   }
   return new File([blob], fileNameFromSrc(src), { type: "application/zip" });
 }
