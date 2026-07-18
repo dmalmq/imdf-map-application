@@ -1,27 +1,31 @@
 import { VenueLoadError, type VenueLoadErrorCode } from "../errors/VenueLoadError";
 import type { LoadedVenue } from "../imdf/types";
 import { hydrateVenue } from "./hydrateVenue";
+import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
 import type { BundleDecodeRequest, BundleWorkerResponse } from "./types";
 import BundleWorker from "./bundle.worker?worker&inline";
 
-function isVenueLoadErrorCode(value: unknown): value is VenueLoadErrorCode {
-  return (
-    value === "unsupported_file" ||
-    value === "archive_too_large" ||
-    value === "unsafe_archive_path" ||
-    value === "invalid_archive" ||
-    value === "missing_required_file" ||
-    value === "invalid_json" ||
-    value === "invalid_manifest_version" ||
-    value === "invalid_feature_collection" ||
-    value === "duplicate_feature_id" ||
-    value === "worker_failed" ||
-    value === "fetch_failed" ||
-    value === "invalid_bundle" ||
-    value === "unsupported_bundle_version" ||
-    value === "bundle_integrity_failed" ||
-    value === "bundle_too_large"
-  );
+/**
+ * The only codes a bundle-worker `{type:"failed"}` response may legitimately
+ * carry: the four `kvb1` domain codes plus the shared runtime/protocol
+ * `worker_failed`. ZIP-only codes (`fetch_failed`, `invalid_archive`, …)
+ * never originate from `bundle.worker.ts` and are rejected as malformed.
+ */
+const BUNDLE_WORKER_FAILURE_CODES: Record<string, true> = {
+  invalid_bundle: true,
+  unsupported_bundle_version: true,
+  bundle_integrity_failed: true,
+  bundle_too_large: true,
+  worker_failed: true,
+};
+
+function isBundleWorkerFailureCode(value: unknown): value is VenueLoadErrorCode {
+  return typeof value === "string" && BUNDLE_WORKER_FAILURE_CODES[value] === true;
+}
+
+/** `details`, when present, must be a non-null, non-array plain object. */
+function isValidErrorDetails(value: unknown): boolean {
+  return value === undefined || (value !== null && typeof value === "object" && !Array.isArray(value));
 }
 
 function isWorkerResponse(value: unknown): value is BundleWorkerResponse {
@@ -41,9 +45,10 @@ function isWorkerResponse(value: unknown): value is BundleWorkerResponse {
     const error = value.error;
     return (
       "code" in error &&
-      isVenueLoadErrorCode(error.code) &&
+      isBundleWorkerFailureCode(error.code) &&
       "message" in error &&
-      typeof error.message === "string"
+      typeof error.message === "string" &&
+      (!("details" in error) || isValidErrorDetails(error.details))
     );
   }
   return false;
@@ -61,10 +66,7 @@ function rebuildVenueLoadError(payload: {
 }
 
 function workerFailedError(): VenueLoadError {
-  return new VenueLoadError(
-    "worker_failed",
-    "The venue could not be processed. Try loading the bundle again.",
-  );
+  return new VenueLoadError("worker_failed", BUNDLE_WORKER_FAILED_MESSAGE);
 }
 
 /**
@@ -73,7 +75,7 @@ function workerFailedError(): VenueLoadError {
  * cloned), and always terminates it on every terminal path. `AbortSignal`
  * termination — before the fetch starts, mid-fetch, or mid-decode — rejects
  * with `DOMException("Aborted", "AbortError")`. Responses arriving after an
- * abort are ignored.
+ * abort (or after any other terminal path) are ignored.
  */
 export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promise<LoadedVenue> {
   if (signal?.aborted) {

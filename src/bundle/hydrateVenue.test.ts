@@ -202,4 +202,53 @@ describe("hydrateVenue", () => {
     dto.features = dto.features.map((f) => (f.id === UNIT_ID ? { ...f, featureType: "mystery" } : f));
     expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
   });
+
+  it("rejects a decoded bundle containing a duplicate feature ID", () => {
+    const dto = baseDto();
+    dto.features = [...dto.features, { ...dto.features[dto.features.length - 1]! }];
+    expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
+  });
+
+  it("rejects a decoded bundle whose venueId resolves to a non-venue feature", () => {
+    const dto = baseDto({ venueId: UNIT_ID });
+    expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
+  });
+
+  it("rejects a decoded bundle containing more than one venue feature", () => {
+    const dto = baseDto();
+    const secondVenue = feature({
+      id: "a1000009-0000-4000-8000-000000000009",
+      featureType: "venue",
+      labels: { en: "Second Venue" },
+    });
+    dto.features = [...dto.features, secondVenue];
+    expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
+  });
+
+  it("rejects a decoded bundle with duplicate level IDs in the levels list", () => {
+    const dto = baseDto();
+    dto.levels = [...dto.levels, { ...dto.levels[0]! }];
+    expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
+  });
+
+  it("rejects a decoded bundle whose level id does not resolve to a level feature", () => {
+    const dto = baseDto();
+    dto.levels = dto.levels.map((l) => (l.id === LEVEL_1F ? { ...l, id: UNIT_ID } : l));
+    expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
+  });
+
+  it("rejects a decoded bundle that omits a level feature from the levels list", () => {
+    const dto = baseDto();
+    const level3Id = "b1000003-0000-4000-8000-000000000003";
+    const level3Feature = feature({
+      id: level3Id,
+      featureType: "level",
+      geometry: { type: "Point", coordinates: [139.767, 35.682] },
+      labels: { en: "3F" },
+      sourceProperties: { ordinal: 2 },
+    });
+    dto.features = [...dto.features, level3Feature];
+    // dto.levels intentionally left without an entry for level3Id.
+    expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
+  });
 });

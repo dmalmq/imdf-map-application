@@ -74,25 +74,59 @@ function toViewerFeature(dto: DecodedVenueDto["features"][number]): ViewerFeatur
  */
 export function hydrateVenue(dto: DecodedVenueDto): LoadedVenue {
   const featuresById = new Map<string, ViewerFeature>();
+  const levelFeatureIds = new Set<string>();
+  let venueFeatureCount = 0;
   for (const featureDto of dto.features) {
     const feature = toViewerFeature(featureDto);
+    if (featuresById.has(feature.id)) {
+      throw invalidBundle("Decoded bundle contains a duplicate feature ID.", {
+        featureId: feature.id,
+      });
+    }
     featuresById.set(feature.id, feature);
+    if (feature.featureType === "venue") {
+      venueFeatureCount += 1;
+    }
+    if (feature.featureType === "level") {
+      levelFeatureIds.add(feature.id);
+    }
   }
 
+  if (venueFeatureCount !== 1) {
+    throw invalidBundle("Decoded bundle must contain exactly one venue feature.", {
+      count: venueFeatureCount,
+    });
+  }
   const venue = featuresById.get(dto.venueId);
-  if (venue === undefined) {
-    throw invalidBundle("Decoded bundle is missing its venue feature.", {
+  if (venue === undefined || venue.featureType !== "venue") {
+    throw invalidBundle("Decoded bundle venueId does not name the venue feature.", {
       venueId: dto.venueId,
     });
   }
 
-  const levels: ViewerLevel[] = dto.levels.map((level) => ({
-    id: level.id,
-    ordinal: level.ordinal,
-    label: level.label,
-    shortName: level.shortName,
-  }));
-  const levelIds = new Set(levels.map((level) => level.id));
+  const levelIds = new Set<string>();
+  const levels: ViewerLevel[] = [];
+  for (const level of dto.levels) {
+    if (levelIds.has(level.id)) {
+      throw invalidBundle("Decoded bundle contains a duplicate level ID.", {
+        levelId: level.id,
+      });
+    }
+    if (!levelFeatureIds.has(level.id)) {
+      throw invalidBundle("Decoded bundle level does not resolve to a level feature.", {
+        levelId: level.id,
+      });
+    }
+    levelIds.add(level.id);
+    levels.push({ id: level.id, ordinal: level.ordinal, label: level.label, shortName: level.shortName });
+  }
+  for (const levelFeatureId of levelFeatureIds) {
+    if (!levelIds.has(levelFeatureId)) {
+      throw invalidBundle("Decoded bundle level feature is missing from the levels list.", {
+        featureId: levelFeatureId,
+      });
+    }
+  }
 
   for (const feature of featuresById.values()) {
     if (feature.levelId !== null && !levelIds.has(feature.levelId)) {

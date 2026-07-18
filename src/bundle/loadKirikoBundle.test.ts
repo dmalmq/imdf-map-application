@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VenueLoadError } from "../errors/VenueLoadError";
 
-const { createdWorkers, FakeBundleWorker } = vi.hoisted(() => {
+const { createdWorkers, FakeBundleWorker, postMessageBehavior } = vi.hoisted(() => {
+  const behavior: { throwOnPostMessage: boolean } = { throwOnPostMessage: false };
   class BaseFakeBundleWorker extends EventTarget {
-    postMessage = vi.fn();
+    postMessage = vi.fn((..._args: unknown[]) => {
+      if (behavior.throwOnPostMessage) {
+        throw new Error("postMessage failed");
+      }
+    });
     terminate = vi.fn();
   }
   const created: BaseFakeBundleWorker[] = [];
@@ -13,7 +18,11 @@ const { createdWorkers, FakeBundleWorker } = vi.hoisted(() => {
       created.push(this);
     }
   }
-  return { createdWorkers: created, FakeBundleWorker: TrackedFakeBundleWorker };
+  return {
+    createdWorkers: created,
+    FakeBundleWorker: TrackedFakeBundleWorker,
+    postMessageBehavior: behavior,
+  };
 });
 
 vi.mock("./bundle.worker?worker&inline", () => ({ default: FakeBundleWorker }));
@@ -39,6 +48,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   hydrateVenueMock.mockReset();
   createdWorkers.length = 0;
+  postMessageBehavior.throwOnPostMessage = false;
 });
 
 describe("loadKirikoBundle", () => {
@@ -222,5 +232,226 @@ describe("loadKirikoBundle", () => {
     worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: {} } }));
     expect(hydrateVenueMock).not.toHaveBeenCalled();
     expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects with a fetch_failed VenueLoadError when reading the response body fails", async () => {
+    const response = {
+      ok: true,
+      status: 200,
+      arrayBuffer: vi.fn().mockRejectedValue(new TypeError("body stream error")),
+    } as unknown as Response;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+
+    const error = await loadKirikoBundle(SRC).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("fetch_failed");
+    expect(createdWorkers).toHaveLength(0);
+  });
+
+  it("rethrows an AbortError raised while reading the response body unchanged", async () => {
+    const abort = new DOMException("Aborted", "AbortError");
+    const response = {
+      ok: true,
+      status: 200,
+      arrayBuffer: vi.fn().mockRejectedValue(abort),
+    } as unknown as Response;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+
+    const error = await loadKirikoBundle(SRC).catch((e: unknown) => e);
+    expect(error).toBe(abort);
+    expect(createdWorkers).toHaveLength(0);
+  });
+
+  it("aborts a pending fetch through the supplied signal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, options?: { signal?: AbortSignal | null }) => {
+        return new Promise<Response>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      }),
+    );
+    const controller = new AbortController();
+
+    const promise = loadKirikoBundle(SRC, controller.signal);
+    controller.abort();
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe("AbortError");
+    expect(createdWorkers).toHaveLength(0);
+  });
+
+  it("rejects with a worker_failed VenueLoadError and terminates when postMessage throws synchronously", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    postMessageBehavior.throwOnPostMessage = true;
+
+    const error = await loadKirikoBundle(SRC).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("worker_failed");
+    expect(createdWorkers).toHaveLength(1);
+    expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects with a worker_failed VenueLoadError and terminates on a messageerror event", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(new Event("messageerror"));
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("worker_failed");
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects with the exact VenueLoadError thrown by hydrateVenue, passed through unchanged", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    const hydrationFailure = new VenueLoadError("invalid_bundle", "bad references", { featureId: "x" });
+    hydrateVenueMock.mockImplementationOnce(() => {
+      throw hydrationFailure;
+    });
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: {} } }));
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBe(hydrationFailure);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("wraps a generic hydrateVenue throw into a worker_failed VenueLoadError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    hydrateVenueMock.mockImplementationOnce(() => {
+      throw new TypeError("unexpected shape");
+    });
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: {} } }));
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("worker_failed");
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a failed message carrying a ZIP-only code as malformed, not a reconstructed VenueLoadError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "failed", error: { code: "fetch_failed", message: "should never happen" } },
+      }),
+    );
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("worker_failed");
+    expect((error as VenueLoadError).message).not.toBe("should never happen");
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["null", null],
+    ["an array", ["oops"]],
+    ["a scalar", "oops"],
+  ] as const)(
+    "treats a failed message with %s details as malformed, not a reconstructed VenueLoadError",
+    async (_label, details) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+
+      const promise = loadKirikoBundle(SRC);
+      await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+      const worker = createdWorkers[0]!;
+      worker.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "failed", error: { code: "invalid_bundle", message: "x", details } },
+        }),
+      );
+
+      const error = await promise.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(VenueLoadError);
+      expect((error as VenueLoadError).code).toBe("worker_failed");
+      expect(worker.terminate).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("accepts a failed message with valid plain-object details and preserves them", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          type: "failed",
+          error: { code: "bundle_too_large", message: "too big", details: { bytes: 999 } },
+        },
+      }),
+    );
+
+    const error = await promise.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("bundle_too_large");
+    expect((error as VenueLoadError).details).toEqual({ bytes: 999 });
+  });
+
+  it("ignores a stale event after a normal successful resolution", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    const hydrated = { n: "final" };
+    hydrateVenueMock.mockReturnValueOnce(hydrated);
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: {} } }));
+    await expect(promise).resolves.toBe(hydrated);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+
+    worker.dispatchEvent(new Event("error"));
+    worker.dispatchEvent(
+      new MessageEvent("message", { data: { type: "failed", error: { code: "worker_failed", message: "x" } } }),
+    );
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates independent workers for truly concurrent calls, each resolving and terminating independently", async () => {
+    const buffer1 = new ArrayBuffer(4);
+    const buffer2 = new ArrayBuffer(4);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(okResponse(buffer1)).mockResolvedValueOnce(okResponse(buffer2)),
+    );
+
+    const first = loadKirikoBundle(SRC);
+    const second = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(2));
+
+    hydrateVenueMock.mockReturnValueOnce({ n: 1 }).mockReturnValueOnce({ n: 2 });
+    createdWorkers[0]!.dispatchEvent(
+      new MessageEvent("message", { data: { type: "loaded", venue: {} } }),
+    );
+    createdWorkers[1]!.dispatchEvent(
+      new MessageEvent("message", { data: { type: "loaded", venue: {} } }),
+    );
+
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1).toEqual({ n: 1 });
+    expect(r2).toEqual({ n: 2 });
+    expect(createdWorkers[0]).not.toBe(createdWorkers[1]);
+    expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);
+    expect(createdWorkers[1]!.terminate).toHaveBeenCalledTimes(1);
   });
 });

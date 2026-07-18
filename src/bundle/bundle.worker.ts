@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { venueLoadErrorCopy } from "../errors/VenueLoadError";
+import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
 import type { BundleDecodeRequest, BundleWorkerResponse } from "./types";
 import { decodeBundle, initKirikoWasm } from "./wasm";
 
@@ -11,7 +12,10 @@ declare const self: DedicatedWorkerGlobalScope;
  * `@kiriko/wasm` adapter (`initKirikoWasm`/`decodeBundle` in `./wasm`).
  * Never throws: every failure — domain (bundle-format) or runtime (WASM
  * init/decode exception) — resolves to a `{type:"failed"}` response carrying
- * corrective copy, never the raw WASM/Rust message.
+ * corrective copy, never the raw WASM/Rust message. Domain failures use the
+ * per-code corrective copy (`venueLoadErrorCopy`); runtime/protocol
+ * failures use the shared bundle-specific `worker_failed` wording
+ * (`BUNDLE_WORKER_FAILED_MESSAGE`), not the ZIP loader's copy.
  */
 export async function decodeBundleMessage(
   request: BundleDecodeRequest,
@@ -27,7 +31,7 @@ export async function decodeBundleMessage(
   } catch {
     return {
       type: "failed",
-      error: { code: "worker_failed", message: venueLoadErrorCopy.worker_failed },
+      error: { code: "worker_failed", message: BUNDLE_WORKER_FAILED_MESSAGE },
     };
   }
 }
@@ -43,7 +47,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     if (data === null || typeof data !== "object" || data.type !== "decode") {
       const response: BundleWorkerResponse = {
         type: "failed",
-        error: { code: "worker_failed", message: venueLoadErrorCopy.worker_failed },
+        error: { code: "worker_failed", message: BUNDLE_WORKER_FAILED_MESSAGE },
       };
       self.postMessage(response);
       return;

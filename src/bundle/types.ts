@@ -28,3 +28,13 @@ export interface BundleDecodeFailure {
 }
 
 export type BundleWorkerResponse = BundleDecodeSuccess | BundleDecodeFailure;
+
+/**
+ * Shared wire `message` for `worker_failed` bundle-worker failures (WASM
+ * init/decode exceptions, worker protocol violations). Deliberately
+ * separate from `venueLoadErrorCopy.worker_failed` in `../errors/VenueLoadError`,
+ * which is the ZIP-loader-flavored corrective copy shared across every
+ * `VenueLoadError` code and must stay unchanged.
+ */
+export const BUNDLE_WORKER_FAILED_MESSAGE =
+  "The venue could not be processed. Try loading the bundle again.";
