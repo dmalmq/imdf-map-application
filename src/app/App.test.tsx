@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -142,6 +142,12 @@ vi.mock("../imdf/loadImdfArchive", () => ({
   loadImdfArchive: (...args: unknown[]) => loadImdfArchiveMock(...args),
 }));
 
+const loadKirikoBundleMock = vi.fn();
+
+vi.mock("../bundle/loadKirikoBundle", () => ({
+  loadKirikoBundle: (...args: unknown[]) => loadKirikoBundleMock(...args),
+}));
+
 const fetchImdfFileMock = vi.fn();
 
 vi.mock("../imdf/fetchImdfArchive", async (importOriginal) => {
@@ -203,6 +209,8 @@ async function uploadViaHiddenInput(file: File): Promise<void> {
 describe("App", () => {
   beforeEach(() => {
     loadImdfArchiveMock.mockReset();
+    loadKirikoBundleMock.mockReset();
+    fetchImdfFileMock.mockReset();
   });
 
   afterEach(() => {
@@ -257,6 +265,25 @@ describe("App", () => {
     });
     expect(screen.getByText("テスト駅")).toBeTruthy();
     expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    expect(loadImdfArchiveMock).toHaveBeenCalledWith(expect.any(File), expect.any(AbortSignal));
+    expect(fetchImdfFileMock).not.toHaveBeenCalled();
+    expect(loadKirikoBundleMock).not.toHaveBeenCalled();
+  });
+  it("routes dropped ZIP files only through the local archive loader", async () => {
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+    render(<App />);
+    const dropzone = document.querySelector(".imdf-dropzone");
+    expect(dropzone).toBeTruthy();
+
+    fireEvent.drop(dropzone!, {
+      dataTransfer: { files: [zipFile("dropped.zip")], types: ["Files"] },
+    });
+
+    await waitFor(() => {
+      expect(loadImdfArchiveMock).toHaveBeenCalledWith(expect.any(File), expect.any(AbortSignal));
+    });
+    expect(fetchImdfFileMock).not.toHaveBeenCalled();
+    expect(loadKirikoBundleMock).not.toHaveBeenCalled();
   });
 
   it("shows venueLoadErrorCopy in role=alert and keeps the previous venue when replacement fails", async () => {
@@ -408,6 +435,7 @@ describe("App deep links", () => {
   beforeEach(() => {
     loadImdfArchiveMock.mockReset();
     fetchImdfFileMock.mockReset();
+    loadKirikoBundleMock.mockReset();
   });
 
   afterEach(() => {
@@ -415,11 +443,140 @@ describe("App deep links", () => {
     window.history.replaceState(null, "", "/");
   });
 
+  it("routes dataset deep links only through the bundle loader and preserves viewer params", async () => {
+    loadKirikoBundleMock.mockResolvedValue(buildMinimalVenue());
+    window.history.replaceState(
+      null,
+      "",
+      "/?dataset=tokyo-station&level=2f&embed=1&lang=en",
+    );
+
+    const { container } = render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+    expect(loadKirikoBundleMock).toHaveBeenCalledWith(
+      "/v/default/tokyo-station/bundle",
+      expect.any(AbortSignal),
+    );
+    expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
+    expect(fetchImdfFileMock).not.toHaveBeenCalled();
+    expect(loadImdfArchiveMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
+    expect(screen.getByTestId("indoor-map-stub").getAttribute("data-locale")).toBe("en");
+    expect(container.querySelector(".context-bar")).toBeNull();
+    expect(container.querySelector(".icon-rail")).toBeNull();
+  });
+
+  it("retries a failed dataset through the same bundle provenance only", async () => {
+    const user = userEvent.setup();
+    loadKirikoBundleMock.mockRejectedValueOnce(
+      new VenueLoadError("bundle_integrity_failed", "bad bundle"),
+    );
+    window.history.replaceState(null, "", "/?dataset=tokyo-station");
+    render(<App />);
+
+    await screen.findByRole("alert");
+    loadKirikoBundleMock.mockResolvedValueOnce(buildMinimalVenue());
+    await user.click(screen.getByRole("button", { name: "再試行" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+    expect(loadKirikoBundleMock).toHaveBeenCalledTimes(2);
+    expect(loadKirikoBundleMock).toHaveBeenNthCalledWith(
+      1,
+      "/v/default/tokyo-station/bundle",
+      expect.any(AbortSignal),
+    );
+    expect(loadKirikoBundleMock).toHaveBeenNthCalledWith(
+      2,
+      "/v/default/tokyo-station/bundle",
+      expect.any(AbortSignal),
+    );
+    expect(fetchImdfFileMock).not.toHaveBeenCalled();
+    expect(loadImdfArchiveMock).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed local replacement without switching back to dataset provenance", async () => {
+    const user = userEvent.setup();
+    loadKirikoBundleMock.mockResolvedValueOnce(buildMinimalVenue());
+    window.history.replaceState(null, "", "/?dataset=tokyo-station");
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("テスト駅")).toBeTruthy();
+    });
+
+    loadImdfArchiveMock.mockRejectedValueOnce(
+      new VenueLoadError("invalid_archive", "bad local zip"),
+    );
+    await uploadViaHiddenInput(zipFile("replacement.zip"));
+    await screen.findByRole("alert");
+    expect(screen.getByText("テスト駅")).toBeTruthy();
+
+    const replacementVenue = buildMinimalVenue({
+      venue: {
+        ...VENUE_FEATURE,
+        labels: { ja: "置換会場", en: "Replacement Venue" },
+      },
+    });
+    loadImdfArchiveMock.mockResolvedValueOnce(replacementVenue);
+    await user.click(screen.getByRole("button", { name: "再試行" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("置換会場")).toBeTruthy();
+    });
+    expect(loadImdfArchiveMock).toHaveBeenCalledTimes(2);
+    expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
+    expect(fetchImdfFileMock).not.toHaveBeenCalled();
+  });
+
+  it("aborts a dataset attempt and ignores its stale result when a local ZIP replaces it", async () => {
+    let resolveDataset: ((venue: LoadedVenue) => void) | undefined;
+    let datasetSignal: AbortSignal | undefined;
+    loadKirikoBundleMock.mockImplementation(
+      (_src: string, signal: AbortSignal) =>
+        new Promise<LoadedVenue>((resolve) => {
+          datasetSignal = signal;
+          resolveDataset = resolve;
+        }),
+    );
+    window.history.replaceState(null, "", "/?dataset=tokyo-station");
+    render(<App />);
+    await waitFor(() => {
+      expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
+    });
+
+    const localVenue = buildMinimalVenue({
+      venue: {
+        ...VENUE_FEATURE,
+        labels: { ja: "ローカル会場", en: "Local Venue" },
+      },
+    });
+    loadImdfArchiveMock.mockResolvedValueOnce(localVenue);
+    await uploadViaHiddenInput(zipFile("local.zip"));
+
+    await waitFor(() => {
+      expect(screen.getByText("ローカル会場")).toBeTruthy();
+    });
+    expect(datasetSignal?.aborted).toBe(true);
+    resolveDataset?.(buildMinimalVenue());
+    await waitFor(() => {
+      expect(screen.queryByText("テスト駅")).toBeNull();
+      expect(screen.getByText("ローカル会場")).toBeTruthy();
+    });
+  });
+
   it("embed deep link hides chrome, auto-loads src, and selects the requested level", async () => {
     const venue = buildMinimalVenue();
     fetchImdfFileMock.mockResolvedValue(zipFile("minimal.zip"));
     loadImdfArchiveMock.mockResolvedValue(venue);
-    window.history.replaceState(null, "", "/?src=/venues/minimal.zip&level=2f&embed=1");
+    window.history.replaceState(
+      null,
+      "",
+      "/?src=/venues/minimal.zip&dataset=ignored-dataset&level=2f&embed=1",
+    );
 
     const { container } = render(<App />);
 
@@ -428,6 +585,8 @@ describe("App deep links", () => {
     });
 
     expect(fetchImdfFileMock).toHaveBeenCalledWith("/venues/minimal.zip", expect.any(AbortSignal));
+    expect(loadKirikoBundleMock).not.toHaveBeenCalled();
+    expect(loadImdfArchiveMock).toHaveBeenCalledWith(expect.any(File), expect.any(AbortSignal));
     // Deep-linked level 2f (short_name 2F) instead of the default ordinal-0 1F.
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
     expect(screen.getByRole("button", { name: "2F" }).getAttribute("aria-pressed")).toBe("true");
@@ -481,5 +640,7 @@ describe("App deep links", () => {
       expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
     });
     expect(fetchImdfFileMock).toHaveBeenCalledTimes(2);
+    expect(loadImdfArchiveMock).toHaveBeenCalledTimes(1);
+    expect(loadKirikoBundleMock).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, datasetArchiveUrl } from "./api";
+import { api, ApiError, datasetBundleUrl } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -13,8 +13,8 @@ function mockFetch(status: number, body: unknown): void {
 }
 
 describe("gallery api client", () => {
-  it("builds dataset archive URLs", () => {
-    expect(datasetArchiveUrl("tokyo-station")).toBe("/v/default/tokyo-station/archive");
+  it("builds dataset bundle URLs", () => {
+    expect(datasetBundleUrl("tokyo-station")).toBe("/v/default/tokyo-station/bundle");
   });
 
   it("me() returns null on 401 instead of throwing", async () => {

@@ -19,12 +19,13 @@ import { LayersPanel } from "../components/LayersPanel";
 import { SearchPanel } from "../components/SearchPanel";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { WarningsPanel } from "../components/WarningsPanel";
+import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
 import { ZoomCluster } from "../components/ZoomCluster";
 import { VenueLoadError } from "../errors/VenueLoadError";
 import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
 import { loadImdfArchive } from "../imdf/loadImdfArchive";
 import { localizedLabel } from "../imdf/localize";
-import type { SearchResult } from "../imdf/types";
+import type { LoadedVenue, SearchResult } from "../imdf/types";
 import { IndoorMap, type IndoorMapControls } from "../map/IndoorMap";
 import { defaultLayerVisibility, type MapLayerGroup } from "../map/layerGroups";
 import { searchVenue } from "../search/searchVenue";
@@ -35,7 +36,7 @@ import {
   type ViewerState,
 } from "../state/viewerReducer";
 import { kirikoTheme } from "../theme/presets";
-import { datasetArchiveUrl } from "../gallery/api";
+import { datasetBundleUrl } from "../gallery/api";
 import { parseViewerParams } from "./viewerParams";
 
 const ui = {
@@ -135,17 +136,22 @@ function liveMessage(state: ViewerState): string {
       return ui.empty[locale];
   }
 }
+interface LoadAttempt {
+  fileName: string;
+  loadVenue: (signal: AbortSignal) => Promise<LoadedVenue>;
+  requestedLevel?: string;
+}
 
 export function App() {
   const params = useMemo(() => parseViewerParams(window.location.search), []);
   const embed = params.embed;
-  const effectiveSrc = params.src ?? (params.dataset !== null ? datasetArchiveUrl(params.dataset) : null);
   const [state, dispatch] = useReducer(viewerReducer, params, (p) => ({
     ...initialViewerState,
     ...(p.locale !== null ? { locale: p.locale } : {}),
   }));
   const attemptTokenRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const retryAttemptRef = useRef<LoadAttempt | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const compact = useCompactLayout();
   const [mapDragActive, setMapDragActive] = useState(false);
@@ -222,7 +228,16 @@ export function App() {
   }, [venueState, selectedFeature, locale]);
 
   const runLoad = useCallback(
-    (fileName: string, getFile: (signal: AbortSignal) => Promise<File>, requestedLevel?: string) => {
+    (
+      fileName: string,
+      loadVenue: (signal: AbortSignal) => Promise<LoadedVenue>,
+      requestedLevel?: string,
+    ) => {
+      retryAttemptRef.current = {
+        fileName,
+        loadVenue,
+        ...(requestedLevel !== undefined ? { requestedLevel } : {}),
+      };
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -231,12 +246,12 @@ export function App() {
 
       dispatch({ type: "load_started", fileName });
 
-      void getFile(controller.signal)
-        .then((file) => loadImdfArchive(file, controller.signal))
+      void loadVenue(controller.signal)
         .then((venue) => {
           if (token !== attemptTokenRef.current) {
             return;
           }
+          retryAttemptRef.current = null;
           dispatch({
             type: "load_succeeded",
             fileName,
@@ -264,22 +279,43 @@ export function App() {
 
   const handleFile = useCallback(
     (file: File) => {
-      runLoad(file.name, () => Promise.resolve(file));
+      runLoad(file.name, (signal) => loadImdfArchive(file, signal));
     },
     [runLoad],
   );
 
-  const loadFromSrc = useCallback(() => {
-    if (effectiveSrc === null) {
+  const retryLatestLoad = useCallback(() => {
+    const attempt = retryAttemptRef.current;
+    if (attempt === null) {
       return;
     }
-    const src = effectiveSrc;
-    runLoad(fileNameFromSrc(src), (signal) => fetchImdfFile(src, signal), params.level ?? undefined);
-  }, [runLoad, params, effectiveSrc]);
+    runLoad(attempt.fileName, attempt.loadVenue, attempt.requestedLevel);
+  }, [runLoad]);
+
+  const loadFromParams = useCallback(() => {
+    const requestedLevel = params.level ?? undefined;
+    if (params.src !== null) {
+      const src = params.src;
+      runLoad(
+        fileNameFromSrc(src),
+        async (signal) => {
+          const file = await fetchImdfFile(src, signal);
+          return loadImdfArchive(file, signal);
+        },
+        requestedLevel,
+      );
+      return;
+    }
+    if (params.dataset !== null) {
+      const dataset = params.dataset;
+      const bundleUrl = datasetBundleUrl(dataset);
+      runLoad(dataset, (signal) => loadKirikoBundle(bundleUrl, signal), requestedLevel);
+    }
+  }, [runLoad, params]);
 
   useEffect(() => {
-    loadFromSrc();
-  }, [loadFromSrc]);
+    loadFromParams();
+  }, [loadFromParams]);
 
   useEffect(() => {
     return () => {
@@ -408,7 +444,7 @@ export function App() {
     mapDragActive &&
     !embed &&
     (state.status === "ready" || (state.status === "loading" && Boolean(state.previous)));
-  const onRetry = effectiveSrc !== null ? loadFromSrc : openPicker;
+  const onRetry = retryAttemptRef.current !== null ? retryLatestLoad : openPicker;
 
   const viewerUrl = useMemo(() => {
     const url = new URL(window.location.href);

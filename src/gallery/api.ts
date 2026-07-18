@@ -30,8 +30,8 @@ export class ApiError extends Error {
   }
 }
 
-export function datasetArchiveUrl(slug: string): string {
-  return `/v/default/${slug}/archive`;
+export function datasetBundleUrl(slug: string): string {
+  return `/v/default/${slug}/bundle`;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -13,7 +13,20 @@ const ZIP_ROUTE = "**/venues/minimal-imdf.zip";
 const SRC_PARAM = "/venues/minimal-imdf.zip";
 
 test.describe("embed deep links", () => {
-  test("embed deep link to B1 hides chrome and preselects the level", async ({ page }) => {
+  test("embed src deep link uses the ZIP path, hides chrome, and preselects the level", async ({
+    page,
+  }) => {
+    const sourceRequests: string[] = [];
+    const datasetRequests: string[] = [];
+    page.on("request", (request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (pathname === SRC_PARAM) {
+        sourceRequests.push(pathname);
+      }
+      if (/^\/v\/default\/[^/]+\/(?:bundle|archive)$/.test(pathname)) {
+        datasetRequests.push(pathname);
+      }
+    });
     const buffer = await minimalImdfZipBuffer();
     await page.route(ZIP_ROUTE, (route) =>
       route.fulfill({ body: buffer, contentType: "application/zip" }),
@@ -35,6 +48,8 @@ test.describe("embed deep links", () => {
     expect(href).not.toContain("embed=");
     // Hidden file input stays for pipeline uniformity, but no open button.
     await expect(page.locator('input[type="file"]')).toHaveCount(1);
+    expect(sourceRequests).toEqual([SRC_PARAM]);
+    expect(datasetRequests).toEqual([]);
   });
 
   test("non-embed deep link matches short_name case-insensitively", async ({ page }) => {

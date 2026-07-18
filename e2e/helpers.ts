@@ -192,6 +192,11 @@ export async function signIn(page: Page): Promise<void> {
 /** Viewer entry for upload-driven specs (bypasses the gallery). */
 export const VIEWER_URL = "/?viewer";
 
+/** Exact published-dataset resource path used by gallery-to-viewer assertions. */
+export function datasetBundlePath(slug: string): string {
+  return `/v/default/${slug}/bundle`;
+}
+
 /** Click slightly below a marker so the hit lands on the polygon under it. */
 export async function clickBelowMarker(page: Page, label: string): Promise<void> {
   const marker = markerByLabel(page, label);

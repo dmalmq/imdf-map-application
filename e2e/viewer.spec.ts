@@ -35,8 +35,8 @@ import {
   WARNING_CODES,
 } from "./helpers";
 
-test.describe("IMDF viewer journey", () => {
-  test("upload → map → level → search → selection → details → warnings → compact → recovery", async ({
+test.describe("local IMDF ZIP viewer journey", () => {
+  test("local upload → map → level → search → selection → details → warnings → compact → recovery", async ({
     page,
   }) => {
     // No external network: after the static app load event, the only allowed
@@ -151,7 +151,7 @@ test.describe("IMDF viewer journey", () => {
     await expect(mapCanvas(page)).toBeVisible();
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
 
-    // Zero post-load HTTP(S) requests for the whole journey.
+    // Local ZIP parsing stays in the TypeScript worker and performs no dataset fetch.
     page.off("request", onRequest);
     expect(
       networkRequests,

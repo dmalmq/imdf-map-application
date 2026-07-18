@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { minimalImdfZipBuffer, signIn, VENUE_NAME_JA, waitForReadyVenue } from "./helpers";
+import {
+  datasetBundlePath,
+  minimalImdfZipBuffer,
+  signIn,
+  VENUE_NAME_JA,
+  waitForReadyVenue,
+} from "./helpers";
 
 test.describe("gallery journey", () => {
   test("sign in → upload → card → open in viewer", async ({ page }) => {
@@ -21,10 +27,25 @@ test.describe("gallery journey", () => {
     // Published → open in the viewer via the modal link.
     const open = page.getByRole("link", { name: /^Open$|^開く$/ });
     await expect(open).toBeVisible({ timeout: 20_000 });
+    const href = await open.getAttribute("href");
+    expect(href).toBeTruthy();
+    const datasetSlug = new URL(href!, page.url()).searchParams.get("dataset");
+    expect(datasetSlug).toMatch(/^tokyo-test/);
+    const expectedBundlePath = datasetBundlePath(datasetSlug!);
+    const datasetResourcePaths: string[] = [];
+    const onDatasetRequest = (request: { url(): string }): void => {
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.startsWith(`/v/default/${datasetSlug}/`)) {
+        datasetResourcePaths.push(pathname);
+      }
+    };
+    page.on("request", onDatasetRequest);
+
     await open.click();
     await waitForReadyVenue(page, VENUE_NAME_JA);
-    const datasetSlug = new URL(page.url()).searchParams.get("dataset");
-    expect(datasetSlug).toMatch(/^tokyo-test/);
+    page.off("request", onDatasetRequest);
+    expect(datasetResourcePaths).toEqual([expectedBundlePath]);
+    expect(datasetResourcePaths.some((path) => path.endsWith("/archive"))).toBe(false);
 
     // Back to the gallery: the card shows stats from the publish pipeline.
     await page.goto("/");
