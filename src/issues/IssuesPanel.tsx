@@ -138,6 +138,16 @@ export function IssuesPanel({
   const composerPending = pending || state.draftAdmissionResourceId !== null;
   const forbidden =
     state.error !== null && state.error.kind === "api" && state.error.error === "forbidden";
+  // A loaded collection is stuck stale when a GET failed (directly, or after a
+  // 409/403 whose error masks the collection error) and cleared refetch demand
+  // while no SSE reconnection is recovering it. Only a manual Retry can refresh
+  // it, so surface one whenever it is stale with nothing in flight to recover.
+  const needsCollectionRetry =
+    state.collection !== null
+    && state.stale
+    && !state.reconnecting
+    && !state.refetchInFlight
+    && !state.refetchRequested;
 
   let body: ReactNode;
   if (state.draft !== null) {
@@ -263,13 +273,13 @@ export function IssuesPanel({
         <p className="issues-panel__line" role="status">
           {ui.reconnecting[locale]}
         </p>
-      ) : state.stale && !collectionFailed ? (
+      ) : state.stale && !needsCollectionRetry ? (
         <p className="issues-panel__line" role="status">
           {ui.staleData[locale]}
         </p>
       ) : null}
 
-      {collectionFailed && state.collection !== null ? (
+      {needsCollectionRetry ? (
         <p className="issues-panel__line" role="alert">
           {ui.loadFailed[locale]}{" "}
           <button type="button" className="btn-ghost" onClick={controller.retryCollection}>

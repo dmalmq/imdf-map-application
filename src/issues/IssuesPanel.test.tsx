@@ -1603,6 +1603,8 @@ describe("loaded-collection refetch failure", () => {
       error: { kind: "network", message: "offline" },
       errorScope: "collection",
       stale: true,
+      refetchInFlight: false,
+      refetchRequested: false,
     });
     expect(
       (screen.getByRole("textbox", { name: "Issue body" }) as HTMLTextAreaElement).disabled,
@@ -1640,6 +1642,8 @@ describe("loaded-collection refetch failure", () => {
       error: { kind: "network", message: "offline" },
       errorScope: "collection",
       stale: true,
+      refetchInFlight: false,
+      refetchRequested: false,
     });
     expect(
       (screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement).disabled,
@@ -1670,5 +1674,43 @@ describe("loaded-collection refetch failure", () => {
       },
     });
     expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+  });
+
+  it("exposes Retry after a mutation conflict whose canonical refetch also failed", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 3, body: "Before" });
+    const harness = renderDetail(issue, VIEWER);
+    // A stale-issue conflict on a patch, then a failed canonical refetch: the
+    // reducer preserves the mutation error (errorScope "mutation"), sets stale,
+    // and clears refetch demand, so `collectionFailed` stays false and only the
+    // masked mutation copy would otherwise show — with no way to recover.
+    harness.update({
+      error: { kind: "api", status: 409, error: "stale_issue", message: "stale" },
+      errorScope: "mutation",
+      conflict: { kind: "api", status: 409, error: "stale_issue", message: "stale" },
+      stale: true,
+      refetchInFlight: false,
+      refetchRequested: false,
+    });
+    expect(
+      screen.getByText(
+        "This issue changed while you were working. Your input is safe — review it and try again.",
+      ),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(harness.retryCollection).toHaveBeenCalled();
+
+    harness.update({
+      collection: collection(2, [
+        makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 4, body: "Updated remotely" }),
+      ]),
+      appliedRevision: 2,
+      error: null,
+      errorScope: null,
+      conflict: null,
+      stale: false,
+    });
+    expect(screen.getByText("Updated remotely")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });
