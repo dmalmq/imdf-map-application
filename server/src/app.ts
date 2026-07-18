@@ -13,8 +13,9 @@ import { BlobStore } from "./blobs/store";
 import { JobQueue } from "./jobs/queue";
 import { makePublishRunner } from "./jobs/publish";
 import { registerJobRoutes } from "./jobs/routes";
-import { registerUploadRoute } from "./venues/uploadRoute";
+import { MAX_UPLOAD_BYTES, registerUploadRoute } from "./venues/uploadRoute";
 import { registerServeRoutes } from "./serve/routes";
+import { recompileLegacyPublished } from "./core/recompileLegacy";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const db = openDb(config.dataDir);
@@ -25,10 +26,21 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
 
   app.decorate("db", db);
   app.decorate("config", config);
-  app.decorate("blobs", new BlobStore(config.dataDir));
+  const blobs = new BlobStore(config.dataDir);
+  app.decorate("blobs", blobs);
+
+  // Recompile Phase One rows still aliasing bundle_hash = source_blob_hash
+  // into real .kvb bundles before the queue or any route accepts traffic —
+  // a half-migrated row must never be served under the bundle MIME type.
+  try {
+    await recompileLegacyPublished(db, blobs, (message) => app.log.error(message));
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 
   await app.register(cookie);
-  await app.register(multipart, { limits: { fileSize: 200 * 1024 * 1024, files: 1 } });
+  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
   await app.register(swagger, {
     openapi: { info: { title: "Kiriko API", version: "0.1.0" } },
   });

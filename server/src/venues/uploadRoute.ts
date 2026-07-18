@@ -4,6 +4,10 @@ import { requireSession } from "../auth/guard";
 
 const TENANT_ID = 1;
 
+/** The Rust importer is authoritative for every decompressed limit; this
+ * only bounds the raw multipart upload before it reaches that pipeline. */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
 export function registerUploadRoute(app: FastifyInstance): void {
   app.post(
     "/api/venues/:id/versions",
