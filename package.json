@@ -29,13 +29,15 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/noto-sans-jp": "^5.2.10",
     "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@kiriko/wasm": "workspace:*",
     "@mapbox/maki": "^8.2.0",
     "@rapideditor/temaki": "^5.13.0",
     "@zip.js/zip.js": "2.8.26",
     "maplibre-gl": "5.24.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "@kiriko/wasm": "workspace:*"
+    "react-markdown": "10.1.0",
+    "remark-breaks": "4.0.0"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
