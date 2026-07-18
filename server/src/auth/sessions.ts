@@ -1,10 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 
+export const SESSION_ROLES = ["viewer", "member", "admin"] as const;
+
+export type SessionRole = (typeof SESSION_ROLES)[number];
+
 export interface SessionUser {
   id: number;
   username: string;
-  role: string;
+  role: SessionRole;
 }
 
 function tokenHash(token: string): string {
