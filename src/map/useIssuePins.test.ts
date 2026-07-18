@@ -192,6 +192,8 @@ describe("useIssuePins", () => {
     const { map } = mountPins({ locale: "ja" as LocaleCode });
     const label = map.container.querySelector("button")!.getAttribute("aria-label") ?? "";
     expect(label).toContain("1階");
+    expect(label).toContain("課題 #1");
+    expect(label).not.toContain("Issue #1");
   });
 
   it("falls back to the raw level id when the floor is unknown", () => {

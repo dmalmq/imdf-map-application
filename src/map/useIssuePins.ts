@@ -11,6 +11,8 @@ export const ISSUE_PIN_CLASS = "issue-pin";
 /** Selected variant, combined with ISSUE_PIN_CLASS. */
 export const ISSUE_PIN_SELECTED_CLASS = "issue-pin--selected";
 
+const ISSUE_LABEL = { ja: "課題", en: "Issue" } as const;
+
 export interface MapIssuePin {
   id: string;
   pinNumber: number;
@@ -60,7 +62,7 @@ export interface UseIssuePinsArgs {
 }
 
 function pinAriaLabel(pin: MapIssuePin, locale: LocaleCode, floor: string): string {
-  return `Issue #${pin.pinNumber}: ${pin.summary} — ${issueStatusLabel(pin.status, locale)} — ${floor}`;
+  return `${ISSUE_LABEL[locale]} #${pin.pinNumber}: ${pin.summary} — ${issueStatusLabel(pin.status, locale)} — ${floor}`;
 }
 
 /**

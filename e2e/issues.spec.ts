@@ -10,6 +10,7 @@ import {
   publishNextVersion,
   publishVenue,
   signIn,
+  switchLocale,
   uniqueDatasetName,
   VENUE_NAME_EN,
   waitForIssueStream,
@@ -125,7 +126,13 @@ test.describe("version-pinned review issues", () => {
     try {
       const { publicVersionId } = await openPublishedDataset(page, venue.slug);
       await waitForIssueStream(page, publicVersionId);
-      await prepareIssueAtMapCenter(page, ISSUE_BODY);
+      await openIssues(page);
+      await page.getByRole("button", { name: "New issue" }).click();
+      await switchLocale(page, "ja");
+      await expect(page.getByRole("button", { name: "地図の中心に配置" })).toBeVisible();
+      await switchLocale(page, "en");
+      await page.getByRole("button", { name: "Place at map center" }).click();
+      await page.getByLabel("Issue body").fill(ISSUE_BODY);
       await page.getByLabel("Assignee").selectOption({ label: "e2e" });
       await page.getByLabel("Due date").fill(DUE_DATE);
 
@@ -137,6 +144,11 @@ test.describe("version-pinned review issues", () => {
       await expect(page.locator(".issue-pin")).toHaveAccessibleName(
         /Issue #1.*Check the ticket gate alignment.*Open/,
       );
+      await switchLocale(page, "ja");
+      await expect(page.locator(".issue-pin")).toHaveAccessibleName(
+        /課題 #1.*Check the ticket gate alignment.*オープン/,
+      );
+      await switchLocale(page, "en");
       await page.getByRole("option", { name: /#1 Check the ticket gate alignment/ }).click();
       await expect(page.locator(".issue-detail__body")).toContainText(ISSUE_BODY);
       await expect(page.getByLabel("Status")).toHaveValue("open");

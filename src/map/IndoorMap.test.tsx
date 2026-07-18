@@ -338,6 +338,17 @@ describe("IndoorMap placement", () => {
     });
   });
 
+  it("localizes the map-center placement control", () => {
+    renderMap(
+      baseProps({
+        locale: "ja",
+        issueReview: review({ placementMode: true }),
+      }),
+    );
+    expect(screen.getByRole("button", { name: "地図の中心に配置" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Place at map center" })).toBeNull();
+  });
+
   it("hides the Place at map center control outside placement mode", () => {
     renderMap(baseProps({ issueReview: review({ placementMode: false }) }));
     expect(screen.queryByRole("button", { name: "Place at map center" })).toBeNull();

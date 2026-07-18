@@ -23,6 +23,11 @@ import { LAYER_GROUP_IDS, type LayerVisibility } from "./layerGroups";
 import { useFeatureMarkers } from "./useFeatureMarkers";
 import { useIssuePins, type MapIssuePin } from "./useIssuePins";
 
+const PLACE_AT_CENTER_LABEL = {
+  ja: "地図の中心に配置",
+  en: "Place at map center",
+} as const;
+
 /** Imperative camera controls exposed to the Kiriko zoom cluster. */
 export interface IndoorMapControls {
   zoomIn: () => void;
@@ -697,7 +702,7 @@ export function IndoorMap({
       />
       {issueReview?.placementMode === true ? (
         <button type="button" className="issue-place-center" onClick={onPlaceAtCenter}>
-          Place at map center
+          {PLACE_AT_CENTER_LABEL[locale]}
         </button>
       ) : null}
     </>
