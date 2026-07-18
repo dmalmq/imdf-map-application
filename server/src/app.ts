@@ -16,13 +16,30 @@ import { registerJobRoutes } from "./jobs/routes";
 import { MAX_UPLOAD_BYTES, registerUploadRoute } from "./venues/uploadRoute";
 import { registerServeRoutes } from "./serve/routes";
 import { recompileLegacyPublished } from "./core/recompileLegacy";
+import { AnchorIndexCache } from "./issues/anchorIndex";
+import { IssueEventHub } from "./issues/events";
+import { IssueRepository } from "./issues/repository";
+import { issueRoutes } from "./issues/routes";
+import { IssueService } from "./issues/service";
+import { UTC_TIMESTAMP_FORMAT } from "./issues/schemas";
+import { isRfc3339UtcTimestamp } from "./issues/validation";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const db = openDb(config.dataDir);
   migrate(db);
 
-  const app = fastify({ logger: { level: process.env["NODE_ENV"] === "test" ? "warn" : "info" } })
-    .withTypeProvider<TypeBoxTypeProvider>();
+  const app = fastify({
+    logger: { level: process.env["NODE_ENV"] === "test" ? "warn" : "info" },
+    ajv: {
+      customOptions: { removeAdditional: false },
+      onCreate: (ajv) => {
+        ajv.addFormat(UTC_TIMESTAMP_FORMAT, isRfc3339UtcTimestamp);
+      },
+    },
+    serializerOpts: {
+      ajv: { formats: { [UTC_TIMESTAMP_FORMAT]: isRfc3339UtcTimestamp } },
+    },
+  }).withTypeProvider<TypeBoxTypeProvider>();
 
   app.decorate("db", db);
   app.decorate("config", config);
@@ -48,17 +65,35 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const queue = new JobQueue(db, { publish_imdf: makePublishRunner(db, app.blobs) });
   app.decorate("queue", queue);
 
+  const issueRepository = new IssueRepository(db);
+  const anchorIndexCache = new AnchorIndexCache(blobs);
+  const issueHub = new IssueEventHub({
+    maxConnections: config.issueSseMaxConnections,
+    maxPerVersion: config.issueSseMaxPerVersion,
+  });
+  const issueService = new IssueService(issueRepository, anchorIndexCache, issueHub);
+
   ensureBootstrapUser(db, config);
   registerAuthRoutes(app);
-  registerVenueRoutes(app);
+  registerVenueRoutes(app, issueHub);
   registerUploadRoute(app);
   registerJobRoutes(app);
   registerServeRoutes(app);
+  await app.register(issueRoutes, {
+    service: issueService,
+    repository: issueRepository,
+    hub: issueHub,
+  });
 
   app.get("/healthz", async () => ({ ok: true }));
   app.get("/api/openapi.json", async () => app.swagger());
 
+  app.addHook("preClose", async () => {
+    issueHub.close();
+  });
+
   app.addHook("onClose", async () => {
+    anchorIndexCache.clear();
     db.close();
   });
 

@@ -28,8 +28,10 @@ export const issueSseRoutes: FastifyPluginAsync<IssueSseRoutesOptions> = async (
           { additionalProperties: false },
         ),
         response: {
+          400: IssueApiErrorSchema,
           404: IssueApiErrorSchema,
           503: IssueApiErrorSchema,
+          500: IssueApiErrorSchema,
         },
       },
     },

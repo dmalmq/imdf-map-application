@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
+import type { IssueEventHub } from "../issues/events";
 import { createVenue, deleteVenue, listVenues } from "./service";
 
 const TENANT_ID = 1; // single tenant in phase 1
@@ -22,7 +23,7 @@ const VenueSummarySchema = Type.Object({
   ]),
 });
 
-export function registerVenueRoutes(app: FastifyInstance): void {
+export function registerVenueRoutes(app: FastifyInstance, issueHub: IssueEventHub): void {
   app.get(
     "/api/venues",
     {
@@ -67,8 +68,14 @@ export function registerVenueRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       const { id } = request.params as { id: number };
-      const deleted = deleteVenue(request.server.db, TENANT_ID, id);
-      return deleted ? reply.code(204).send() : reply.code(404).send({ error: "not_found" });
+      const result = deleteVenue(request.server.db, TENANT_ID, id);
+      if (!result.deleted) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      for (const publicVersionId of result.publicVersionIds) {
+        issueHub.closeVersion(publicVersionId);
+      }
+      return reply.code(204).send();
     },
   );
 }
