@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMinimalImdfZip } from "../../tests/fixtures/buildMinimalImdfZip";
-import type { CompileVenueMetadata, ImdfStats, ViewerWarning } from "../src/core/native";
+import { CoreCompileError, type CompileVenueMetadata, type ImdfStats, type ViewerWarning } from "../src/core/native";
 import { makePublishRunner } from "../src/jobs/publish";
 import { cleanupTestApps, loginCookie, makeTestApp } from "./helpers";
 
@@ -302,6 +302,134 @@ describe("publish identity race", () => {
       .get(replacementId);
     expect(replacementAfter).toEqual(replacementBefore);
     expect((replacementAfter as { sourceHash: string }).sourceHash).toBe(sourceHashB);
+  });
+
+  it("treats a same-id/seq/source/status but different-venue-slug replacement as stale: dataset identity is the only mismatch", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venue = await createVenue(app, cookie, "Original Venue");
+
+    const source = await buildMinimalImdfZip();
+    const { hash: sourceHash } = app.blobs.put(source);
+    app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHash, source.byteLength);
+    const insert1 = app.db
+      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
+      .run(venue.id, sourceHash);
+    const versionId = Number(insert1.lastInsertRowid);
+
+    let resolveCompile!: (result: { bundle: Buffer; stats: ImdfStats; warnings: ViewerWarning[] }) => void;
+    const deferred = new Promise<{ bundle: Buffer; stats: ImdfStats; warnings: ViewerWarning[] }>((resolve) => {
+      resolveCompile = resolve;
+    });
+    const compile = async (_source: Buffer, _metadata: CompileVenueMetadata) => deferred;
+    const runner = makePublishRunner(app.db, app.blobs, compile);
+    const publishPromise = runner(JSON.stringify({ versionId }));
+
+    // Delete the venue (cascades the version) and recreate a venue with a
+    // *different name/slug* that reuses the same emptied venue_id, then a
+    // version that reuses the same emptied version id with the *same*
+    // seq, *same* source hash, and *same* status as the row the pending
+    // compile was launched against. The venue slug is the only thing that
+    // differs — exactly the gap the old (id, venue_id, seq, source,
+    // status) predicate alone could not see, since venue_id itself can be
+    // reused too.
+    app.db.prepare("DELETE FROM venues WHERE id = ?").run(venue.id);
+    const venue2 = await createVenue(app, cookie, "Renamed Venue");
+    expect(venue2.id).toBe(venue.id); // venue_id was reused
+    expect(venue2.slug).not.toBe(venue.slug); // the only differing identity field
+    const insert2 = app.db
+      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
+      .run(venue2.id, sourceHash);
+    const replacementId = Number(insert2.lastInsertRowid);
+    expect(replacementId).toBe(versionId); // version id was reused too
+
+    const replacementRow = app.db
+      .prepare("SELECT seq, source_blob_hash AS sourceHash, status FROM versions WHERE id = ?")
+      .get(replacementId) as { seq: number; sourceHash: string; status: string };
+    expect(replacementRow.seq).toBe(1);
+    expect(replacementRow.sourceHash).toBe(sourceHash);
+    expect(replacementRow.status).toBe("draft");
+
+    const replacementBefore = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
+      .get(replacementId);
+
+    resolveCompile({
+      bundle: Buffer.from([0x4b, 0x56, 0x42, 0x00, 0xbe, 0xef]),
+      stats: { levels: 3, features: 27 },
+      warnings: [],
+    });
+
+    let caught: unknown;
+    try {
+      await publishPromise;
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const structured = JSON.parse((caught as Error).message) as { code: string; message: string };
+    expect(structured.code).toBe("stale_version");
+
+    const replacementAfter = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
+      .get(replacementId);
+    expect(replacementAfter).toEqual(replacementBefore);
+  });
+
+  it("reports stale_version instead of the original domain code when a genuine compile failure races a delete+recreate", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venue = await createVenue(app, cookie, "Original Venue");
+
+    const source = await buildMinimalImdfZip();
+    const { hash: sourceHash } = app.blobs.put(source);
+    app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHash, source.byteLength);
+    const insert1 = app.db
+      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
+      .run(venue.id, sourceHash);
+    const versionId = Number(insert1.lastInsertRowid);
+
+    let rejectCompile!: (error: unknown) => void;
+    const deferred = new Promise<{ bundle: Buffer; stats: ImdfStats; warnings: ViewerWarning[] }>((_resolve, reject) => {
+      rejectCompile = reject;
+    });
+    const compile = async (_source: Buffer, _metadata: CompileVenueMetadata) => deferred;
+    const runner = makePublishRunner(app.db, app.blobs, compile);
+    const publishPromise = runner(JSON.stringify({ versionId }));
+
+    app.db.prepare("DELETE FROM venues WHERE id = ?").run(venue.id);
+    const venue2 = await createVenue(app, cookie, "Renamed Venue");
+    expect(venue2.id).toBe(venue.id);
+    const insert2 = app.db
+      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
+      .run(venue2.id, sourceHash);
+    const replacementId = Number(insert2.lastInsertRowid);
+    expect(replacementId).toBe(versionId);
+
+    const replacementBefore = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
+      .get(replacementId);
+
+    // The stale compile now genuinely fails on its own terms (a real
+    // domain error) — but the row it was compiling for no longer exists,
+    // so the reported job error must still be stale_version, never the
+    // now-meaningless domain code.
+    rejectCompile(new CoreCompileError("unsupported_file", "unsupported_file"));
+
+    let caught: unknown;
+    try {
+      await publishPromise;
+    } catch (error) {
+      caught = error;
+    }
+    const structured = JSON.parse((caught as Error).message) as { code: string; message: string };
+    expect(structured.code).toBe("stale_version");
+    expect(structured.code).not.toBe("unsupported_file");
+
+    const replacementAfter = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
+      .get(replacementId);
+    expect(replacementAfter).toEqual(replacementBefore);
   });
 });
 

@@ -25,6 +25,10 @@ class StaleVersionError extends Error {
   }
 }
 
+function staleVersionError(versionId: number): StructuredError {
+  return { code: "stale_version", message: `version ${versionId} was replaced during compilation` };
+}
+
 function toStructuredError(error: unknown): StructuredError {
   if (error instanceof CoreCompileError) {
     return error.details === undefined
@@ -71,13 +75,32 @@ export function makePublishRunner(
     }
 
     // Identity snapshot taken *before* the long `await compile`. Every
-    // write below is scoped to this exact (id, venue_id, seq,
-    // source_blob_hash, status) tuple and requires exactly one changed
-    // row, so a row that reused `versionId` after a cascade delete +
-    // recreate is never published onto, nor marked failed, by a compile
-    // that was never actually running against it.
-    const identityWhere = "id = ? AND venue_id = ? AND seq = ? AND source_blob_hash = ? AND status = ?";
-    const identityParams = [version.id, version.venueId, version.seq, version.hash, version.status] as const;
+    // write below requires exactly one changed row against this exact
+    // (id, venue_id, seq, source_blob_hash, status) tuple *and* a live
+    // venues/tenants row whose slugs still match what `datasetId` below
+    // was actually compiled from — SQLite can reuse a freed venue_id too,
+    // so matching venue_id alone does not prove the venue wasn't deleted
+    // and replaced by a differently-slugged one at the same id. Any
+    // mismatch means a row that reused `versionId` (and/or `venue_id`)
+    // after a cascade delete + recreate is never published onto, nor
+    // marked failed, by a compile that was never actually running against
+    // its current occupant.
+    const identityWhere = `
+      id = ? AND venue_id = ? AND seq = ? AND source_blob_hash = ? AND status = ?
+      AND EXISTS (
+        SELECT 1 FROM venues v JOIN tenants t ON t.id = v.tenant_id
+        WHERE v.id = venue_id AND v.slug = ? AND t.slug = ?
+      )
+    `;
+    const identityParams = [
+      version.id,
+      version.venueId,
+      version.seq,
+      version.hash,
+      version.status,
+      version.venueSlug,
+      version.tenantSlug,
+    ] as const;
 
     try {
       const source = blobs.read(version.hash);
@@ -104,15 +127,18 @@ export function makePublishRunner(
       return { versionId };
     } catch (error) {
       // Domain (invalid IMDF), bridge (native/FFI), blob-store, DB, and
-      // stale-identity failures all land here: the source blob is never
-      // touched, and this write only ever targets the exact row
-      // snapshotted above, so a replacement row that reused `versionId`
-      // is never marked failed by a compile that was never really its own.
-      const structured = toStructuredError(error);
-      db.prepare(`UPDATE versions SET status = 'failed', bundle_hash = NULL, error = ? WHERE ${identityWhere}`).run(
-        JSON.stringify(structured),
-        ...identityParams,
-      );
+      // stale-identity failures all land here. The failure write is
+      // scoped by the same identity predicate as the success write, and
+      // its own `changes` count is inspected too: if this exact row is
+      // *also* gone by the time we try to record the failure (a genuine
+      // compile error racing a concurrent delete+recreate), the row is
+      // left untouched and the job is reported `stale_version` rather
+      // than the original — now meaningless — compiler/domain code.
+      const candidate = toStructuredError(error);
+      const result = db
+        .prepare(`UPDATE versions SET status = 'failed', bundle_hash = NULL, error = ? WHERE ${identityWhere}`)
+        .run(JSON.stringify(candidate), ...identityParams);
+      const structured = result.changes === 1 ? candidate : staleVersionError(version.id);
       throw new Error(JSON.stringify(structured));
     }
   };
