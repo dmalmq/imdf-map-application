@@ -1714,3 +1714,102 @@ describe("loaded-collection refetch failure", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });
+
+describe("editor authorship across auth changes", () => {
+  it("hides root Save when the author signs out but keeps the text and Cancel", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, authorName: "viewer1", body: "Draft" });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "Edited text" },
+    });
+
+    harness.setUser(null);
+    const editor = screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement;
+    expect(editor.value).toBe("Edited text");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("hides root Save for a different account and keeps the text", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, authorName: "viewer1", body: "Draft" });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "Edited text" },
+    });
+
+    harness.setUser(MEMBER);
+    const editor = screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement;
+    expect(editor.value).toBe("Edited text");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("restores root Save and focus when the same author returns", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, authorName: "viewer1", body: "Draft" });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "Edited text" },
+    });
+
+    harness.setUser(null);
+    harness.setUser(VIEWER);
+    const editor = screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement;
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    expect(editor.value).toBe("Edited text");
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("hides reply Save when the author signs out but keeps the text and Cancel", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({
+      id: "i1",
+      pinNumber: 1,
+      authorId: 2,
+      replies: [makeReply({ id: "r1", authorId: 1, authorName: "viewer1", body: "Reply draft" })],
+    });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit reply" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit reply body" }), {
+      target: { value: "Edited reply" },
+    });
+
+    harness.setUser(null);
+    const editor = screen.getByRole("textbox", { name: "Edit reply body" }) as HTMLTextAreaElement;
+    expect(editor.value).toBe("Edited reply");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("restores reply Save and focus when the same author returns", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({
+      id: "i1",
+      pinNumber: 1,
+      authorId: 2,
+      replies: [makeReply({ id: "r1", authorId: 1, authorName: "viewer1", body: "Reply draft" })],
+    });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit reply" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit reply body" }), {
+      target: { value: "Edited reply" },
+    });
+
+    harness.setUser(null);
+    harness.setUser(VIEWER);
+    const editor = screen.getByRole("textbox", { name: "Edit reply body" }) as HTMLTextAreaElement;
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    expect(editor.value).toBe("Edited reply");
+    expect(document.activeElement).toBe(editor);
+  });
+});

@@ -92,6 +92,12 @@ interface BodyEditorProps {
   locale: LocaleCode;
   label: string;
   initial: string;
+  /**
+   * The current actor is the live resource's author. Save is shown only while
+   * true; losing authorship (session lost or a different account) hides Save
+   * but keeps the text and Cancel, and regaining it refocuses the textarea.
+   */
+  authorized: boolean;
   /** Locked from save through canonical admission; unlocked on failure. */
   locked: boolean;
   pending: boolean;
@@ -103,15 +109,34 @@ interface BodyEditorProps {
  * Inline body editor. Saving never closes the editor by itself — the owner
  * closes it only when the canonical projection admits the exact edit, and
  * keeps it locked meanwhile so an in-flight edit is never discarded. On
- * failure the owner unlocks it with the submitted text intact.
+ * failure the owner unlocks it with the submitted text intact. It stays
+ * mounted (text preserved) across auth changes; Save is gated on `authorized`.
  */
-function BodyEditor({ locale, label, initial, locked, pending, onSave, onCancel }: BodyEditorProps) {
+function BodyEditor({
+  locale,
+  label,
+  initial,
+  authorized,
+  locked,
+  pending,
+  onSave,
+  onCancel,
+}: BodyEditorProps) {
   const [text, setText] = useState(initial);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const wasUnauthorizedRef = useRef(!authorized);
+  useEffect(() => {
+    if (wasUnauthorizedRef.current && authorized) {
+      textareaRef.current?.focus();
+    }
+    wasUnauthorizedRef.current = !authorized;
+  }, [authorized]);
   const normalized = normalizeIssueMarkdown(text);
   const check = checkIssueBody(normalized);
   return (
     <div className="issue-editor">
       <textarea
+        ref={textareaRef}
         className="issue-editor__input"
         aria-label={label}
         rows={4}
@@ -126,16 +151,18 @@ function BodyEditor({ locale, label, initial, locked, pending, onSave, onCancel 
         <button type="button" className="btn-ghost" onClick={onCancel}>
           {ui.cancel[locale]}
         </button>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={locked || pending || check.problem !== null}
-          onClick={() => {
-            onSave(normalized);
-          }}
-        >
-          {ui.save[locale]}
-        </button>
+        {authorized ? (
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={locked || pending || check.problem !== null}
+            onClick={() => {
+              onSave(normalized);
+            }}
+          >
+            {ui.save[locale]}
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -147,6 +174,8 @@ interface ReplyComposerProps {
   pending: boolean;
   mutationFailed: boolean;
   idempotencyConflict: boolean;
+  /** False while a body editor is open, so it keeps auth-return focus. */
+  focusOnReturn: boolean;
   onSubmit: (input: CreateReplyInput) => void;
   onRequestSignIn: () => void;
 }
@@ -167,6 +196,7 @@ function ReplyComposer({
   pending,
   mutationFailed,
   idempotencyConflict,
+  focusOnReturn,
   onSubmit,
   onRequestSignIn,
 }: ReplyComposerProps) {
@@ -201,11 +231,11 @@ function ReplyComposer({
 
   const wasSignedOutRef = useRef(!signedIn);
   useEffect(() => {
-    if (wasSignedOutRef.current && signedIn) {
+    if (wasSignedOutRef.current && signedIn && focusOnReturn) {
       textareaRef.current?.focus();
     }
     wasSignedOutRef.current = !signedIn;
-  }, [signedIn]);
+  }, [signedIn, focusOnReturn]);
 
   const normalized = normalizeIssueMarkdown(text);
   const check = checkIssueBody(normalized);
@@ -316,6 +346,7 @@ function ReplyRow({
           locale={locale}
           label={ui.editReplyBody[locale]}
           initial={reply.bodyMarkdown ?? ""}
+          authorized={canEdit}
           locked={locked}
           pending={pending}
           onSave={onSaveEdit}
@@ -480,6 +511,7 @@ export function IssueDetail({
           locale={locale}
           label={ui.editIssueBody[locale]}
           initial={issue.bodyMarkdown ?? ""}
+          authorized={canEditRoot}
           locked={editorLocked}
           pending={pending}
           onSave={(normalized) => {
@@ -730,6 +762,7 @@ export function IssueDetail({
             pending={pending}
             mutationFailed={mutationFailed}
             idempotencyConflict={idempotencyConflict}
+            focusOnReturn={editing === null}
             onSubmit={onCreateReply}
             onRequestSignIn={onRequestSignIn}
           />
