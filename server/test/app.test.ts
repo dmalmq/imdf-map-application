@@ -12,7 +12,14 @@ import { migrate } from "../src/db/migrate";
 import type { CompileVenueMetadata } from "../src/core/native";
 import { CoreCompileError } from "../src/core/native";
 import { recompileLegacyPublished } from "../src/core/recompileLegacy";
-import { cleanupTestApps, loginCookie, makeTestApp, TEST_PASSWORD, TEST_USER } from "./helpers";
+import {
+  cleanupTestApps,
+  loginCookie,
+  makeTestApp,
+  newTestPublicVersionId,
+  TEST_PASSWORD,
+  TEST_USER,
+} from "./helpers";
 
 afterEach(cleanupTestApps);
 
@@ -65,10 +72,11 @@ function seedLegacyPublishedVersion(
   db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(hash, size);
   const info = db
     .prepare(
-      `INSERT INTO versions (venue_id, seq, source_blob_hash, bundle_hash, status, stats_json)
-       VALUES (?, ?, ?, ?, 'published', ?)`,
+      `INSERT INTO versions (
+         venue_id, seq, public_id, source_blob_hash, bundle_hash, status, stats_json
+       ) VALUES (?, ?, ?, ?, ?, 'published', ?)`,
     )
-    .run(venueId, seq, hash, hash, JSON.stringify({ levels: 1, features: 1 }));
+    .run(venueId, seq, newTestPublicVersionId(), hash, hash, JSON.stringify({ levels: 1, features: 1 }));
   return Number(info.lastInsertRowid);
 }
 
@@ -158,6 +166,69 @@ describe("recompileLegacyPublished", () => {
         .prepare("SELECT bundle_hash AS bundleHash, source_blob_hash AS sourceHash, status FROM versions WHERE id = ?")
         .get(failId);
       expect(failAfter).toEqual(failBefore);
+      db.close();
+    }));
+
+  it("does not update a replacement legacy row that reuses every numeric and bundle identity", () =>
+    withTempDataDir("kiriko-legacy-stale-", async (dataDir) => {
+      const db = openDb(dataDir);
+      migrate(db);
+      const blobs = new BlobStore(dataDir);
+      const venueId = seedVenue(db, "legacy-stale", "Legacy Stale");
+      const versionId = seedLegacyPublishedVersion(db, blobs, venueId, 1, new TextEncoder().encode("source"));
+      const original = db
+        .prepare(
+          `SELECT public_id AS publicId, source_blob_hash AS sourceHash,
+                  bundle_hash AS bundleHash, stats_json AS statsJson
+           FROM versions WHERE id = ?`,
+        )
+        .get(versionId) as { publicId: string; sourceHash: string; bundleHash: string; statsJson: string };
+
+      let resolveCompile!: (value: {
+        bundle: Buffer;
+        stats: { levels: number; features: number };
+        warnings: [];
+      }) => void;
+      const deferred = new Promise<{
+        bundle: Buffer;
+        stats: { levels: number; features: number };
+        warnings: [];
+      }>((resolve) => {
+        resolveCompile = resolve;
+      });
+      const logs: string[] = [];
+      const backfill = recompileLegacyPublished(
+        db,
+        blobs,
+        (message) => logs.push(message),
+        async () => deferred,
+      );
+
+      db.prepare("DELETE FROM venues WHERE id = ?").run(venueId);
+      const replacementVenueId = seedVenue(db, "legacy-stale", "Legacy Stale");
+      expect(replacementVenueId).toBe(venueId);
+      const replacementPublicId = newTestPublicVersionId();
+      const replacement = db
+        .prepare(
+          `INSERT INTO versions (
+             venue_id, seq, public_id, source_blob_hash, bundle_hash, status, stats_json
+           ) VALUES (?, 1, ?, ?, ?, 'published', ?)`,
+        )
+        .run(replacementVenueId, replacementPublicId, original.sourceHash, original.bundleHash, original.statsJson);
+      expect(Number(replacement.lastInsertRowid)).toBe(versionId);
+      expect(replacementPublicId).not.toBe(original.publicId);
+
+      const replacementBefore = db.prepare("SELECT * FROM versions WHERE id = ?").get(versionId);
+      resolveCompile({
+        bundle: Buffer.from("replacement-guard"),
+        stats: { levels: 9, features: 99 },
+        warnings: [],
+      });
+
+      await expect(backfill).rejects.toThrow();
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain(`version ${versionId}`);
+      expect(db.prepare("SELECT * FROM versions WHERE id = ?").get(versionId)).toEqual(replacementBefore);
       db.close();
     }));
 });

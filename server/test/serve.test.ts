@@ -87,12 +87,14 @@ describe("bundle route: publication-state semantics", () => {
     expect(latest.headers["cache-control"]).toBe(LATEST_CACHE_CONTROL);
     const latestEtag = latest.headers["etag"] as string;
     expect(latestEtag).toMatch(/^"[0-9a-f]{64}"$/);
+    expect(latest.headers["kiriko-version-id"]).toMatch(/^[0-9a-f]{64}$/);
     const latestCached = await app.inject({
       method: "GET",
       url: `/v/default/${venue.slug}/bundle`,
       headers: { "if-none-match": latestEtag },
     });
     expect(latestCached.statusCode).toBe(304);
+    expect(latestCached.headers["kiriko-version-id"]).toBe(latest.headers["kiriko-version-id"]);
 
     const pinned = await app.inject({ method: "GET", url: `/v/default/${venue.slug}/bundle@1` });
     expect(pinned.statusCode).toBe(200);
@@ -101,15 +103,51 @@ describe("bundle route: publication-state semantics", () => {
     const pinnedEtag = pinned.headers["etag"] as string;
     expect(pinnedEtag).toMatch(/^"[0-9a-f]{64}"$/);
     expect(pinnedEtag).toBe(latestEtag); // only one published version, so latest === seq 1
+    expect(pinned.headers["kiriko-version-id"]).toBe(latest.headers["kiriko-version-id"]);
     const pinnedCached = await app.inject({
       method: "GET",
       url: `/v/default/${venue.slug}/bundle@1`,
       headers: { "if-none-match": pinnedEtag },
     });
     expect(pinnedCached.statusCode).toBe(304);
+    expect(pinnedCached.headers["kiriko-version-id"]).toBe(latest.headers["kiriko-version-id"]);
 
     const outOfRange = await app.inject({ method: "GET", url: `/v/default/${venue.slug}/bundle@99` });
     expect(outOfRange.statusCode).toBe(404);
+  });
+
+  it("does not reuse a deleted version's public identity when its numeric row id is recreated", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venue = await createVenue(app, cookie, "Recreated Identity");
+    const zip = await buildMinimalImdfZip();
+    await uploadAndWait(app, cookie, venue.id, zip);
+
+    const original = await app.inject({ method: "GET", url: `/v/default/${venue.slug}/bundle` });
+    const deletedPublicId = original.headers["kiriko-version-id"];
+    expect(deletedPublicId).toMatch(/^[0-9a-f]{64}$/);
+    const deletedVersionRow = app.db.prepare("SELECT id FROM versions WHERE venue_id = ?").get(venue.id) as {
+      id: number;
+    };
+    const deletedVersionId = deletedVersionRow.id;
+
+    app.db.prepare("DELETE FROM venues WHERE id = ?").run(venue.id);
+    const replacementVenue = await createVenue(app, cookie, "Recreated Identity");
+    expect(replacementVenue).toEqual(venue);
+    await uploadAndWait(app, cookie, replacementVenue.id, zip);
+    const replacementVersionRow = app.db
+      .prepare("SELECT id FROM versions WHERE venue_id = ?")
+      .get(replacementVenue.id) as { id: number };
+    const replacementVersionId = replacementVersionRow.id;
+    expect(replacementVersionId).toBe(deletedVersionId);
+
+    const recreated = await app.inject({
+      method: "GET",
+      url: `/v/default/${replacementVenue.slug}/bundle`,
+    });
+    expect(recreated.statusCode).toBe(200);
+    expect(recreated.headers["kiriko-version-id"]).toMatch(/^[0-9a-f]{64}$/);
+    expect(recreated.headers["kiriko-version-id"]).not.toBe(deletedPublicId);
   });
 });
 

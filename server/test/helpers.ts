@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,10 @@ const cleanups: Array<() => Promise<void>> = [];
 
 export const TEST_USER = "test";
 export const TEST_PASSWORD = "test-password";
+
+export function newTestPublicVersionId(): string {
+  return randomBytes(32).toString("hex");
+}
 
 export async function makeTestApp(): Promise<{ app: FastifyInstance; dataDir: string }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kiriko-test-"));

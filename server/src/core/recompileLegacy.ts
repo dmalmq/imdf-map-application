@@ -4,8 +4,11 @@ import { compileVenueBundle } from "./native";
 
 interface LegacyRow {
   id: number;
+  venueId: number;
   seq: number;
+  publicId: string;
   sourceHash: string;
+  status: string;
   tenantSlug: string;
   venueSlug: string;
 }
@@ -34,8 +37,9 @@ export async function recompileLegacyPublished(
 ): Promise<void> {
   const rows = db
     .prepare(
-      `SELECT vr.id AS id, vr.seq AS seq, vr.source_blob_hash AS sourceHash,
-              t.slug AS tenantSlug, v.slug AS venueSlug
+      `SELECT vr.id AS id, vr.venue_id AS venueId, vr.seq AS seq,
+              vr.public_id AS publicId, vr.source_blob_hash AS sourceHash,
+              vr.status AS status, t.slug AS tenantSlug, v.slug AS venueSlug
        FROM versions vr
        JOIN venues v ON v.id = vr.venue_id
        JOIN tenants t ON t.id = v.tenant_id
@@ -54,11 +58,31 @@ export async function recompileLegacyPublished(
       const { hash: bundleHash, size } = blobs.put(bundle);
       db.transaction(() => {
         db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(bundleHash, size);
-        db.prepare("UPDATE versions SET bundle_hash = ?, stats_json = ? WHERE id = ?").run(
-          bundleHash,
-          JSON.stringify(stats),
-          row.id,
-        );
+        const result = db
+          .prepare(
+            `UPDATE versions SET bundle_hash = ?, stats_json = ?
+             WHERE id = ? AND public_id = ? AND venue_id = ? AND seq = ?
+               AND source_blob_hash = ? AND status = ? AND bundle_hash = source_blob_hash
+               AND EXISTS (
+                 SELECT 1 FROM venues v JOIN tenants t ON t.id = v.tenant_id
+                 WHERE v.id = venue_id AND v.slug = ? AND t.slug = ?
+               )`,
+          )
+          .run(
+            bundleHash,
+            JSON.stringify(stats),
+            row.id,
+            row.publicId,
+            row.venueId,
+            row.seq,
+            row.sourceHash,
+            row.status,
+            row.venueSlug,
+            row.tenantSlug,
+          );
+        if (result.changes !== 1) {
+          throw new Error(`version ${row.id} was replaced during legacy bundle backfill`);
+        }
       })();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

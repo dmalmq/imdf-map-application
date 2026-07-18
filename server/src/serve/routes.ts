@@ -10,18 +10,18 @@ function findPublished(
   tenantSlug: string,
   venueSlug: string,
   seq: number | null,
-): { hash: string } | null {
+): { hash: string; publicId: string } | null {
   const row = db
     .prepare(
-      `SELECT vr.bundle_hash AS hash FROM versions vr
+      `SELECT vr.bundle_hash AS hash, vr.public_id AS publicId FROM versions vr
        JOIN venues v ON v.id = vr.venue_id
        JOIN tenants t ON t.id = v.tenant_id
        WHERE t.slug = ? AND v.slug = ? AND vr.status = 'published'
          AND (? IS NULL OR vr.seq = ?)
        ORDER BY vr.seq DESC LIMIT 1`,
     )
-    .get(tenantSlug, venueSlug, seq, seq) as { hash: string | null } | undefined;
-  return row?.hash ? { hash: row.hash } : null;
+    .get(tenantSlug, venueSlug, seq, seq) as { hash: string | null; publicId: string } | undefined;
+  return row?.hash ? { hash: row.hash, publicId: row.publicId } : null;
 }
 
 export function registerServeRoutes(app: FastifyInstance): void {
@@ -40,9 +40,10 @@ export function registerServeRoutes(app: FastifyInstance): void {
     if (!found) {
       return reply.code(404).send({ error: "not_found" });
     }
-    const etag = `"${found.hash}"`;
-    void reply.header("etag", etag).header("cache-control", cacheControl);
-    if (request.headers["if-none-match"] === etag) {
+    reply.header("Kiriko-Version-Id", found.publicId);
+    reply.header("ETag", `"${found.hash}"`);
+    reply.header("cache-control", cacheControl);
+    if (request.headers["if-none-match"] === `"${found.hash}"`) {
       return reply.code(304).send();
     }
     return reply.type("application/vnd.kiriko.bundle").send(app.blobs.read(found.hash));

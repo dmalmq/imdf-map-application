@@ -45,6 +45,7 @@ interface PublishRow {
   id: number;
   venueId: number;
   seq: number;
+  publicId: string;
   hash: string;
   status: string;
   tenantSlug: string;
@@ -62,8 +63,9 @@ export function makePublishRunner(
     const { versionId } = JSON.parse(payloadJson) as { versionId: number };
     const version = db
       .prepare(
-        `SELECT vr.id AS id, vr.venue_id AS venueId, vr.seq AS seq, vr.source_blob_hash AS hash,
-                vr.status AS status, t.slug AS tenantSlug, v.slug AS venueSlug
+        `SELECT vr.id AS id, vr.venue_id AS venueId, vr.seq AS seq, vr.public_id AS publicId,
+                vr.source_blob_hash AS hash, vr.status AS status,
+                t.slug AS tenantSlug, v.slug AS venueSlug
          FROM versions vr
          JOIN venues v ON v.id = vr.venue_id
          JOIN tenants t ON t.id = v.tenant_id
@@ -75,18 +77,13 @@ export function makePublishRunner(
     }
 
     // Identity snapshot taken *before* the long `await compile`. Every
-    // write below requires exactly one changed row against this exact
-    // (id, venue_id, seq, source_blob_hash, status) tuple *and* a live
-    // venues/tenants row whose slugs still match what `datasetId` below
-    // was actually compiled from — SQLite can reuse a freed venue_id too,
-    // so matching venue_id alone does not prove the venue wasn't deleted
-    // and replaced by a differently-slugged one at the same id. Any
-    // mismatch means a row that reused `versionId` (and/or `venue_id`)
-    // after a cascade delete + recreate is never published onto, nor
-    // marked failed, by a compile that was never actually running against
-    // its current occupant.
+    // write below requires exactly one changed row against this permanent
+    // public identity and the rest of the exact version/dataset tuple. A
+    // replacement row may reuse SQLite numeric ids and all mutable values,
+    // but it can never reuse `public_id`. Any mismatch means the stale
+    // compile neither publishes onto nor marks failed the replacement row.
     const identityWhere = `
-      id = ? AND venue_id = ? AND seq = ? AND source_blob_hash = ? AND status = ?
+      id = ? AND public_id = ? AND venue_id = ? AND seq = ? AND source_blob_hash = ? AND status = ?
       AND EXISTS (
         SELECT 1 FROM venues v JOIN tenants t ON t.id = v.tenant_id
         WHERE v.id = venue_id AND v.slug = ? AND t.slug = ?
@@ -94,6 +91,7 @@ export function makePublishRunner(
     `;
     const identityParams = [
       version.id,
+      version.publicId,
       version.venueId,
       version.seq,
       version.hash,
