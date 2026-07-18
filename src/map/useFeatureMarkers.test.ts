@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
-import { collectMarkerFeatures, markerIconFor } from "./useFeatureMarkers";
+import { collectMarkerFeatures, markerIconFor, useFeatureMarkers } from "./useFeatureMarkers";
 
 const LEVEL = "level-1";
 
@@ -172,5 +174,61 @@ describe("markerIconFor", () => {
     expect(markerIconFor("information")).toBeDefined();
     expect(markerIconFor("atm")).toBeDefined();
     expect(markerIconFor("vendingmachine")).toBeDefined();
+  });
+});
+
+/** Controllable MapLibre stand-in for the marker overlay DOM. */
+class FakeMarkerMap {
+  readonly container = document.createElement("div");
+  readonly handlers = new Map<string, Set<(event?: unknown) => void>>();
+
+  getContainer(): HTMLElement {
+    return this.container;
+  }
+
+  project([lng, lat]: [number, number]): { x: number; y: number } {
+    return { x: lng, y: lat };
+  }
+
+  on(type: string, fn: (event?: unknown) => void): void {
+    let set = this.handlers.get(type);
+    if (set == null) {
+      set = new Set();
+      this.handlers.set(type, set);
+    }
+    set.add(fn);
+  }
+
+  off(type: string, fn: (event?: unknown) => void): void {
+    this.handlers.get(type)?.delete(fn);
+  }
+}
+
+describe("useFeatureMarkers interactions", () => {
+  it("passes the marker center and feature id to onSelect on click", async () => {
+    const unit = feature("unit-ele", "unit", "elevator");
+    const venue = venueWith([unit]);
+    const map = new FakeMarkerMap();
+    const onSelect = vi.fn();
+    renderHook(() =>
+      useFeatureMarkers({
+        map: map as unknown as MapLibreMap,
+        venue,
+        levelId: LEVEL,
+        locale: "en",
+        selectedFeatureId: null,
+        enabled: true,
+        onSelect,
+      }),
+    );
+    const button = await waitFor(() => {
+      const found = map.container.querySelector("button");
+      if (found == null) {
+        throw new Error("marker not rendered yet");
+      }
+      return found as HTMLButtonElement;
+    });
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onSelect).toHaveBeenCalledWith("unit-ele", [139.7, 35.6]);
   });
 });

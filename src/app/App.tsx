@@ -526,6 +526,7 @@ export function App() {
             theme={kirikoTheme}
             layerVisibility={layerVisibility}
             onSelectFeature={onMapSelectFeature}
+            issueReview={null}
             onControls={onControls}
           />
         ) : null}

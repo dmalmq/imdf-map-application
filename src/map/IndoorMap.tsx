@@ -21,12 +21,38 @@ import {
 } from "./featureLayers";
 import { LAYER_GROUP_IDS, type LayerVisibility } from "./layerGroups";
 import { useFeatureMarkers } from "./useFeatureMarkers";
+import { useIssuePins, type MapIssuePin } from "./useIssuePins";
 
 /** Imperative camera controls exposed to the Kiriko zoom cluster. */
 export interface IndoorMapControls {
   zoomIn: () => void;
   zoomOut: () => void;
   fitLevel: () => void;
+}
+
+/** Anchor captured when a review issue is placed on the map. */
+export interface IssuePlacementAnchor {
+  levelId: string;
+  longitude: number;
+  latitude: number;
+  featureId: string | null;
+}
+
+/**
+ * Single nullable boundary for the review-issue feature. Task 11 passes
+ * `null` from App; Task 12 supplies a live controller projection. Keeping it
+ * one explicit object avoids optional transitional props and no-op callbacks.
+ */
+export interface IssueReviewMapProps {
+  placementMode: boolean;
+  onPlaceIssue: (anchor: IssuePlacementAnchor) => void;
+  pins: MapIssuePin[];
+  selectedIssueId: string | null;
+  onSelectIssue: (issueId: string) => void;
+  /** Feature highlighted for the selected issue; separate from map selection. */
+  featureId: string | null;
+  /** Keyed, race-safe request to center on an issue anchor. */
+  cameraRequest: { key: number; levelId: string; longitude: number; latitude: number } | null;
 }
 
 export interface IndoorMapProps {
@@ -38,6 +64,8 @@ export interface IndoorMapProps {
   layerVisibility: LayerVisibility;
   /** null = background click */
   onSelectFeature: (featureId: string | null) => void;
+  /** null in Task 11; live review controller in Task 12. */
+  issueReview: IssueReviewMapProps | null;
   /** Receives camera controls once the map exists; null on teardown. */
   onControls?: (controls: IndoorMapControls | null) => void;
 }
@@ -116,10 +144,12 @@ function setSourceData(
   source.setData(buildRenderFeatures(venue, levelId));
 }
 
+type FeatureStateKey = "hover" | "selected" | "issueHighlight";
+
 function clearFeatureState(
   map: MapLibreMap,
   featureId: string | null,
-  key: "hover" | "selected",
+  key: FeatureStateKey,
 ): void {
   if (featureId == null) {
     return;
@@ -134,7 +164,7 @@ function clearFeatureState(
 function applyFeatureState(
   map: MapLibreMap,
   featureId: string,
-  state: { hover?: boolean; selected?: boolean },
+  state: { hover?: boolean; selected?: boolean; issueHighlight?: boolean },
 ): void {
   try {
     map.setFeatureState({ source: INDOOR_SOURCE_ID, id: featureId }, state);
@@ -211,6 +241,7 @@ export function IndoorMap({
   theme,
   layerVisibility,
   onSelectFeature,
+  issueReview,
   onControls,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -221,10 +252,15 @@ export function IndoorMap({
   const selectedIdRef = useRef(selectedFeatureId);
   const hoverIdRef = useRef<string | null>(null);
   const appliedSelectedRef = useRef<string | null>(null);
+  const appliedIssueHighlightRef = useRef<string | null>(null);
+  const appliedCameraKeyRef = useRef<number | null>(null);
   const themeIdRef = useRef(theme.id);
   const cancelReadyRef = useRef<(() => void) | null>(null);
+  const cameraCancelRef = useRef<(() => void) | null>(null);
+  const issueHighlightCancelRef = useRef<(() => void) | null>(null);
   const visibilityRef = useRef(layerVisibility);
   const onControlsRef = useRef(onControls);
+  const issueReviewRef = useRef(issueReview);
   const [mapInstance, setMapInstance] = useState<MapLibreMap | null>(null);
 
   onSelectRef.current = onSelectFeature;
@@ -233,9 +269,42 @@ export function IndoorMap({
   selectedIdRef.current = selectedFeatureId;
   visibilityRef.current = layerVisibility;
   onControlsRef.current = onControls;
+  issueReviewRef.current = issueReview;
 
-  const onMarkerSelect = useCallback((featureId: string) => {
+  const onMarkerSelect = useCallback((featureId: string, center: [number, number]) => {
+    const review = issueReviewRef.current;
+    if (review?.placementMode === true) {
+      review.onPlaceIssue({
+        levelId: levelIdRef.current,
+        longitude: center[0],
+        latitude: center[1],
+        featureId,
+      });
+      return;
+    }
     onSelectRef.current(featureId);
+  }, []);
+
+  const onIssueSelect = useCallback((issueId: string) => {
+    issueReviewRef.current?.onSelectIssue(issueId);
+  }, []);
+
+  const onPlaceAtCenter = useCallback(() => {
+    const map = mapRef.current;
+    const review = issueReviewRef.current;
+    if (map == null || review == null) {
+      return;
+    }
+    const center = map.getCenter();
+    const features = map.queryRenderedFeatures(map.project([center.lng, center.lat]), {
+      layers: [...CLICKABLE_LAYER_IDS],
+    });
+    review.onPlaceIssue({
+      levelId: levelIdRef.current,
+      longitude: center.lng,
+      latitude: center.lat,
+      featureId: readFeatureId(features[0]?.properties),
+    });
   }, []);
 
   useFeatureMarkers({
@@ -246,6 +315,15 @@ export function IndoorMap({
     selectedFeatureId,
     enabled: layerVisibility.labels,
     onSelect: onMarkerSelect,
+  });
+
+  useIssuePins({
+    map: mapInstance,
+    levelId,
+    pins: issueReview?.pins ?? [],
+    selectedIssueId: issueReview?.selectedIssueId ?? null,
+    locale,
+    onSelect: onIssueSelect,
   });
 
   // Create the map once.
@@ -293,8 +371,19 @@ export function IndoorMap({
       const features = map.queryRenderedFeatures(event.point, {
         layers: [...CLICKABLE_LAYER_IDS],
       });
-      const first = features[0];
-      const featureId = readFeatureId(first?.properties);
+      const featureId = readFeatureId(features[0]?.properties);
+      const review = issueReviewRef.current;
+      if (review?.placementMode === true) {
+        // Placement captures the clicked point (plus any feature under it) and
+        // suppresses ordinary feature selection.
+        review.onPlaceIssue({
+          levelId: levelIdRef.current,
+          longitude: event.lngLat.lng,
+          latitude: event.lngLat.lat,
+          featureId,
+        });
+        return;
+      }
       onSelectRef.current(featureId);
     };
 
@@ -363,6 +452,10 @@ export function IndoorMap({
     return () => {
       cancelReadyRef.current?.();
       cancelReadyRef.current = null;
+      cameraCancelRef.current?.();
+      cameraCancelRef.current = null;
+      issueHighlightCancelRef.current?.();
+      issueHighlightCancelRef.current = null;
       map.off("load", onLoad);
       map.off("click", onClick);
       map.off("mousemove", onMouseMove);
@@ -377,6 +470,8 @@ export function IndoorMap({
       setMapInstance(null);
       hoverIdRef.current = null;
       appliedSelectedRef.current = null;
+      appliedIssueHighlightRef.current = null;
+      appliedCameraKeyRef.current = null;
     };
     // Map is created once; theme/venue/level are applied via later effects.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -484,6 +579,59 @@ export function IndoorMap({
     cancelReadyRef.current = whenSourceReady(map, applySelection);
   }, [selectedFeatureId, venue, levelId]);
 
+  // Issue feature highlight: separate feature-state from map selection, so
+  // opening an issue never drives viewerReducer.selectedFeatureId / Inspector.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map == null || !map.isStyleLoaded()) {
+      return;
+    }
+    const nextId = issueReview?.featureId ?? null;
+
+    if (appliedIssueHighlightRef.current != null) {
+      clearFeatureState(map, appliedIssueHighlightRef.current, "issueHighlight");
+      appliedIssueHighlightRef.current = null;
+    }
+    if (nextId == null) {
+      return;
+    }
+
+    issueHighlightCancelRef.current?.();
+    issueHighlightCancelRef.current = whenSourceReady(map, () => {
+      applyFeatureState(map, nextId, { issueHighlight: true });
+      appliedIssueHighlightRef.current = nextId;
+    });
+  }, [issueReview?.featureId, venue, levelId]);
+
+  // Keyed anchor-camera request: switch floor first (App owns levelId), then
+  // center only after the new floor's source is ready. Reduced motion jumps.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map == null || !map.isStyleLoaded()) {
+      return;
+    }
+    const request = issueReview?.cameraRequest ?? null;
+    if (request == null || request.key === appliedCameraKeyRef.current) {
+      return;
+    }
+    // Wait for App to select the requested floor; this effect reruns when
+    // `levelId` updates and then centers once the source has applied.
+    if (request.levelId !== levelId) {
+      return;
+    }
+
+    appliedCameraKeyRef.current = request.key;
+    cameraCancelRef.current?.();
+    cameraCancelRef.current = whenSourceReady(map, () => {
+      const center: [number, number] = [request.longitude, request.latitude];
+      if (prefersReducedMotion()) {
+        map.jumpTo({ center });
+      } else {
+        map.easeTo({ center, duration: EASE_DURATION_MS });
+      }
+    });
+  }, [issueReview?.cameraRequest, levelId]);
+
   // Layer-group visibility toggles (Layers panel).
   useEffect(() => {
     const map = mapRef.current;
@@ -511,12 +659,19 @@ export function IndoorMap({
   }, [theme]);
 
   return (
-    <div
-      ref={containerRef}
-      className="indoor-map"
-      role="application"
-      aria-label="Indoor map"
-      style={{ width: "100%", height: "100%" }}
-    />
+    <>
+      <div
+        ref={containerRef}
+        className="indoor-map"
+        role="application"
+        aria-label="Indoor map"
+        style={{ width: "100%", height: "100%" }}
+      />
+      {issueReview?.placementMode === true ? (
+        <button type="button" className="issue-place-center" onClick={onPlaceAtCenter}>
+          Place at map center
+        </button>
+      ) : null}
+    </>
   );
 }
