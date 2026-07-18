@@ -14,6 +14,11 @@ export const LEVEL_1F_EN = "1F";
 export const LEVEL_B1_EN = "B1";
 export const LEVEL_2F_EN = "2F";
 
+/** FloorStack shows level short names (same in both locales for the fixture). */
+export const LEVEL_1F_SHORT = "1F";
+export const LEVEL_B1_SHORT = "B1";
+export const LEVEL_2F_SHORT = "2F";
+
 export const OCCUPANT_ID = "a1000008-0000-4000-8000-0000000000c1";
 export const KIOSK_ID = "f1000001-0000-4000-8000-0000000000f1";
 export const KIOSK_MARKER_JA = "案内キオスク";
@@ -78,20 +83,21 @@ export async function waitForMapIdle(page: Page, timeout = 15_000): Promise<void
 }
 
 export async function waitForReadyVenue(page: Page, venueName: string): Promise<void> {
-  await expect(page.locator(".top-bar__venue")).toHaveText(venueName, {
+  await expect(page.locator(".context-bar__name")).toHaveText(venueName, {
     timeout: 15_000,
   });
   await waitForMapIdle(page);
 }
 
-export function levelPill(page: Page, label: string): Locator {
-  return page.locator(".level-switcher__pill", { hasText: new RegExp(`^${label}$`) });
+/** Floor button in the Kiriko FloorStack, addressed by its short label. */
+export function floorButton(page: Page, shortLabel: string): Locator {
+  return page.locator(".floor-stack__btn", { hasText: new RegExp(`^${shortLabel}$`) });
 }
 
-export async function selectLevel(page: Page, label: string): Promise<void> {
-  const pill = levelPill(page, label);
-  await pill.click();
-  await expect(pill).toHaveAttribute("aria-pressed", "true");
+export async function selectLevel(page: Page, shortLabel: string): Promise<void> {
+  const button = floorButton(page, shortLabel);
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "true");
   await waitForMapIdle(page);
 }
 
@@ -99,21 +105,33 @@ export function markerByLabel(page: Page, label: string): Locator {
   return page.locator(`.indoor-marker[aria-label="${label}"]`);
 }
 
+/** Opens the Search panel from the icon rail when it is not already open. */
+export async function openSearchPanel(page: Page): Promise<void> {
+  const input = page.locator("#viewer-search-input");
+  if (await input.isVisible()) {
+    return;
+  }
+  await page.locator('.icon-rail__btn[aria-label="Search"], .icon-rail__btn[aria-label="検索"]').click();
+  await expect(input).toBeVisible();
+}
+
 export async function searchAndSelect(
   page: Page,
   query: string,
   resultLabel: string,
 ): Promise<void> {
+  await openSearchPanel(page);
   const input = page.locator("#viewer-search-input");
   await input.fill(query);
-  const result = page.locator(".explorer-sidebar__result", { hasText: resultLabel });
+  const result = page.locator(".list-row", { hasText: resultLabel });
   await expect(result).toBeVisible({ timeout: 5_000 });
   await result.click();
   await waitForMapIdle(page);
 }
 
+/** The Inspector floating panel for the selected feature. */
 export function detailsSection(page: Page): Locator {
-  return page.locator(".feature-details");
+  return page.locator(".floating-panel--inspector");
 }
 
 export async function expectDetailsContain(
@@ -128,43 +146,55 @@ export async function expectDetailsContain(
 }
 
 export async function switchLocale(page: Page, locale: "ja" | "en"): Promise<void> {
-  const label = locale === "ja" ? "日本語" : "English";
-  const button = page.locator(".locale-switcher__btn", { hasText: label });
+  const label = locale === "ja" ? "日本語" : "EN";
+  const button = page.locator(".locale-chips .chip", { hasText: new RegExp(`^${label}$`) });
   await button.click();
   await expect(button).toHaveAttribute("aria-pressed", "true");
 }
 
-export async function switchTheme(
-  page: Page,
-  themeLabel: "Tokyo Green" | "Customer Blue",
-): Promise<void> {
-  const button = page.locator(".theme-switcher__btn", { hasText: themeLabel });
-  await button.click();
-  await expect(button).toHaveAttribute("aria-pressed", "true");
-  await waitForMapIdle(page);
-}
-
+/** Opens the Warnings panel from the icon rail. */
 export async function openWarnings(page: Page): Promise<Locator> {
-  const details = page.locator("details.viewer-warnings");
-  await expect(details).toBeVisible();
-  // Force-open for consistent inspection even if already open.
-  await details.evaluate((el: HTMLDetailsElement) => {
-    el.open = true;
-  });
-  return details;
+  const toggle = page.locator(
+    '.icon-rail__btn[aria-label="Warnings"], .icon-rail__btn[aria-label="警告"]',
+  );
+  await expect(toggle).toBeVisible();
+  const panel = page.locator(".warnings-panel");
+  if (!(await panel.isVisible())) {
+    await toggle.click();
+  }
+  await expect(panel).toBeVisible();
+  return panel;
 }
 
 export async function expectWarningCodes(
   page: Page,
   expected: readonly string[],
 ): Promise<void> {
-  const warnings = await openWarnings(page);
-  const codes = warnings.locator(".viewer-warnings__code");
-  await expect(codes).toHaveCount(expected.length);
-  const actual = await codes.allTextContents();
+  const panel = await openWarnings(page);
+  const metas = panel.locator(".warning-row__meta");
+  await expect(metas).toHaveCount(expected.length);
+  const actual = (await metas.allTextContents()).map((text) => text.split(" · ")[0] ?? text);
   const sortedActual = [...actual].sort();
   const sortedExpected = [...expected].sort();
   expect(sortedActual).toEqual(sortedExpected);
+}
+
+export const E2E_USER = "e2e";
+export const E2E_PASSWORD = "e2e-password";
+
+export async function signIn(page: Page): Promise<void> {
+  await page.getByLabel(/Username|ユーザー名/).fill(E2E_USER);
+  await page.getByLabel(/Password|パスワード/).fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: /Sign in|サインイン/ }).click();
+  await expect(page.locator(".gallery__title")).toBeVisible();
+}
+
+/** Viewer entry for upload-driven specs (bypasses the gallery). */
+export const VIEWER_URL = "/?viewer";
+
+/** Exact published-dataset resource path used by gallery-to-viewer assertions. */
+export function datasetBundlePath(slug: string): string {
+  return `/v/default/${slug}/bundle`;
 }
 
 /** Click slightly below a marker so the hit lands on the polygon under it. */
@@ -181,20 +211,4 @@ export async function clickBelowMarker(page: Page, label: string): Promise<void>
   const y = box.y + box.height + 8;
   await page.mouse.click(x, y);
   await waitForMapIdle(page);
-}
-
-export async function canvasElementIdentity(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const canvas = document.querySelector(".indoor-map canvas");
-    if (!(canvas instanceof HTMLCanvasElement)) {
-      return "";
-    }
-    // Stamp a stable identity if missing so we can compare across theme switch.
-    let id = canvas.dataset.e2eCanvasId;
-    if (!id) {
-      id = `canvas-${Math.random().toString(36).slice(2)}`;
-      canvas.dataset.e2eCanvasId = id;
-    }
-    return id;
-  });
 }

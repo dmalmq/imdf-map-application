@@ -1,0 +1,19 @@
+[package]
+name = "kiriko-bundle"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Deterministic content-addressed Kiriko venue bundle (kvb1) codec."
+
+[dependencies]
+kiriko-model = { path = "../kiriko-model" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+postcard = { workspace = true }
+zstd = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+zip = { workspace = true }

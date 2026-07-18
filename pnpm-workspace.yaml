@@ -1,0 +1,8 @@
+packages:
+  - "."
+  - "server"
+  - "core/crates/kiriko-node"
+  - "core/crates/kiriko-wasm"
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true

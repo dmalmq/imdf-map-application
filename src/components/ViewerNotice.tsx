@@ -1,24 +1,26 @@
-import { archiveErrorCopy } from "../errors/ArchiveError";
-import type { ArchiveError } from "../errors/ArchiveError";
-import type { LocaleCode, ViewerWarning } from "../imdf/types";
+import { venueLoadErrorMessage } from "../errors/VenueLoadError";
+import type { VenueLoadError } from "../errors/VenueLoadError";
+import type { LocaleCode } from "../imdf/types";
 
 const ui = {
-  errorTitle: { ja: "読み込みに失敗しました", en: "Could not load archive" },
-  warnings: { ja: "警告", en: "Warnings" },
+  errorTitle: {
+    archive: { ja: "読み込みに失敗しました", en: "Could not load archive" },
+    bundle: { ja: "読み込みに失敗しました", en: "Could not load venue bundle" },
+  },
   retry: { ja: "再試行", en: "Retry" },
 } as const;
 
 export interface ViewerErrorNoticeProps {
-  error: ArchiveError;
+  error: VenueLoadError;
   locale: LocaleCode;
   onRetry?: () => void;
 }
 
 export function ViewerErrorNotice({ error, locale, onRetry }: ViewerErrorNoticeProps) {
-  const copy = archiveErrorCopy[error.code];
+  const copy = venueLoadErrorMessage(error);
   return (
     <div className="viewer-notice viewer-notice--error" role="alert">
-      <p className="viewer-notice__title">{ui.errorTitle[locale]}</p>
+      <p className="viewer-notice__title">{ui.errorTitle[error.source][locale]}</p>
       <p className="viewer-notice__body">{copy}</p>
       {onRetry ? (
         <button type="button" className="viewer-notice__retry" onClick={onRetry}>
@@ -26,38 +28,5 @@ export function ViewerErrorNotice({ error, locale, onRetry }: ViewerErrorNoticeP
         </button>
       ) : null}
     </div>
-  );
-}
-
-export interface ViewerWarningsProps {
-  warnings: ViewerWarning[];
-  locale: LocaleCode;
-}
-
-export function ViewerWarnings({ warnings, locale }: ViewerWarningsProps) {
-  if (warnings.length === 0) {
-    return null;
-  }
-
-  return (
-    <details className="viewer-warnings">
-      <summary className="viewer-warnings__summary">
-        <span>{ui.warnings[locale]}</span>
-        <span className="viewer-warnings__badge" aria-label={`${warnings.length}`}>
-          {warnings.length}
-        </span>
-      </summary>
-      <ul className="viewer-warnings__list">
-        {warnings.map((warning, index) => {
-          const key = `${warning.code}-${warning.featureId ?? warning.archiveEntry ?? index}`;
-          return (
-            <li key={key} className="viewer-warnings__item">
-              <span className="viewer-warnings__code">{warning.code}</span>
-              <span className="viewer-warnings__message">{warning.message}</span>
-            </li>
-          );
-        })}
-      </ul>
-    </details>
   );
 }

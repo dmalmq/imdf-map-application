@@ -68,6 +68,28 @@ describe("normalizeVenue", () => {
     expect(venue.levels.map((level) => level.shortName["en"])).toEqual(["2F", "1F", "B1"]);
   });
 
+  it("projects features in canonical feature-type order regardless of collections insertion order", async () => {
+    const archive = await loadMinimalArchive();
+    const reversed: ParsedImdfArchive = { manifest: archive.manifest, collections: {} };
+    for (const featureType of (
+      Object.keys(archive.collections) as FeatureType[]
+    ).reverse()) {
+      const collection = archive.collections[featureType];
+      if (collection !== undefined) {
+        reversed.collections[featureType] = collection;
+      }
+    }
+
+    const baseline = normalizeVenue(archive);
+    const venue = normalizeVenue(reversed);
+
+    expect([...venue.featuresById.keys()]).toEqual([...baseline.featuresById.keys()]);
+    const types = [...venue.featuresById.values()].map((feature) => feature.featureType);
+    expect(types[0]).toBe("address");
+    expect(types[types.length - 1]).toBe("venue");
+    expect(venue.warnings).toEqual(baseline.warnings);
+  });
+
   it("uses the restricted unit display_point rather than its bounds center", async () => {
     const venue = normalizeVenue(await loadMinimalArchive());
     const restricted = venue.featuresById.get(RESTRICTED_UNIT);

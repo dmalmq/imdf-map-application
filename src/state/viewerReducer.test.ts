@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ArchiveError } from "../errors/ArchiveError";
+import { VenueLoadError } from "../errors/VenueLoadError";
 import type { LoadedVenue, ViewerFeature, ViewerLevel } from "../imdf/types";
 import {
   initialViewerState,
@@ -57,7 +57,6 @@ function readyState(
   const loadedVenue = makeVenue(levels);
   return {
     status: "ready",
-    themeId: "tokyo-green",
     locale: "ja",
     fileName,
     loadedVenue,
@@ -70,10 +69,9 @@ function readyState(
 }
 
 describe("initialViewerState", () => {
-  it("starts empty with ja locale and tokyo-green theme", () => {
+  it("starts empty with ja locale", () => {
     expect(initialViewerState).toEqual({
       status: "empty",
-      themeId: "tokyo-green",
       locale: "ja",
     });
   });
@@ -150,7 +148,6 @@ describe("viewerReducer load lifecycle", () => {
     expect(next).toEqual({
       status: "loading",
       fileName: "a.zip",
-      themeId: "tokyo-green",
       locale: "ja",
     });
     expect("previous" in next && next.previous !== undefined).toBe(false);
@@ -270,8 +267,7 @@ describe("viewerReducer stale suppression", () => {
     ).toBe(initialViewerState);
     const failed: ViewerState = {
       status: "error",
-      error: new ArchiveError("invalid_archive", "bad"),
-      themeId: "tokyo-green",
+      error: new VenueLoadError("invalid_archive", "bad"),
       locale: "ja",
     };
     expect(
@@ -284,7 +280,7 @@ describe("viewerReducer stale suppression", () => {
       type: "load_started",
       fileName: "current.zip",
     });
-    const error = new ArchiveError("invalid_archive", "bad");
+    const error = new VenueLoadError("invalid_archive", "bad");
     expect(
       viewerReducer(loading, { type: "load_failed", fileName: "stale.zip", error }),
     ).toBe(loading);
@@ -302,7 +298,7 @@ describe("viewerReducer replacement / valid-map preservation", () => {
     if (loading.status !== "loading") return;
     expect(loading.previous?.fileName).toBe("good.zip");
 
-    const error = new ArchiveError("invalid_json", "broken");
+    const error = new VenueLoadError("invalid_json", "broken");
     const failed = viewerReducer(loading, {
       type: "load_failed",
       fileName: "bad.zip",
@@ -324,7 +320,7 @@ describe("viewerReducer replacement / valid-map preservation", () => {
     const failed = viewerReducer(loading, {
       type: "load_failed",
       fileName: "bad.zip",
-      error: new ArchiveError("invalid_archive", "nope"),
+      error: new VenueLoadError("invalid_archive", "nope"),
     });
     const again = viewerReducer(failed, { type: "load_started", fileName: "retry.zip" });
     expect(again.status).toBe("loading");
@@ -338,7 +334,7 @@ describe("viewerReducer replacement / valid-map preservation", () => {
       type: "load_started",
       fileName: "a.zip",
     });
-    const error = new ArchiveError("unsupported_file", "nope");
+    const error = new VenueLoadError("unsupported_file", "nope");
     const failed = viewerReducer(loading, {
       type: "load_failed",
       fileName: "a.zip",
@@ -347,7 +343,6 @@ describe("viewerReducer replacement / valid-map preservation", () => {
     expect(failed).toEqual({
       status: "error",
       error,
-      themeId: "tokyo-green",
       locale: "ja",
     });
   });
@@ -424,7 +419,7 @@ describe("viewerReducer select_feature / select_level", () => {
   });
 });
 
-describe("viewerReducer set_theme / set_locale", () => {
+describe("viewerReducer set_locale", () => {
   it("works in every status", () => {
     const statuses: ViewerState[] = [
       initialViewerState,
@@ -432,22 +427,15 @@ describe("viewerReducer set_theme / set_locale", () => {
       readyState(),
       {
         status: "error",
-        error: new ArchiveError("worker_failed", "x"),
-        themeId: "tokyo-green",
+        error: new VenueLoadError("worker_failed", "x"),
         locale: "ja",
       },
     ];
 
     for (const state of statuses) {
-      const themed = viewerReducer(state, { type: "set_theme", themeId: "customer-blue" });
-      expect(themed.themeId).toBe("customer-blue");
-      expect(themed.status).toBe(state.status);
-      expect(themed.locale).toBe(state.locale);
-
       const localized = viewerReducer(state, { type: "set_locale", locale: "en" });
       expect(localized.locale).toBe("en");
       expect(localized.status).toBe(state.status);
-      expect(localized.themeId).toBe(state.themeId);
     }
   });
 });

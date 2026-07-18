@@ -21,7 +21,7 @@ import {
   WALKWAY_CATEGORIES,
 } from "./featureLayers";
 
-const theme = themes["tokyo-green"];
+const theme = themes.kiriko;
 
 function findLayer(id: string) {
   const layer = buildFeatureLayers(theme).find((candidate) => candidate.id === id);
@@ -111,12 +111,12 @@ describe("buildFeatureLayers category coloring", () => {
 });
 
 describe("applyThemePaintProperties", () => {
-  it("repaints the category layers on theme switch", () => {
-    const c = themes["customer-blue"].colors;
+  it("repaints the category layers", () => {
+    const c = themes.kiriko.colors;
     const calls: [string, string, unknown][] = [];
     applyThemePaintProperties((layerId, name, value) => {
       calls.push([layerId, name, value]);
-    }, themes["customer-blue"]);
+    }, themes.kiriko);
 
     for (const expected of [
       [LAYER_UNENCLOSED_FILL, "fill-color", c.unitUnenclosed],

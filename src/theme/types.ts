@@ -1,4 +1,4 @@
-export type ThemeId = "tokyo-green" | "customer-blue";
+export type ThemeId = "kiriko";
 
 export interface ViewerTheme {
   id: ThemeId;

@@ -45,10 +45,19 @@ export default defineConfig({
       testMatch: VISUAL_SPEC,
     },
   ],
-  webServer: {
-    command: "pnpm build && pnpm exec vite preview --host 127.0.0.1 --port 4173",
-    url: "http://127.0.0.1:4173",
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-  },
+  webServer: [
+    {
+      command: "pnpm build && pnpm exec vite preview --host 127.0.0.1 --port 4173",
+      url: "http://127.0.0.1:4173",
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
+    {
+      command:
+        'rm -rf .e2e-data && KIRIKO_DATA_DIR="$PWD/.e2e-data" KIRIKO_PORT=8790 KIRIKO_BOOTSTRAP_USER=e2e KIRIKO_BOOTSTRAP_PASSWORD=e2e-password pnpm --filter kiriko-server start',
+      url: "http://127.0.0.1:8790/healthz",
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+  ],
 });

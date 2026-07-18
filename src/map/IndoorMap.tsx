@@ -19,7 +19,15 @@ import {
   applyThemePaintProperties,
   CLICKABLE_LAYER_IDS,
 } from "./featureLayers";
+import { LAYER_GROUP_IDS, type LayerVisibility } from "./layerGroups";
 import { useFeatureMarkers } from "./useFeatureMarkers";
+
+/** Imperative camera controls exposed to the Kiriko zoom cluster. */
+export interface IndoorMapControls {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitLevel: () => void;
+}
 
 export interface IndoorMapProps {
   venue: LoadedVenue;
@@ -27,8 +35,11 @@ export interface IndoorMapProps {
   selectedFeatureId: string | null;
   locale: LocaleCode;
   theme: ViewerTheme;
+  layerVisibility: LayerVisibility;
   /** null = background click */
   onSelectFeature: (featureId: string | null) => void;
+  /** Receives camera controls once the map exists; null on teardown. */
+  onControls?: (controls: IndoorMapControls | null) => void;
 }
 
 const FIT_PADDING = 48;
@@ -181,13 +192,26 @@ function whenSourceReady(map: MapLibreMap, fn: () => void): () => void {
   };
 }
 
+function applyLayerVisibility(map: MapLibreMap, visibility: LayerVisibility): void {
+  for (const [group, layerIds] of Object.entries(LAYER_GROUP_IDS)) {
+    const visible = visibility[group as keyof LayerVisibility];
+    for (const layerId of layerIds) {
+      if (map.getLayer(layerId) != null) {
+        map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+      }
+    }
+  }
+}
+
 export function IndoorMap({
   venue,
   levelId,
   selectedFeatureId,
   locale,
   theme,
+  layerVisibility,
   onSelectFeature,
+  onControls,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -199,12 +223,16 @@ export function IndoorMap({
   const appliedSelectedRef = useRef<string | null>(null);
   const themeIdRef = useRef(theme.id);
   const cancelReadyRef = useRef<(() => void) | null>(null);
+  const visibilityRef = useRef(layerVisibility);
+  const onControlsRef = useRef(onControls);
   const [mapInstance, setMapInstance] = useState<MapLibreMap | null>(null);
 
   onSelectRef.current = onSelectFeature;
   venueRef.current = venue;
   levelIdRef.current = levelId;
   selectedIdRef.current = selectedFeatureId;
+  visibilityRef.current = layerVisibility;
+  onControlsRef.current = onControls;
 
   const onMarkerSelect = useCallback((featureId: string) => {
     onSelectRef.current(featureId);
@@ -216,6 +244,7 @@ export function IndoorMap({
     levelId,
     locale,
     selectedFeatureId,
+    enabled: layerVisibility.labels,
     onSelect: onMarkerSelect,
   });
 
@@ -244,19 +273,21 @@ export function IndoorMap({
     }
 
     map.touchZoomRotate.disableRotation();
-    map.addControl(
-      new maplibregl.AttributionControl({
-        compact: false,
-        customAttribution: "IMDF venue data © Company",
-      }),
-      "bottom-right",
-    );
-    map.addControl(
-      new maplibregl.NavigationControl({ showCompass: false }),
-      "bottom-right",
-    );
 
     mapRef.current = map;
+
+    // Kiriko chrome owns zoom/fit and attribution; no MapLibre controls.
+    onControlsRef.current?.({
+      zoomIn: () => {
+        map.zoomIn({ duration: prefersReducedMotion() ? 0 : 200 });
+      },
+      zoomOut: () => {
+        map.zoomOut({ duration: prefersReducedMotion() ? 0 : 200 });
+      },
+      fitLevel: () => {
+        fitLevelBounds(map, venueRef.current, levelIdRef.current);
+      },
+    });
 
     const onClick = (event: MapMouseEvent): void => {
       const features = map.queryRenderedFeatures(event.point, {
@@ -299,6 +330,7 @@ export function IndoorMap({
 
     const onLoad = (): void => {
       setSourceData(map, venueRef.current, levelIdRef.current);
+      applyLayerVisibility(map, visibilityRef.current);
       fitLevelBounds(map, venueRef.current, levelIdRef.current);
       setMapInstance(map);
 
@@ -339,6 +371,7 @@ export function IndoorMap({
       map.off("dataloading", clearIdle);
       map.off("movestart", clearIdle);
       map.off("move", clearIdle);
+      onControlsRef.current?.(null);
       map.remove();
       mapRef.current = null;
       setMapInstance(null);
@@ -450,6 +483,15 @@ export function IndoorMap({
     cancelReadyRef.current?.();
     cancelReadyRef.current = whenSourceReady(map, applySelection);
   }, [selectedFeatureId, venue, levelId]);
+
+  // Layer-group visibility toggles (Layers panel).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map == null || !map.isStyleLoaded()) {
+      return;
+    }
+    applyLayerVisibility(map, layerVisibility);
+  }, [layerVisibility]);
 
   // Theme switch: paint properties only — never rebuild style/map.
   useEffect(() => {

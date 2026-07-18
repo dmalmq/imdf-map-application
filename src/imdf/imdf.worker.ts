@@ -8,10 +8,10 @@ import {
   type FileEntry,
 } from "@zip.js/zip.js";
 import {
-  ArchiveError,
-  archiveErrorCopy,
-  type ArchiveErrorCode,
-} from "../errors/ArchiveError";
+  VenueLoadError,
+  venueLoadErrorCopy,
+  type VenueLoadErrorCode,
+} from "../errors/VenueLoadError";
 import {
   MAX_ARCHIVE_ENTRIES,
   MAX_COMPRESSED_BYTES,
@@ -19,7 +19,7 @@ import {
   MAX_TOTAL_UNCOMPRESSED_BYTES,
 } from "./archiveLimits";
 import type { ImdfWorkerRequest, ImdfWorkerResponse } from "./loadImdfArchive";
-import { normalizeVenue } from "./normalizeVenue";
+import { FEATURE_TYPE_ORDER, normalizeVenue } from "./normalizeVenue";
 import type {
   FeatureType,
   ImdfManifest,
@@ -60,13 +60,13 @@ const REQUIRED_FILES: Record<string, true> = {
 declare const self: DedicatedWorkerGlobalScope;
 
 function fail(
-  code: ArchiveErrorCode,
+  code: VenueLoadErrorCode,
   message?: string,
   details?: Record<string, unknown>,
 ): never {
   throw details !== undefined
-    ? new ArchiveError(code, message ?? archiveErrorCopy[code], details)
-    : new ArchiveError(code, message ?? archiveErrorCopy[code]);
+    ? new VenueLoadError(code, message ?? venueLoadErrorCopy[code], details)
+    : new VenueLoadError(code, message ?? venueLoadErrorCopy[code]);
 }
 
 function isUnsafePath(filename: string): boolean {
@@ -84,6 +84,18 @@ function isUnsafePath(filename: string): boolean {
     return true;
   }
   return false;
+}
+
+/** Lexicographic UTF-8 byte comparison; a strict prefix sorts first. */
+function compareUtf8(a: Uint8Array, b: Uint8Array): number {
+  const shared = Math.min(a.length, b.length);
+  for (let i = 0; i < shared; i++) {
+    const diff = a[i]! - b[i]!;
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return a.length - b.length;
 }
 
 function isZipMagic(bytes: Uint8Array): boolean {
@@ -143,7 +155,7 @@ class BoundedByteWriter {
 }
 
 function mapZipJsError(error: unknown): never {
-  if (error instanceof ArchiveError) {
+  if (error instanceof VenueLoadError) {
     throw error;
   }
   const message =
@@ -180,7 +192,7 @@ async function extractEntryText(
       useWebWorkers: false,
     });
   } catch (error) {
-    if (error instanceof ArchiveError) {
+    if (error instanceof VenueLoadError) {
       throw error;
     }
     mapZipJsError(error);
@@ -189,7 +201,7 @@ async function extractEntryText(
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    fail("invalid_json", archiveErrorCopy.invalid_json, {
+    fail("invalid_json", venueLoadErrorCopy.invalid_json, {
       entry: entry.filename,
       reason: "utf8_decode",
     });
@@ -200,7 +212,7 @@ function parseJson(text: string, entryName: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    fail("invalid_json", archiveErrorCopy.invalid_json, { entry: entryName });
+    fail("invalid_json", venueLoadErrorCopy.invalid_json, { entry: entryName });
   }
 }
 
@@ -210,17 +222,17 @@ function assertFeatureCollection(
   entryName: string,
 ): GeoJSON.FeatureCollection {
   if (value === null || typeof value !== "object") {
-    fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+    fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
       entry: entryName,
     });
   }
   if (!("type" in value) || value.type !== "FeatureCollection") {
-    fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+    fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
       entry: entryName,
     });
   }
   if (!("features" in value) || !Array.isArray(value.features)) {
-    fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+    fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
       entry: entryName,
     });
   }
@@ -228,12 +240,12 @@ function assertFeatureCollection(
   const features: Array<GeoJSON.Feature<GeoJSON.Geometry | null>> = [];
   for (const feature of value.features) {
     if (feature === null || typeof feature !== "object") {
-      fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+      fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
         entry: entryName,
       });
     }
     if (!("type" in feature) || feature.type !== "Feature") {
-      fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+      fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
         entry: entryName,
       });
     }
@@ -251,7 +263,7 @@ function assertFeatureCollection(
       featureId = feature.properties.id;
     }
     if (featureId === undefined || !FEATURE_ID_RE.test(featureId)) {
-      fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+      fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
         entry: entryName,
         reason: "feature_id",
         featureId,
@@ -273,7 +285,7 @@ function assertFeatureCollection(
       declaredType = feature.properties.feature_type;
     }
     if (declaredType !== featureType) {
-      fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+      fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
         entry: entryName,
         reason: "feature_type_mismatch",
         expected: featureType,
@@ -338,10 +350,26 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
 
   try {
     if (entries.length > MAX_ARCHIVE_ENTRIES) {
-      fail("archive_too_large", archiveErrorCopy.archive_too_large, {
+      fail("archive_too_large", venueLoadErrorCopy.archive_too_large, {
         entryCount: entries.length,
       });
     }
+
+    // Sort entries by UTF-8 byte order of their exact filenames before
+    // validation/import so archives with identical root files in different
+    // ZIP record order produce identical `LoadedVenue` projections and
+    // warning order. Matches the Rust importer's bytewise
+    // `sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()))`; JS `<`/`>`
+    // and localeCompare compare UTF-16 code units, which order
+    // supplementary-plane names differently. Filename bytes are encoded once
+    // per entry (entry count is bounded above).
+    const encoder = new TextEncoder();
+    const sortable = entries.map((entry) => ({
+      entry,
+      nameBytes: encoder.encode(entry.filename),
+    }));
+    sortable.sort((a, b) => compareUtf8(a.nameBytes, b.nameBytes));
+    entries = sortable.map((item) => item.entry);
 
     let declaredTotal = 0;
     const seenNames = new Map<string, true>();
@@ -351,18 +379,18 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
     for (const entry of entries) {
       if (entry.directory) {
         // Root-only archives should not contain directory entries; treat as unsafe.
-        fail("unsafe_archive_path", archiveErrorCopy.unsafe_archive_path, {
+        fail("unsafe_archive_path", venueLoadErrorCopy.unsafe_archive_path, {
           entry: entry.filename,
           reason: "directory",
         });
       }
       if (isUnsafePath(entry.filename)) {
-        fail("unsafe_archive_path", archiveErrorCopy.unsafe_archive_path, {
+        fail("unsafe_archive_path", venueLoadErrorCopy.unsafe_archive_path, {
           entry: entry.filename,
         });
       }
       if (entry.encrypted) {
-        fail("invalid_archive", archiveErrorCopy.invalid_archive, {
+        fail("invalid_archive", venueLoadErrorCopy.invalid_archive, {
           entry: entry.filename,
           reason: "encrypted",
         });
@@ -377,7 +405,7 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
 
       const folded = entry.filename.toLowerCase();
       if (seenNames.has(folded)) {
-        fail("invalid_archive", archiveErrorCopy.invalid_archive, {
+        fail("invalid_archive", venueLoadErrorCopy.invalid_archive, {
           entry: entry.filename,
           reason: "duplicate_name",
         });
@@ -393,7 +421,7 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
 
     for (const required of Object.keys(REQUIRED_FILES)) {
       if (!byName.has(required)) {
-        fail("missing_required_file", archiveErrorCopy.missing_required_file, {
+        fail("missing_required_file", venueLoadErrorCopy.missing_required_file, {
           missing: required,
         });
       }
@@ -409,7 +437,7 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
         const text = await extractEntryText(entry, totalTracker);
         const parsed = parseJson(text, entry.filename);
         if (parsed === null || typeof parsed !== "object") {
-          fail("invalid_json", archiveErrorCopy.invalid_json, { entry: entry.filename });
+          fail("invalid_json", venueLoadErrorCopy.invalid_json, { entry: entry.filename });
         }
         let version: unknown;
         let language: unknown;
@@ -428,7 +456,7 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
           fail("invalid_manifest_version");
         }
         if (typeof language !== "string" || language === "") {
-          fail("invalid_manifest_version", archiveErrorCopy.invalid_manifest_version, {
+          fail("invalid_manifest_version", venueLoadErrorCopy.invalid_manifest_version, {
             reason: "language",
           });
         }
@@ -457,43 +485,42 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
     }
 
     if (manifest === undefined) {
-      fail("missing_required_file", archiveErrorCopy.missing_required_file, {
+      fail("missing_required_file", venueLoadErrorCopy.missing_required_file, {
         missing: "manifest.json",
       });
     }
 
     const venueFeatures = collections.venue?.features ?? [];
     if (venueFeatures.length !== 1) {
-      fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+      fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
         reason: "venue_count",
         count: venueFeatures.length,
       });
     }
     const levelFeatures = collections.level?.features ?? [];
     if (levelFeatures.length < 1) {
-      fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+      fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
         reason: "level_count",
         count: levelFeatures.length,
       });
     }
 
     const seenIds = new Map<string, true>();
-    for (const [featureType, collection] of Object.entries(collections) as Array<
-      [FeatureType, GeoJSON.FeatureCollection | undefined]
-    >) {
+    for (const featureType of FEATURE_TYPE_ORDER) {
+      const collection = collections[featureType];
       if (collection === undefined) {
         continue;
       }
       for (const feature of collection.features) {
         const id = feature.id;
         if (typeof id !== "string") {
-          fail("invalid_feature_collection", archiveErrorCopy.invalid_feature_collection, {
+          fail("invalid_feature_collection", venueLoadErrorCopy.invalid_feature_collection, {
             featureType,
             reason: "missing_id",
           });
         }
         if (seenIds.has(id)) {
-          fail("duplicate_feature_id", archiveErrorCopy.duplicate_feature_id, {
+          fail("duplicate_feature_id", venueLoadErrorCopy.duplicate_feature_id, {
             featureId: id,
           });
         }
@@ -517,7 +544,7 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
 }
 
 function serializeFailure(error: unknown): ImdfWorkerResponse {
-  if (error instanceof ArchiveError) {
+  if (error instanceof VenueLoadError) {
     if (error.details !== undefined) {
       return {
         type: "failed",
@@ -533,7 +560,7 @@ function serializeFailure(error: unknown): ImdfWorkerResponse {
     type: "failed",
     error: {
       code: "worker_failed",
-      message: archiveErrorCopy.worker_failed,
+      message: venueLoadErrorCopy.worker_failed,
     },
   };
 }
@@ -551,7 +578,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
         type: "failed",
         error: {
           code: "worker_failed",
-          message: archiveErrorCopy.worker_failed,
+          message: venueLoadErrorCopy.worker_failed,
         },
       };
       self.postMessage(response);

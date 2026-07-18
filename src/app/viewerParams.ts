@@ -1,13 +1,12 @@
 import type { LocaleCode } from "../imdf/types";
-import { themes } from "../theme/presets";
-import type { ThemeId } from "../theme/types";
 
 export interface ViewerParams {
   src: string | null;
   level: string | null;
   embed: boolean;
   locale: LocaleCode | null;
-  themeId: ThemeId | null;
+  dataset: string | null;
+  forceViewer: boolean;
 }
 
 function safeSrc(raw: string | null, base?: string): string | null {
@@ -36,9 +35,12 @@ export function parseViewerParams(search: string, base?: string): ViewerParams {
   const langRaw = params.get("lang");
   const locale: LocaleCode | null = langRaw === "ja" || langRaw === "en" ? langRaw : null;
 
-  const themeRaw = params.get("theme");
-  const themeId: ThemeId | null =
-    themeRaw !== null && Object.hasOwn(themes, themeRaw) ? (themeRaw as ThemeId) : null;
+  const datasetRaw = params.get("dataset");
+  const dataset = datasetRaw !== null && datasetRaw.trim() !== "" ? datasetRaw.trim() : null;
 
-  return { src: safeSrc(params.get("src"), base), level, embed, locale, themeId };
+  const viewerRaw = params.get("viewer");
+  const forceViewer =
+    viewerRaw !== null && (viewerRaw === "" || /^(1|true)$/i.test(viewerRaw));
+
+  return { src: safeSrc(params.get("src"), base), level, embed, locale, dataset, forceViewer };
 }

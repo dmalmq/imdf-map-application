@@ -1,14 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
-  LEVEL_1F_JA,
-  LEVEL_2F_JA,
-  LEVEL_B1_JA,
-  levelPill,
+  floorButton,
+  LEVEL_1F_SHORT,
+  LEVEL_2F_SHORT,
+  LEVEL_B1_SHORT,
   mapCanvas,
   minimalImdfZipBuffer,
   OCCUPANT_JA,
   uploadZip,
   VENUE_NAME_JA,
+  VIEWER_URL,
   waitForMapIdle,
   waitForReadyVenue,
 } from "./helpers";
@@ -24,7 +25,7 @@ function percentileNearestRank(samples: number[], p: number): number {
 }
 
 async function measureUploadToIdle(page: Page, zipBuffer: Buffer): Promise<number> {
-  await page.goto("/");
+  await page.goto(VIEWER_URL);
   await page.waitForLoadState("load");
 
   // Stamp the start time in the page just before the file input change.
@@ -34,7 +35,7 @@ async function measureUploadToIdle(page: Page, zipBuffer: Buffer): Promise<numbe
 
   await uploadZip(page, zipBuffer);
   await waitForReadyVenue(page, VENUE_NAME_JA);
-  await expect(levelPill(page, LEVEL_1F_JA)).toBeVisible();
+  await expect(floorButton(page, LEVEL_1F_SHORT)).toBeVisible();
   await waitForMapIdle(page);
 
   const elapsed = await page.evaluate(() => {
@@ -156,17 +157,17 @@ test.describe("viewer performance", () => {
     // Measure setData + idle, not camera ease (FIT_DURATION_MS = 500).
     await page.emulateMedia({ reducedMotion: "reduce" });
     const zipBuffer = await minimalImdfZipBuffer();
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadZip(page, zipBuffer);
     await waitForReadyVenue(page, VENUE_NAME_JA);
     await waitForMapIdle(page);
     await zeroMapLibreTransitions(page);
-    const labels = [LEVEL_B1_JA, LEVEL_1F_JA, LEVEL_2F_JA, LEVEL_1F_JA];
+    const labels = [LEVEL_B1_SHORT, LEVEL_1F_SHORT, LEVEL_2F_SHORT, LEVEL_1F_SHORT];
     // 3 unmeasured warm-ups.
     for (let i = 0; i < 3; i += 1) {
       const label = labels[i % labels.length]!;
-      await levelPill(page, label).click();
+      await floorButton(page, label).click();
       await waitForMapIdle(page);
     }
 
@@ -181,11 +182,11 @@ test.describe("viewer performance", () => {
         delete container.dataset.mapIdle;
 
         const buttons = Array.from(
-          document.querySelectorAll<HTMLButtonElement>(".level-switcher__pill"),
+          document.querySelectorAll<HTMLButtonElement>(".floor-stack__btn"),
         );
         const button = buttons.find((b) => b.textContent?.trim() === levelLabel);
         if (!button) {
-          throw new Error(`level pill not found: ${levelLabel}`);
+          throw new Error(`floor button not found: ${levelLabel}`);
         }
 
         return await new Promise<number>((resolve, reject) => {
@@ -224,7 +225,7 @@ test.describe("viewer performance", () => {
   test("1s drag keeps ≥30 frames and no longtask > 100ms", async ({ page }) => {
     test.setTimeout(60_000);
     const zipBuffer = await minimalImdfZipBuffer();
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadZip(page, zipBuffer);
     await waitForReadyVenue(page, VENUE_NAME_JA);
@@ -233,7 +234,7 @@ test.describe("viewer performance", () => {
     // Seed search results so detail selection is meaningful during the drag.
     await page.locator("#viewer-search-input").fill("駅");
     await expect(
-      page.locator(".explorer-sidebar__result", { hasText: OCCUPANT_JA }),
+      page.locator(".list-row", { hasText: OCCUPANT_JA }),
     ).toBeVisible({ timeout: 5_000 });
 
     const canvas = mapCanvas(page);
@@ -287,7 +288,7 @@ test.describe("viewer performance", () => {
         throw new Error("search input missing");
       }
       const results = () =>
-        Array.from(document.querySelectorAll<HTMLButtonElement>(".explorer-sidebar__result"));
+        Array.from(document.querySelectorAll<HTMLButtonElement>(".list-row"));
 
       const texts = ["駅", "トイレ", "キオスク", "ショップ", "駅ナカ"];
       for (let i = 0; i < 10; i += 1) {

@@ -1,18 +1,19 @@
 import { expect, test, type Request } from "@playwright/test";
 import {
   AMENITY_JA,
-  canvasElementIdentity,
   clickBelowMarker,
   corruptZipBuffer,
   expectDetailsContain,
   expectWarningCodes,
+  floorButton,
   KIOSK_ID,
   KIOSK_MARKER_JA,
   LEVEL_1F_JA,
+  LEVEL_1F_SHORT,
   LEVEL_2F_JA,
+  LEVEL_2F_SHORT,
   LEVEL_B1_JA,
-  LEVEL_B1_EN,
-  levelPill,
+  LEVEL_B1_SHORT,
   mapCanvas,
   mapContainer,
   markerByLabel,
@@ -24,30 +25,36 @@ import {
   searchAndSelect,
   selectLevel,
   switchLocale,
-  switchTheme,
   uploadMinimalImdf,
   UNIT_STAIRS_EN,
   uploadZip,
   VENUE_NAME_JA,
+  VIEWER_URL,
   waitForMapIdle,
   waitForReadyVenue,
   WARNING_CODES,
 } from "./helpers";
 
-test.describe("IMDF viewer journey", () => {
-  test("upload → map → level → search → selection → details → theme → compact → recovery", async ({
+test.describe("local IMDF ZIP viewer journey", () => {
+  test("local upload → map → level → search → selection → details → warnings → compact → recovery", async ({
     page,
   }) => {
-    // Zero post-load network: start counting after the static app load event.
+    // No external network: after the static app load event, the only allowed
+    // requests are same-origin font subsets (Noto Sans JP ships unicode-range
+    // subsets that the browser fetches on demand as CJK glyphs render).
     const networkRequests: string[] = [];
     const onRequest = (request: Request): void => {
       const url = request.url();
-      if (url.startsWith("http://") || url.startsWith("https://")) {
-        networkRequests.push(url);
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        return;
       }
+      if (url.startsWith("http://127.0.0.1:4173/assets/") && url.endsWith(".woff2")) {
+        return;
+      }
+      networkRequests.push(url);
     };
 
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     page.on("request", onRequest);
 
@@ -55,35 +62,35 @@ test.describe("IMDF viewer journey", () => {
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
 
-    // Map canvas + idle + top-bar venue/level.
+    // Map canvas + idle + context-bar venue/level.
     await expect(mapCanvas(page)).toBeVisible();
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
-    await expect(page.locator(".top-bar__venue")).toHaveText(VENUE_NAME_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_1F_JA);
+    await expect(page.locator(".context-bar__name")).toHaveText(VENUE_NAME_JA);
+    await expect(page.locator(".context-bar__level")).toHaveText(LEVEL_1F_JA);
 
     // Initial level has amenity + kiosk + occupant markers.
     await expect(markerByLabel(page, AMENITY_JA)).toBeVisible();
     await expect(markerByLabel(page, KIOSK_MARKER_JA)).toBeVisible();
     await expect(markerByLabel(page, OCCUPANT_JA)).toBeVisible();
-    await expect(levelPill(page, LEVEL_1F_JA)).toHaveAttribute("aria-pressed", "true");
+    await expect(floorButton(page, LEVEL_1F_SHORT)).toHaveAttribute("aria-pressed", "true");
 
     // Switch to B1 then 2F; assert pressed state + idle + markers when present.
-    await selectLevel(page, LEVEL_B1_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_B1_JA);
+    await selectLevel(page, LEVEL_B1_SHORT);
+    await expect(page.locator(".context-bar__level")).toHaveText(LEVEL_B1_JA);
     // B1: stairs + restroom bubbles, machine-room + staff-room pills.
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
     await expect(page.locator(".indoor-marker")).toHaveCount(4);
 
-    await selectLevel(page, LEVEL_2F_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_2F_JA);
+    await selectLevel(page, LEVEL_2F_SHORT);
+    await expect(page.locator(".context-bar__level")).toHaveText(LEVEL_2F_JA);
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
     await expect(page.locator(".indoor-marker")).toHaveCount(1);
 
     // Return to 1F for search/selection.
-    await selectLevel(page, LEVEL_1F_JA);
-    await expect(page.locator(".top-bar__level")).toHaveText(LEVEL_1F_JA);
+    await selectLevel(page, LEVEL_1F_SHORT);
+    await expect(page.locator(".context-bar__level")).toHaveText(LEVEL_1F_JA);
 
-    // Japanese search → select occupant → details.
+    // Japanese search → select occupant → inspector.
     await searchAndSelect(page, "駅ナカ", OCCUPANT_JA);
     await expectDetailsContain(page, [
       OCCUPANT_JA,
@@ -92,15 +99,13 @@ test.describe("IMDF viewer journey", () => {
       OCCUPANT_ID,
       "occupant",
     ]);
-    await expect(page.locator(".feature-details")).toContainText("別名");
-    await expect(page.locator(".feature-details")).toContainText("営業時間");
+    await expectDetailsContain(page, ["別名", "営業時間"]);
 
     // English search: switch locale → search "Station Shop" → same feature.
     await switchLocale(page, "en");
     await searchAndSelect(page, "Station Shop", OCCUPANT_EN);
     await expectDetailsContain(page, [OCCUPANT_EN, "Test Store", OCCUPANT_ID, OCCUPANT_HOURS]);
-    await expect(page.locator(".feature-details")).toContainText("Also known as");
-    await expect(page.locator(".feature-details")).toContainText("Hours");
+    await expectDetailsContain(page, ["Also known as", "Hours"]);
 
     // Back to Japanese for remaining assertions with known labels.
     await switchLocale(page, "ja");
@@ -108,48 +113,32 @@ test.describe("IMDF viewer journey", () => {
 
     // Polygonal kiosk click-selection: click slightly below the kiosk marker.
     // Ensure 1F is selected and markers are present.
-    await selectLevel(page, LEVEL_1F_JA);
+    await selectLevel(page, LEVEL_1F_SHORT);
     await expect(markerByLabel(page, KIOSK_MARKER_JA)).toBeVisible();
     await clickBelowMarker(page, KIOSK_MARKER_JA);
     await expectDetailsContain(page, ["kiosk", KIOSK_ID, KIOSK_MARKER_JA]);
 
-    // Theme switch updates map without recreating the canvas.
-    const canvasIdBefore = await canvasElementIdentity(page);
-    expect(canvasIdBefore.length).toBeGreaterThan(0);
-    await switchTheme(page, "Customer Blue");
-    await expect(page.locator(".theme-switcher__btn", { hasText: "Customer Blue" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    const canvasIdAfter = await canvasElementIdentity(page);
-    expect(canvasIdAfter).toBe(canvasIdBefore);
-    // Switch back so later steps keep the default theme look.
-    await switchTheme(page, "Tokyo Green");
-
-    // Warnings: exactly 5 entries with the known codes.
+    // Warnings: rail badge opens the panel with exactly 5 known codes.
     await expectWarningCodes(page, WARNING_CODES);
 
     // Compact layout at 390×844 (while still ready so level switches work).
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator(".app")).toHaveClass(/app--compact/);
-    // Top bar: product name + open button only (no venue/level/locale/theme in header).
-    await expect(page.locator(".top-bar__product")).toBeVisible();
-    await expect(page.locator(".top-bar__open")).toBeVisible();
-    await expect(page.locator(".top-bar .top-bar__venue")).toHaveCount(0);
-    await expect(page.locator(".top-bar .locale-switcher")).toHaveCount(0);
-    await expect(page.locator(".top-bar .theme-switcher")).toHaveCount(0);
-    // Venue/level + locale/theme live in the sheet compact header.
-    await expect(page.locator(".explorer-sidebar__compact-row--meta .top-bar__venue")).toHaveText(
-      VENUE_NAME_JA,
-    );
-    await expect(page.locator(".explorer-sidebar__compact-row--controls .locale-switcher")).toBeVisible();
-    await expect(page.locator(".explorer-sidebar__compact-row--controls .theme-switcher")).toBeVisible();
-    // Level pills remain visible and clickable.
-    await expect(levelPill(page, LEVEL_1F_JA)).toBeVisible();
-    await selectLevel(page, LEVEL_B1_JA);
-    await expect(levelPill(page, LEVEL_B1_JA)).toHaveAttribute("aria-pressed", "true");
+    // Floating chrome adapts: context bar stays, rail becomes the bottom bar.
+    await expect(page.locator(".context-bar")).toBeVisible();
+    await expect(page.locator(".icon-rail--bar")).toBeVisible();
+    // Sheets are exclusive on compact: the warnings sheet hides the inspector.
+    await expect(page.locator(".floating-panel")).toHaveCount(1);
+    // Close warnings, then the inspector sheet that takes its place.
+    await page.locator(".floating-panel__close").click();
+    await page.locator(".floating-panel__close").click();
+    await expect(page.locator(".floating-panel")).toHaveCount(0);
+    // Floor buttons remain visible and clickable.
+    await expect(floorButton(page, LEVEL_1F_SHORT)).toBeVisible();
+    await selectLevel(page, LEVEL_B1_SHORT);
+    await expect(floorButton(page, LEVEL_B1_SHORT)).toHaveAttribute("aria-pressed", "true");
 
-    // Restore desktop for replacement-error assertions that use the top bar.
+    // Restore desktop for replacement-error assertions.
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(page.locator(".app")).not.toHaveClass(/app--compact/);
 
@@ -158,11 +147,11 @@ test.describe("IMDF viewer journey", () => {
     const alert = page.locator('[role="alert"]');
     await expect(alert).toBeVisible({ timeout: 10_000 });
     await expect(alert).toContainText("Choose an Apple IMDF .zip archive.");
-    await expect(page.locator(".top-bar__venue")).toHaveText(VENUE_NAME_JA);
+    await expect(page.locator(".context-bar__name")).toHaveText(VENUE_NAME_JA);
     await expect(mapCanvas(page)).toBeVisible();
     await expect(mapContainer(page)).toHaveAttribute("data-map-idle", "true");
 
-    // Zero post-load HTTP(S) requests for the whole journey.
+    // Local ZIP parsing stays in the TypeScript worker and performs no dataset fetch.
     page.off("request", onRequest);
     expect(
       networkRequests,
@@ -173,20 +162,20 @@ test.describe("IMDF viewer journey", () => {
   test("search-selecting the B1 stairs unit switches level and shows details", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
 
     await switchLocale(page, "en");
     await searchAndSelect(page, "B1 Stairs", UNIT_STAIRS_EN);
     await expectDetailsContain(page, [UNIT_STAIRS_EN]);
-    await expect(levelPill(page, LEVEL_B1_EN)).toHaveAttribute("aria-pressed", "true");
+    await expect(floorButton(page, LEVEL_B1_SHORT)).toHaveAttribute("aria-pressed", "true");
   });
 
   test("clicking room pills and transit bubbles selects the feature", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
     await switchLocale(page, "en");
@@ -195,12 +184,36 @@ test.describe("IMDF viewer journey", () => {
     await markerByLabel(page, "Waiting Room").click();
     await expectDetailsContain(page, ["Waiting Room", "room"]);
     // Stairs icon bubble on B1 selects the stairs unit.
-    await selectLevel(page, LEVEL_B1_EN);
+    await selectLevel(page, LEVEL_B1_SHORT);
     await markerByLabel(page, UNIT_STAIRS_EN).click();
     await expectDetailsContain(page, [UNIT_STAIRS_EN, "stairs"]);
 
     // Restroom icon bubble selects the restroom unit.
     await markerByLabel(page, "B1 Restroom").click();
     await expectDetailsContain(page, ["B1 Restroom", "restroom.female"]);
+  });
+
+  test("layers panel hides marker labels and warnings rail shows a count badge", async ({
+    page,
+  }) => {
+    await page.goto(VIEWER_URL);
+    await uploadMinimalImdf(page);
+    await waitForReadyVenue(page, VENUE_NAME_JA);
+    await switchLocale(page, "en");
+
+    await expect(markerByLabel(page, "Station Shop")).toBeVisible();
+
+    // Open Layers, toggle Labels off → DOM markers disappear.
+    await page.locator('.icon-rail__btn[aria-label="Layers"]').click();
+    await page.getByRole("button", { name: "Labels: shown" }).click();
+    await expect(page.locator(".indoor-marker")).toHaveCount(0);
+
+    // Toggle back on → markers return.
+    await page.getByRole("button", { name: "Labels: hidden" }).click();
+    await expect(markerByLabel(page, "Station Shop")).toBeVisible();
+
+    // Warnings rail button carries the loader warning count.
+    const warningsToggle = page.locator('.icon-rail__btn[aria-label="Warnings"]');
+    await expect(warningsToggle).toContainText(String(WARNING_CODES.length));
   });
 });

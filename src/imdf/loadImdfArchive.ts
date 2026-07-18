@@ -1,4 +1,4 @@
-import { ArchiveError, type ArchiveErrorCode } from "../errors/ArchiveError";
+import { VenueLoadError, type VenueLoadErrorCode } from "../errors/VenueLoadError";
 import type { LoadedVenue } from "./types";
 import ImdfWorker from "./imdf.worker?worker&inline";
 
@@ -9,13 +9,13 @@ export type ImdfWorkerResponse =
   | {
       type: "failed";
       error: {
-        code: ArchiveErrorCode;
+        code: VenueLoadErrorCode;
         message: string;
         details?: Record<string, unknown>;
       };
     };
 
-function isArchiveErrorCode(value: unknown): value is ArchiveErrorCode {
+function isVenueLoadErrorCode(value: unknown): value is VenueLoadErrorCode {
   return (
     value === "unsupported_file" ||
     value === "archive_too_large" ||
@@ -48,7 +48,7 @@ function isWorkerResponse(value: unknown): value is ImdfWorkerResponse {
     const error = value.error;
     return (
       "code" in error &&
-      isArchiveErrorCode(error.code) &&
+      isVenueLoadErrorCode(error.code) &&
       "message" in error &&
       typeof error.message === "string"
     );
@@ -56,19 +56,19 @@ function isWorkerResponse(value: unknown): value is ImdfWorkerResponse {
   return false;
 }
 
-function rebuildArchiveError(payload: {
-  code: ArchiveErrorCode;
+function rebuildVenueLoadError(payload: {
+  code: VenueLoadErrorCode;
   message: string;
   details?: Record<string, unknown>;
-}): ArchiveError {
+}): VenueLoadError {
   if (payload.details !== undefined) {
-    return new ArchiveError(payload.code, payload.message, payload.details);
+    return new VenueLoadError(payload.code, payload.message, payload.details);
   }
-  return new ArchiveError(payload.code, payload.message);
+  return new VenueLoadError(payload.code, payload.message);
 }
 
-function workerFailedError(): ArchiveError {
-  return new ArchiveError(
+function workerFailedError(): VenueLoadError {
+  return new VenueLoadError(
     "worker_failed",
     "The venue could not be processed. Try the archive again.",
   );
@@ -133,7 +133,7 @@ export async function loadImdfArchive(
       }
       settle(() => {
         worker.terminate();
-        reject(rebuildArchiveError(data.error));
+        reject(rebuildVenueLoadError(data.error));
       });
     };
 

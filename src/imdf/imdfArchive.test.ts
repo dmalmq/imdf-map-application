@@ -1,3 +1,6 @@
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   BlobWriter,
   TextReader,
@@ -6,7 +9,7 @@ import {
   configure,
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
-import { ArchiveError } from "../errors/ArchiveError";
+import { VenueLoadError } from "../errors/VenueLoadError";
 import {
   MAX_ARCHIVE_ENTRIES,
   MAX_ENTRY_UNCOMPRESSED_BYTES,
@@ -33,7 +36,7 @@ function asFile(bytes: Uint8Array, name = "venue.zip"): File {
 }
 
 /**
- * `loadArchive` throws ArchiveError on the worker path; the message handler
+ * `loadArchive` throws VenueLoadError on the worker path; the message handler
  * serializes those into `{type:"failed"}`. Tests exercise the same boundary
  * by mapping throws to the worker response shape.
  */
@@ -41,7 +44,7 @@ async function tryLoadArchive(file: File): Promise<ImdfWorkerResponse> {
   try {
     return await loadArchive(file);
   } catch (error) {
-    if (error instanceof ArchiveError) {
+    if (error instanceof VenueLoadError) {
       if (error.details !== undefined) {
         return {
           type: "failed",
@@ -168,6 +171,29 @@ function patchDeclaredUncompressedSize(
     );
   }
   return out;
+}
+
+/**
+ * Build a ZIP writing entries in the exact given order (no sorting), so
+ * ZIP record order can be controlled directly for conformance tests.
+ */
+async function buildZipInRecordOrder(
+  entries: Array<[string, Uint8Array]>,
+): Promise<Uint8Array> {
+  const writer = new ZipWriter(new BlobWriter("application/zip"), {
+    level: 6,
+    extendedTimestamp: false,
+  });
+  const fixedLastMod = new Date(Date.UTC(2026, 0, 1));
+  for (const [name, data] of entries) {
+    await writer.add(name, new Uint8ArrayReader(data), {
+      lastModDate: fixedLastMod,
+      extendedTimestamp: false,
+      level: 6,
+    });
+  }
+  const blob = await writer.close();
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 describe("IMDF archive boundary (loadArchive)", () => {
@@ -501,5 +527,96 @@ describe("IMDF archive boundary (loadArchive)", () => {
     expect(unknown[0]?.archiveEntry).toBe("extra.txt");
     // Entry was not parsed as IMDF: venue still loads and retains fixture labels.
     expect(result.venue.venue.labels["en"]).toBe(VENUE_EN);
+  });
+  it("projects features in canonical feature-type order for mixed-case standard filenames", async () => {
+    const lowerBytes = await buildMinimalImdfZip();
+    // Same accepted standard file, uppercase first letter: 'V' (0x56) sorts
+    // before 'a' (0x61) in any naive lexicographic filename sort, so casing
+    // must not leak into the feature projection order.
+    const mixedBytes = patchZipEntryName(lowerBytes, "venue.geojson", "Venue.geojson");
+
+    const lowerResult = await tryLoadArchive(asFile(lowerBytes, "lower.zip"));
+    const mixedResult = await tryLoadArchive(asFile(mixedBytes, "mixed.zip"));
+    expect(lowerResult.type).toBe("loaded");
+    expect(mixedResult.type).toBe("loaded");
+    if (lowerResult.type !== "loaded" || mixedResult.type !== "loaded") {
+      return;
+    }
+
+    // Identical projection order regardless of accepted-name casing.
+    expect([...mixedResult.venue.featuresById.keys()]).toEqual([
+      ...lowerResult.venue.featuresById.keys(),
+    ]);
+    // Canonical FEATURE_TYPE_ORDER: address first, venue last (matches Rust).
+    const types = [...mixedResult.venue.featuresById.values()].map(
+      (feature) => feature.featureType,
+    );
+    expect(types[0]).toBe("address");
+    expect(types[types.length - 1]).toBe("venue");
+    expect(mixedResult.venue.warnings).toEqual(lowerResult.venue.warnings);
+    expect(mixedResult.venue.searchEntries).toEqual(lowerResult.venue.searchEntries);
+  });
+
+  it("orders unknown-entry warnings by UTF-8 byte order, not UTF-16 code units", async () => {
+    // U+FF41 FULLWIDTH LATIN SMALL A: UTF-8 EF BD 81, UTF-16 code unit 0xFF41.
+    const fullwidth = "\uFF41.txt";
+    // U+10000 LINEAR B SYLLABLE B008 A: UTF-8 F0 90 80 80, UTF-16 D800 DC00.
+    // UTF-16 sorts it BEFORE U+FF41 (0xD800 < 0xFF41); UTF-8 byte order (the
+    // Rust importer's order) sorts it AFTER (0xF0 > 0xEF).
+    const astral = "\u{10000}.txt";
+    const bytes = await buildMinimalImdfZip({
+      extraEntries: { [fullwidth]: "not imdf", [astral]: "not imdf" },
+    });
+    const result = await tryLoadArchive(asFile(bytes));
+    expect(result.type).toBe("loaded");
+    if (result.type !== "loaded") {
+      return;
+    }
+    const unknown = result.venue.warnings.filter(
+      (warning) => warning.code === "unknown_archive_entry",
+    );
+    expect(unknown.map((warning) => warning.archiveEntry)).toEqual([fullwidth, astral]);
+    expect(unknown[0]?.message).toBe(`Ignored unknown archive entry ${fullwidth}.`);
+    expect(unknown[1]?.message).toBe(`Ignored unknown archive entry ${astral}.`);
+  });
+
+  it("produces an equivalent LoadedVenue projection and warning order regardless of ZIP record order", async () => {
+    const fixtureDir = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../tests/fixtures/minimal-imdf",
+    );
+    const names = (await readdir(fixtureDir)).filter(
+      (name) => !name.includes("/") && !name.includes("\\") && !name.startsWith("."),
+    );
+    const entries: Array<[string, Uint8Array]> = await Promise.all(
+      names.map(async (name) => {
+        const buf = await readFile(path.join(fixtureDir, name));
+        return [name, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)] as [
+          string,
+          Uint8Array,
+        ];
+      }),
+    );
+
+    const ascending = [...entries].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    const descending = [...ascending].reverse();
+
+    const ascendingBytes = await buildZipInRecordOrder(ascending);
+    const descendingBytes = await buildZipInRecordOrder(descending);
+
+    const ascendingResult = await tryLoadArchive(asFile(ascendingBytes, "ascending.zip"));
+    const descendingResult = await tryLoadArchive(asFile(descendingBytes, "descending.zip"));
+
+    expect(ascendingResult.type).toBe("loaded");
+    expect(descendingResult.type).toBe("loaded");
+    if (ascendingResult.type !== "loaded" || descendingResult.type !== "loaded") {
+      return;
+    }
+
+    // Same warnings, same order.
+    expect(descendingResult.venue.warnings).toEqual(ascendingResult.venue.warnings);
+    // Same full LoadedVenue projection: venue, levels, featuresById,
+    // renderFeaturesByLevel, searchEntries, boundsByLevel.
+    expect(descendingResult.venue).toEqual(ascendingResult.venue);
   });
 });

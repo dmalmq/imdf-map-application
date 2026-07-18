@@ -1,28 +1,32 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
-  LEVEL_1F_JA,
-  levelPill,
+  minimalImdfZipBuffer,
   OCCUPANT_EN,
   OCCUPANT_JA,
   searchAndSelect,
   switchLocale,
-  switchTheme,
   uploadMinimalImdf,
   VENUE_NAME_EN,
   VENUE_NAME_JA,
+  VIEWER_URL,
   waitForMapIdle,
   waitForReadyVenue,
 } from "./helpers";
 
 async function settleForScreenshot(page: Page): Promise<void> {
   // Font gate: absence must FAIL the suite, never auto-update baselines.
-  const hasNoto = await page.evaluate(() =>
-    document.fonts.check('16px "Noto Sans CJK JP"'),
-  );
-  expect(hasNoto).toBe(true);
-  await page.evaluate(async () => {
+  // Noto Sans JP ships unicode-range subsets, so load + check must name CJK
+  // sample glyphs; a bare check() only tests the (never-loaded) space subset.
+  const fontsOk = await page.evaluate(async () => {
+    await document.fonts.load('16px "Noto Sans JP Variable"', "駅ナカショップ東京会場");
+    await document.fonts.load('16px "Inter Variable"', "Kiriko");
     await document.fonts.ready;
+    return (
+      document.fonts.check('16px "Noto Sans JP Variable"', "駅") &&
+      document.fonts.check('16px "Inter Variable"', "K")
+    );
   });
+  expect(fontsOk).toBe(true);
 
   await waitForMapIdle(page);
 
@@ -44,76 +48,64 @@ async function settleForScreenshot(page: Page): Promise<void> {
   });
 }
 
-/** Compact layout keeps venue name in the sheet, not the top bar. */
-async function waitForCompactReady(page: Page, venueName: string): Promise<void> {
-  await expect(
-    page.locator(".explorer-sidebar__compact-row--meta .top-bar__venue"),
-  ).toHaveText(venueName, { timeout: 15_000 });
-  await waitForMapIdle(page);
-}
-
 test.describe("viewer visual baselines", () => {
   test.skip(({ browserName }) => browserName !== "chromium", "visual baselines are Chromium-only");
 
-  test("desktop-tokyo-ja", async ({ page }) => {
+  test("desktop-kiriko-ja", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
     await searchAndSelect(page, "駅ナカ", OCCUPANT_JA);
     await settleForScreenshot(page);
-    await expect(page).toHaveScreenshot("desktop-tokyo-ja.png", {
+    await expect(page).toHaveScreenshot("desktop-kiriko-ja.png", {
       animations: "disabled",
       fullPage: false,
     });
   });
 
-  test("desktop-blue-en", async ({ page }) => {
+  test("desktop-kiriko-en", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
     await switchLocale(page, "en");
     await waitForReadyVenue(page, VENUE_NAME_EN);
-    await switchTheme(page, "Customer Blue");
     await searchAndSelect(page, "Station Shop", OCCUPANT_EN);
     await settleForScreenshot(page);
-    await expect(page).toHaveScreenshot("desktop-blue-en.png", {
+    await expect(page).toHaveScreenshot("desktop-kiriko-en.png", {
       animations: "disabled",
       fullPage: false,
     });
   });
 
-  test("compact-tokyo-ja", async ({ page }) => {
+  test("compact-kiriko-ja", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
-    await waitForCompactReady(page, VENUE_NAME_JA);
+    await waitForReadyVenue(page, VENUE_NAME_JA);
     await expect(page.locator(".app")).toHaveClass(/app--compact/);
     await searchAndSelect(page, "駅ナカ", OCCUPANT_JA);
     await settleForScreenshot(page);
-    await expect(page).toHaveScreenshot("compact-tokyo-ja.png", {
+    await expect(page).toHaveScreenshot("compact-kiriko-ja.png", {
       animations: "disabled",
       fullPage: false,
     });
   });
 
-  test("compact-blue-en", async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/");
+  test("embed-kiriko-en", async ({ page }) => {
+    const buffer = await minimalImdfZipBuffer();
+    await page.route("**/venues/minimal-imdf.zip", (route) =>
+      route.fulfill({ body: buffer, contentType: "application/zip" }),
+    );
+    await page.setViewportSize({ width: 960, height: 600 });
+    await page.goto("/?src=/venues/minimal-imdf.zip&embed=1&lang=en");
     await page.waitForLoadState("load");
-    await uploadMinimalImdf(page);
-    await waitForCompactReady(page, VENUE_NAME_JA);
-    await expect(levelPill(page, LEVEL_1F_JA)).toBeVisible();
-    await switchLocale(page, "en");
-    await waitForCompactReady(page, VENUE_NAME_EN);
-    await switchTheme(page, "Customer Blue");
-    await searchAndSelect(page, "Station Shop", OCCUPANT_EN);
     await settleForScreenshot(page);
-    await expect(page).toHaveScreenshot("compact-blue-en.png", {
+    await expect(page).toHaveScreenshot("embed-kiriko-en.png", {
       animations: "disabled",
       fullPage: false,
     });
