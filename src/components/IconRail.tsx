@@ -1,13 +1,14 @@
 import type { ReactElement } from "react";
 import type { LocaleCode } from "../imdf/types";
-import { IconAlertTriangle, IconLayers, IconSearch } from "./icons";
+import { IconAlertTriangle, IconLayers, IconMessageSquare, IconSearch } from "./icons";
 
-export type RailPanelId = "search" | "layers" | "warnings";
+export type RailPanelId = "search" | "layers" | "issues" | "warnings";
 
 const ui = {
   rail: { ja: "パネル", en: "Panels" },
   search: { ja: "検索", en: "Search" },
   layers: { ja: "レイヤー", en: "Layers" },
+  issues: { ja: "課題", en: "Issues" },
   warnings: { ja: "警告", en: "Warnings" },
 } as const;
 
@@ -15,6 +16,8 @@ export interface IconRailProps {
   locale: LocaleCode;
   activePanel: RailPanelId | null;
   warningCount: number;
+  issuesVisible?: boolean;
+  issueCount?: number;
   onToggle: (panel: RailPanelId) => void;
   /** Bottom-bar placement on compact layouts. */
   variant?: "rail" | "bar";
@@ -35,6 +38,8 @@ export function IconRail({
   locale,
   activePanel,
   warningCount,
+  issuesVisible = false,
+  issueCount = 0,
   onToggle,
   variant = "rail",
 }: IconRailProps) {
@@ -42,6 +47,14 @@ export function IconRail({
     { id: "search", icon: <IconSearch />, label: ui.search[locale] },
     { id: "layers", icon: <IconLayers />, label: ui.layers[locale] },
   ];
+  if (issuesVisible) {
+    items.push({
+      id: "issues",
+      icon: <IconMessageSquare />,
+      label: ui.issues[locale],
+      ...(issueCount > 0 ? { badge: issueCount } : {}),
+    });
+  }
   if (warningCount > 0) {
     items.push({
       id: "warnings",

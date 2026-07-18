@@ -171,6 +171,34 @@ describe("IconRail", () => {
     const warnings = screen.getByRole("button", { name: "Warnings" });
     expect(warnings.textContent).toContain("5");
   });
+  it("shows caller-controlled Issues with an all-floor count capped at 99+", () => {
+    const { rerender } = render(
+      <IconRail
+        locale="en"
+        activePanel="issues"
+        warningCount={0}
+        issuesVisible
+        issueCount={125}
+        onToggle={() => {}}
+      />,
+    );
+
+    const issues = screen.getByRole("button", { name: "Issues" });
+    expect(issues.getAttribute("aria-pressed")).toBe("true");
+    expect(issues.textContent).toContain("99+");
+
+    rerender(
+      <IconRail
+        locale="en"
+        activePanel={null}
+        warningCount={0}
+        issuesVisible={false}
+        issueCount={125}
+        onToggle={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Issues" })).toBeNull();
+  });
 });
 
 describe("LayersPanel", () => {

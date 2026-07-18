@@ -1,7 +1,9 @@
+export type ApiUserRole = "viewer" | "member" | "admin";
+
 export interface ApiUser {
   id: number;
   username: string;
-  role: string;
+  role: ApiUserRole;
 }
 
 export interface VenueRow {
