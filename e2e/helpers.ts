@@ -179,6 +179,19 @@ export async function expectWarningCodes(
   expect(sortedActual).toEqual(sortedExpected);
 }
 
+export const E2E_USER = "e2e";
+export const E2E_PASSWORD = "e2e-password";
+
+export async function signIn(page: Page): Promise<void> {
+  await page.getByLabel(/Username|ユーザー名/).fill(E2E_USER);
+  await page.getByLabel(/Password|パスワード/).fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: /Sign in|サインイン/ }).click();
+  await expect(page.locator(".gallery__title")).toBeVisible();
+}
+
+/** Viewer entry for upload-driven specs (bypasses the gallery). */
+export const VIEWER_URL = "/?viewer";
+
 /** Click slightly below a marker so the hit lands on the polygon under it. */
 export async function clickBelowMarker(page: Page, label: string): Promise<void> {
   const marker = markerByLabel(page, label);

@@ -8,6 +8,7 @@ import {
   uploadMinimalImdf,
   VENUE_NAME_EN,
   VENUE_NAME_JA,
+  VIEWER_URL,
   waitForMapIdle,
   waitForReadyVenue,
 } from "./helpers";
@@ -52,7 +53,7 @@ test.describe("viewer visual baselines", () => {
 
   test("desktop-kiriko-ja", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
@@ -66,7 +67,7 @@ test.describe("viewer visual baselines", () => {
 
   test("desktop-kiriko-en", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
@@ -82,7 +83,7 @@ test.describe("viewer visual baselines", () => {
 
   test("compact-kiriko-ja", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);

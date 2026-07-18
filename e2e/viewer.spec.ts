@@ -29,6 +29,7 @@ import {
   UNIT_STAIRS_EN,
   uploadZip,
   VENUE_NAME_JA,
+  VIEWER_URL,
   waitForMapIdle,
   waitForReadyVenue,
   WARNING_CODES,
@@ -53,7 +54,7 @@ test.describe("IMDF viewer journey", () => {
       networkRequests.push(url);
     };
 
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     page.on("request", onRequest);
 
@@ -161,7 +162,7 @@ test.describe("IMDF viewer journey", () => {
   test("search-selecting the B1 stairs unit switches level and shows details", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
 
@@ -174,7 +175,7 @@ test.describe("IMDF viewer journey", () => {
   test("clicking room pills and transit bubbles selects the feature", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
     await switchLocale(page, "en");
@@ -195,7 +196,7 @@ test.describe("IMDF viewer journey", () => {
   test("layers panel hides marker labels and warnings rail shows a count badge", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await uploadMinimalImdf(page);
     await waitForReadyVenue(page, VENUE_NAME_JA);
     await switchLocale(page, "en");

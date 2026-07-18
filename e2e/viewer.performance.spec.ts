@@ -9,6 +9,7 @@ import {
   OCCUPANT_JA,
   uploadZip,
   VENUE_NAME_JA,
+  VIEWER_URL,
   waitForMapIdle,
   waitForReadyVenue,
 } from "./helpers";
@@ -24,7 +25,7 @@ function percentileNearestRank(samples: number[], p: number): number {
 }
 
 async function measureUploadToIdle(page: Page, zipBuffer: Buffer): Promise<number> {
-  await page.goto("/");
+  await page.goto(VIEWER_URL);
   await page.waitForLoadState("load");
 
   // Stamp the start time in the page just before the file input change.
@@ -156,7 +157,7 @@ test.describe("viewer performance", () => {
     // Measure setData + idle, not camera ease (FIT_DURATION_MS = 500).
     await page.emulateMedia({ reducedMotion: "reduce" });
     const zipBuffer = await minimalImdfZipBuffer();
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadZip(page, zipBuffer);
     await waitForReadyVenue(page, VENUE_NAME_JA);
@@ -224,7 +225,7 @@ test.describe("viewer performance", () => {
   test("1s drag keeps ≥30 frames and no longtask > 100ms", async ({ page }) => {
     test.setTimeout(60_000);
     const zipBuffer = await minimalImdfZipBuffer();
-    await page.goto("/");
+    await page.goto(VIEWER_URL);
     await page.waitForLoadState("load");
     await uploadZip(page, zipBuffer);
     await waitForReadyVenue(page, VENUE_NAME_JA);
