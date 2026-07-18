@@ -21,7 +21,7 @@ import {
   ReviewIssueSchema,
   RootCreateBodySchema,
 } from "../src/issues/schemas";
-import type { IssueErrorCode, NormalizedRootCreate, RootCreateBody } from "../src/issues/types";
+import type { IssueErrorCode, IssueReply, NormalizedRootCreate, RootCreateBody } from "../src/issues/types";
 import {
   hashReplyCreate,
   hashRootCreate,
@@ -193,11 +193,24 @@ describe("validateRequestId", () => {
     );
   });
 
+  it("accepts standards-valid uppercase/mixed hex and canonicalizes to lowercase", () => {
+    expect(validateRequestId("9F1C2D3E-4B5A-4C6D-8E7F-0A1B2C3D4E5F")).toBe(
+      "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    );
+    expect(validateRequestId("9f1c2D3E-4b5a-4C6D-8e7f-0A1B2c3d4e5f")).toBe(
+      "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    );
+    expect(validateRequestId("9F1C2D3E-4B5A-4C6D-AE7F-0A1B2C3D4E5F")).toBe(
+      "9f1c2d3e-4b5a-4c6d-ae7f-0a1b2c3d4e5f",
+    );
+  });
+
   const invalid = [
-    "9F1C2D3E-4B5A-4C6D-8E7F-0A1B2C3D4E5F", // uppercase
     "9f1c2d3e4b5a4c6d8e7f0a1b2c3d4e5f", // no dashes
     "9f1c2d3e-4b5a-1c6d-8e7f-0a1b2c3d4e5f", // version 1
+    "9F1C2D3E-4B5A-1C6D-8E7F-0A1B2C3D4E5F", // version 1 uppercase
     "9f1c2d3e-4b5a-4c6d-ce7f-0a1b2c3d4e5f", // invalid variant nibble
+    "9F1C2D3E-4B5A-4C6D-CE7F-0A1B2C3D4E5F", // invalid variant nibble uppercase
     "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5", // short
     "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f0", // long
     "",
@@ -358,7 +371,11 @@ describe("issue error contract", () => {
     });
     const response = toIssueErrorResponse(error, () => undefined);
     expect(response.status).toBe(400);
-    expect(response.body.details).toEqual([{ field: "dueDate", reason: "not a calendar date" }]);
+    expect(response.body).toEqual({
+      error: "invalid_due_date",
+      message: "invalid_due_date",
+      details: [{ field: "dueDate", reason: "not a calendar date" }],
+    });
   });
 
   it("sanitizes unknown failures to the exact internal copy and logs the cause", () => {
@@ -378,6 +395,40 @@ describe("issue error contract", () => {
     expect(response.status).toBe(500);
     expect(response.body).toEqual({ error: "internal_error", message: "Could not update review issues." });
     expect(logged).toEqual([error]);
+  });
+
+  it("drops details, current, and revision from non-validation, non-stale codes", () => {
+    const error = new IssueServiceError("forbidden", "You cannot change this issue.", {
+      details: [{ field: "status", reason: "leaked" }],
+      current: { kind: "reply", value: ISSUE_DTO.replies[0] as unknown as IssueReply },
+      revision: 12,
+    });
+    const response = toIssueErrorResponse(error, () => undefined);
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: "forbidden", message: "You cannot change this issue." });
+  });
+
+  it("drops current and revision from validation codes", () => {
+    const error = new IssueServiceError("invalid_markdown", "invalid_markdown", {
+      details: [{ field: "bodyMarkdown", reason: "too long" }],
+      current: { kind: "reply", value: ISSUE_DTO.replies[0] as unknown as IssueReply },
+      revision: 3,
+    });
+    const response = toIssueErrorResponse(error, () => undefined);
+    expect(response.body).toEqual({
+      error: "invalid_markdown",
+      message: "invalid_markdown",
+      details: [{ field: "bodyMarkdown", reason: "too long" }],
+    });
+  });
+
+  it("drops details from stale_issue while keeping current and revision", () => {
+    const error = new IssueServiceError("stale_issue", "conflict", {
+      details: [{ field: "expectedVersion", reason: "leaked" }],
+      revision: 7,
+    });
+    const response = toIssueErrorResponse(error, () => undefined);
+    expect(response.body).toEqual({ error: "stale_issue", message: "conflict", revision: 7 });
   });
 });
 
@@ -413,7 +464,81 @@ describe("strict TypeBox schemas", () => {
     expect(Value.Check(PublicVersionIdSchema, "a".repeat(63))).toBe(false);
     expect(Value.Check(PublicVersionIdSchema, "A".repeat(64))).toBe(false);
     expect(Value.Check(RequestIdSchema, "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f")).toBe(true);
+    expect(Value.Check(RequestIdSchema, "9F1C2D3E-4B5A-4C6D-8E7F-0A1B2C3D4E5F")).toBe(true);
     expect(Value.Check(RequestIdSchema, "9f1c2d3e-4b5a-1c6d-8e7f-0a1b2c3d4e5f")).toBe(false);
+  });
+
+  it("rejects DTOs that leak Markdown on tombstones or null bodies on live rows", () => {
+    const liveReply = {
+      id: "c_3",
+      rowVersion: 1,
+      bodyMarkdown: "still here",
+      author: { id: 8, username: "author" },
+      createdAt: "2026-07-18T02:03:04Z",
+      updatedAt: "2026-07-18T02:03:04Z",
+      deletedAt: null,
+    };
+    expect(Value.Check(IssueReplySchema, liveReply)).toBe(true);
+    // Tombstoned reply carrying Markdown must be rejected.
+    expect(
+      Value.Check(IssueReplySchema, { ...liveReply, deletedAt: "2026-07-18T03:00:00Z" }),
+    ).toBe(false);
+    // Live reply with a null body must be rejected.
+    expect(Value.Check(IssueReplySchema, { ...liveReply, bodyMarkdown: null })).toBe(false);
+    // Same correlation for root issues.
+    expect(
+      Value.Check(ReviewIssueSchema, { ...ISSUE_DTO, deletedAt: "2026-07-18T03:00:00Z" }),
+    ).toBe(false);
+    expect(Value.Check(ReviewIssueSchema, { ...ISSUE_DTO, bodyMarkdown: null })).toBe(false);
+    expect(
+      Value.Check(ReviewIssueSchema, {
+        ...ISSUE_DTO,
+        bodyMarkdown: null,
+        deletedAt: "2026-07-18T03:00:00Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("correlates tombstones at the type level", () => {
+    const base = {
+      id: "c_9",
+      rowVersion: 1,
+      author: { id: 1, username: "a" },
+      createdAt: "2026-07-18T00:00:00Z",
+      updatedAt: "2026-07-18T00:00:00Z",
+    };
+    const live: IssueReply = { ...base, bodyMarkdown: "text", deletedAt: null };
+    const deleted: IssueReply = { ...base, bodyMarkdown: null, deletedAt: "2026-07-18T01:00:00Z" };
+    // @ts-expect-error — a tombstoned reply cannot carry Markdown
+    const leaked: IssueReply = { ...base, bodyMarkdown: "leaked", deletedAt: "2026-07-18T01:00:00Z" };
+    expect([live.deletedAt, deleted.bodyMarkdown, leaked.id]).toEqual([null, null, "c_9"]);
+  });
+
+  it("enforces real RFC 3339 UTC calendar and clock values in timestamps", () => {
+    const valid = [
+      "2026-07-18T01:02:03Z",
+      "2026-07-18T23:59:59.999Z",
+      "2028-02-29T00:00:00Z", // leap day
+    ];
+    for (const createdAt of valid) {
+      expect(Value.Check(ReviewIssueSchema, { ...ISSUE_DTO, createdAt })).toBe(true);
+    }
+    const invalid = [
+      "2026-13-01T00:00:00Z", // month 13
+      "2026-00-01T00:00:00Z", // month 0
+      "2026-07-32T00:00:00Z", // day 32
+      "2026-07-00T00:00:00Z", // day 0
+      "2027-02-29T00:00:00Z", // non-leap February 29
+      "2026-07-18T24:00:00Z", // hour 24
+      "2026-07-18T00:60:00Z", // minute 60
+      "2026-07-18T00:00:60Z", // second 60
+      "2026-07-18T00:00:00", // missing Z
+      "2026-07-18T00:00:00+09:00", // offset instead of Z
+      "2026-07-18 00:00:00Z", // space separator
+    ];
+    for (const createdAt of invalid) {
+      expect(Value.Check(ReviewIssueSchema, { ...ISSUE_DTO, createdAt })).toBe(false);
+    }
   });
 
   it("validates the collection DTO including tombstoned nullable bodies", () => {
@@ -539,5 +664,32 @@ describe("strict TypeBox schemas", () => {
     expect(Value.Check(IssueApiErrorSchema, { error: "not_found", message: "gone", stack: "trace" })).toBe(
       false,
     );
+    // Extras are code-gated: details only on validation codes, current/revision only on stale_issue.
+    expect(
+      Value.Check(IssueApiErrorSchema, {
+        error: "forbidden",
+        message: "no",
+        details: [{ field: "status", reason: "leak" }],
+      }),
+    ).toBe(false);
+    expect(Value.Check(IssueApiErrorSchema, { error: "invalid_markdown", message: "bad", revision: 1 })).toBe(
+      false,
+    );
+    expect(
+      Value.Check(IssueApiErrorSchema, {
+        error: "not_found",
+        message: "gone",
+        current: { kind: "issue", value: ISSUE_DTO },
+      }),
+    ).toBe(false);
+    expect(Value.Check(IssueApiErrorSchema, { error: "stale_issue", message: "conflict" })).toBe(true);
+    expect(
+      Value.Check(IssueApiErrorSchema, {
+        error: "stale_issue",
+        message: "conflict",
+        details: [{ field: "expectedVersion", reason: "leak" }],
+      }),
+    ).toBe(false);
+    expect(Value.Check(IssueApiErrorSchema, { error: "unauthorized", message: "sign in" })).toBe(true);
   });
 });

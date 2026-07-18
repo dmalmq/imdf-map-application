@@ -10,8 +10,10 @@ import type {
 export const MARKDOWN_MIN_SCALARS = 1;
 export const MARKDOWN_MAX_SCALARS = 4000;
 
-export const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// UUID v4: hex is case-insensitive per RFC 4122; canonical persisted form is lowercase.
+export const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const DUE_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+export const UTC_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 
 /** Converts CRLF and bare CR to LF. Performs no other transformation. */
 export function normalizeMarkdown(input: string): string {
@@ -67,8 +69,13 @@ export function validateMarkdownBody(input: string): string {
 
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 
-function isLeapYear(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12) {
+    return false;
+  }
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const maxDay = month === 2 && isLeapYear ? 29 : (DAYS_IN_MONTH[month - 1] as number);
+  return day >= 1 && day <= maxDay;
 }
 
 /**
@@ -83,13 +90,7 @@ export function validateDueDate(input: string): string {
       details: [{ field: "dueDate", reason: "expected YYYY-MM-DD" }],
     });
   }
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const maxDay = month >= 1 && month <= 12
-    ? (month === 2 && isLeapYear(year) ? 29 : (DAYS_IN_MONTH[month - 1] as number))
-    : 0;
-  if (month < 1 || month > 12 || day < 1 || day > maxDay) {
+  if (!isCalendarDate(Number(match[1]), Number(match[2]), Number(match[3]))) {
     throw new IssueServiceError("invalid_due_date", "invalid_due_date", {
       details: [{ field: "dueDate", reason: "not a valid calendar date" }],
     });
@@ -111,14 +112,34 @@ export function validateCoordinates(longitude: number, latitude: number): void {
   }
 }
 
-/** Validates the lowercase UUID-v4 request ID shape. Returns the input. */
+/**
+ * Real RFC 3339 UTC instant with a trailing `Z`: exact calendar date and
+ * 00-23/00-59/00-59 clock fields, validated without `Date` coercion. Used as
+ * the TypeBox/Ajv string format for every wire timestamp.
+ */
+export function isRfc3339UtcTimestamp(value: string): boolean {
+  const match = UTC_TIMESTAMP_PATTERN.exec(value);
+  if (match === null) {
+    return false;
+  }
+  if (!isCalendarDate(Number(match[1]), Number(match[2]), Number(match[3]))) {
+    return false;
+  }
+  return Number(match[4]) <= 23 && Number(match[5]) <= 59 && Number(match[6]) <= 59;
+}
+
+/**
+ * Validates the UUID-v4 request ID shape (any hex case, per the standard) and
+ * canonicalizes to lowercase so persistence and idempotency comparison see one
+ * form.
+ */
 export function validateRequestId(input: string): string {
   if (!REQUEST_ID_PATTERN.test(input)) {
     throw new IssueServiceError("invalid_request", "invalid_request", {
-      details: [{ field: "requestId", reason: "expected a lowercase UUID v4" }],
+      details: [{ field: "requestId", reason: "expected a UUID v4" }],
     });
   }
-  return input;
+  return input.toLowerCase();
 }
 
 /**

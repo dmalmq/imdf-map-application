@@ -34,31 +34,36 @@ export interface IssueAnchor {
   featureId?: string;
 }
 
-export interface IssueReply {
+/**
+ * Tombstone correlation: a live resource carries its Markdown and a null
+ * `deletedAt`; a tombstone carries a null body and its deletion timestamp.
+ * Deleted Markdown can never appear in a public shape.
+ */
+export type Tombstone<Live> =
+  | (Live & { bodyMarkdown: string; deletedAt: null })
+  | (Live & { bodyMarkdown: null; deletedAt: string });
+
+export type IssueReply = Tombstone<{
   id: string;
   rowVersion: number;
-  bodyMarkdown: string | null;
   author: ReviewerSummary;
   createdAt: string;
   updatedAt: string;
-  deletedAt: string | null;
-}
+}>;
 
-export interface ReviewIssue {
+export type ReviewIssue = Tombstone<{
   id: string;
   pinNumber: number;
   rowVersion: number;
   anchor: IssueAnchor;
-  bodyMarkdown: string | null;
   status: IssueStatus;
   author: ReviewerSummary;
   assignee: ReviewerSummary | null;
   dueDate: string | null;
   createdAt: string;
   updatedAt: string;
-  deletedAt: string | null;
   replies: IssueReply[];
-}
+}>;
 
 export interface IssueCollection {
   revision: number;
