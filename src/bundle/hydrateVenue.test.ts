@@ -251,4 +251,41 @@ describe("hydrateVenue", () => {
     // dto.levels intentionally left without an entry for level3Id.
     expect(() => hydrateVenue(dto)).toThrow(VenueLoadError);
   });
+  it("throws every structure/reference failure with bundle provenance", () => {
+    const withUnknownFeatureType = baseDto();
+    withUnknownFeatureType.features = withUnknownFeatureType.features.map((f) =>
+      f.id === UNIT_ID ? { ...f, featureType: "mystery" } : f,
+    );
+    const withDuplicateFeature = baseDto();
+    withDuplicateFeature.features = [
+      ...withDuplicateFeature.features,
+      { ...withDuplicateFeature.features[withDuplicateFeature.features.length - 1]! },
+    ];
+    const withDuplicateLevel = baseDto();
+    withDuplicateLevel.levels = [...withDuplicateLevel.levels, { ...withDuplicateLevel.levels[0]! }];
+    const withNonLevelLevel = baseDto();
+    withNonLevelLevel.levels = withNonLevelLevel.levels.map((l) =>
+      l.id === LEVEL_1F ? { ...l, id: UNIT_ID } : l,
+    );
+
+    const invalidDtos: DecodedVenueDto[] = [
+      baseDto({ venueId: "not-a-real-feature-id" }),
+      baseDto({ venueId: UNIT_ID }),
+      baseDto({ boundsByLevel: [["unknown-level-id", [0, 0, 1, 1]]] }),
+      withUnknownFeatureType,
+      withDuplicateFeature,
+      withDuplicateLevel,
+      withNonLevelLevel,
+    ];
+    for (const dto of invalidDtos) {
+      try {
+        hydrateVenue(dto);
+        throw new Error("expected hydrateVenue to throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(VenueLoadError);
+        expect((error as VenueLoadError).code).toBe("invalid_bundle");
+        expect((error as VenueLoadError).source).toBe("bundle");
+      }
+    }
+  });
 });

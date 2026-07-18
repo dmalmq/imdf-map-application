@@ -122,7 +122,15 @@ export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promi
     throw new DOMException("Aborted", "AbortError");
   }
 
-  const worker = new BundleWorker();
+  // The Worker constructor itself can throw synchronously (e.g. a CSP that
+  // blocks blob/inline workers); no worker exists yet, so there is nothing
+  // to terminate — surface the sanitized bundle-provenance error.
+  let worker: Worker;
+  try {
+    worker = new BundleWorker();
+  } catch {
+    throw workerFailedError();
+  }
 
   return new Promise<LoadedVenue>((resolve, reject) => {
     let settled = false;

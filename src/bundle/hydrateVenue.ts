@@ -37,9 +37,7 @@ function isFeatureType(value: string): value is FeatureType {
 }
 
 function invalidBundle(message: string, details?: Record<string, unknown>): VenueLoadError {
-  return details !== undefined
-    ? new VenueLoadError("invalid_bundle", message, details)
-    : new VenueLoadError("invalid_bundle", message);
+  return new VenueLoadError("invalid_bundle", message, details, "bundle");
 }
 
 function toViewerFeature(dto: DecodedVenueDto["features"][number]): ViewerFeature {

@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VenueLoadError } from "../errors/VenueLoadError";
 
-const { createdWorkers, FakeBundleWorker, postMessageBehavior } = vi.hoisted(() => {
-  const behavior: { throwOnPostMessage: boolean } = { throwOnPostMessage: false };
+const { createdWorkers, FakeBundleWorker, workerBehavior } = vi.hoisted(() => {
+  const behavior: { throwOnPostMessage: boolean; throwOnConstruct: boolean } = {
+    throwOnPostMessage: false,
+    throwOnConstruct: false,
+  };
   class BaseFakeBundleWorker extends EventTarget {
     postMessage = vi.fn((..._args: unknown[]) => {
       if (behavior.throwOnPostMessage) {
@@ -33,13 +36,19 @@ const { createdWorkers, FakeBundleWorker, postMessageBehavior } = vi.hoisted(() 
   class TrackedFakeBundleWorker extends BaseFakeBundleWorker {
     constructor() {
       super();
+      if (behavior.throwOnConstruct) {
+        throw new DOMException(
+          "Failed to construct 'Worker': blocked by Content Security Policy",
+          "SecurityError",
+        );
+      }
       created.push(this);
     }
   }
   return {
     createdWorkers: created,
     FakeBundleWorker: TrackedFakeBundleWorker,
-    postMessageBehavior: behavior,
+    workerBehavior: behavior,
   };
 });
 
@@ -66,7 +75,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   hydrateVenueMock.mockReset();
   createdWorkers.length = 0;
-  postMessageBehavior.throwOnPostMessage = false;
+  workerBehavior.throwOnPostMessage = false;
+  workerBehavior.throwOnConstruct = false;
 });
 
 describe("loadKirikoBundle", () => {
@@ -304,7 +314,7 @@ describe("loadKirikoBundle", () => {
 
   it("rejects with a worker_failed VenueLoadError and terminates when postMessage throws synchronously", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
-    postMessageBehavior.throwOnPostMessage = true;
+    workerBehavior.throwOnPostMessage = true;
 
     const error = await loadKirikoBundle(SRC).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(VenueLoadError);
@@ -493,6 +503,19 @@ describe("loadKirikoBundle", () => {
     expect((error as VenueLoadError).code).toBe("bundle_integrity_failed");
     expect((error as VenueLoadError).details).toMatchObject({ expected: "aa" });
     expect((error as VenueLoadError).source).toBe("bundle");
+  });
+  it("rejects with a sanitized bundle-provenance worker_failed when the worker constructor throws", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    workerBehavior.throwOnConstruct = true;
+
+    const error = await loadKirikoBundle(SRC).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(VenueLoadError);
+    expect((error as VenueLoadError).code).toBe("worker_failed");
+    expect((error as VenueLoadError).source).toBe("bundle");
+    expect((error as VenueLoadError).message).toContain("bundle");
+    expect((error as VenueLoadError).message).not.toContain("SecurityError");
+    expect((error as VenueLoadError).message).not.toContain("Content Security Policy");
+    expect(createdWorkers).toHaveLength(0);
   });
 
   it("creates independent workers for truly concurrent calls, each resolving and terminating independently", async () => {
