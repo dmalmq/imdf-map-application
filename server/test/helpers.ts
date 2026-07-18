@@ -35,6 +35,8 @@ export async function makeTestApp(): Promise<{ app: FastifyInstance; dataDir: st
     dataDir,
     sessionTtlDays: 30,
     secureCookies: false,
+    issueSseMaxConnections: 512,
+    issueSseMaxPerVersion: 128,
     bootstrapUser: TEST_USER,
     bootstrapPassword: TEST_PASSWORD,
   });

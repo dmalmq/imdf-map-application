@@ -268,6 +268,8 @@ describe("app startup: legacy bundle backfill", () => {
         dataDir,
         sessionTtlDays: 30,
         secureCookies: false,
+        issueSseMaxConnections: 512,
+        issueSseMaxPerVersion: 128,
         bootstrapUser: TEST_USER,
         bootstrapPassword: TEST_PASSWORD,
       };
