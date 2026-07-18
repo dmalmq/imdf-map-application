@@ -1,7 +1,7 @@
 # Kiriko Phase Three: Version-Pinned Review Issues
 
 **Date:** 2026-07-18  
-**Status:** Proposed; architecture, workflow, and reliability sections approved during brainstorming  
+**Status:** Approved
 **Depends on:** Phase Two immutable KVB publication and dataset viewer cutover
 
 ## 1. Context
