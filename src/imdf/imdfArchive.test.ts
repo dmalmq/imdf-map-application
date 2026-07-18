@@ -1,3 +1,6 @@
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   BlobWriter,
   TextReader,
@@ -168,6 +171,29 @@ function patchDeclaredUncompressedSize(
     );
   }
   return out;
+}
+
+/**
+ * Build a ZIP writing entries in the exact given order (no sorting), so
+ * ZIP record order can be controlled directly for conformance tests.
+ */
+async function buildZipInRecordOrder(
+  entries: Array<[string, Uint8Array]>,
+): Promise<Uint8Array> {
+  const writer = new ZipWriter(new BlobWriter("application/zip"), {
+    level: 6,
+    extendedTimestamp: false,
+  });
+  const fixedLastMod = new Date(Date.UTC(2026, 0, 1));
+  for (const [name, data] of entries) {
+    await writer.add(name, new Uint8ArrayReader(data), {
+      lastModDate: fixedLastMod,
+      extendedTimestamp: false,
+      level: 6,
+    });
+  }
+  const blob = await writer.close();
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 describe("IMDF archive boundary (loadArchive)", () => {
@@ -501,5 +527,45 @@ describe("IMDF archive boundary (loadArchive)", () => {
     expect(unknown[0]?.archiveEntry).toBe("extra.txt");
     // Entry was not parsed as IMDF: venue still loads and retains fixture labels.
     expect(result.venue.venue.labels["en"]).toBe(VENUE_EN);
+  });
+
+  it("produces an equivalent LoadedVenue projection and warning order regardless of ZIP record order", async () => {
+    const fixtureDir = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../tests/fixtures/minimal-imdf",
+    );
+    const names = (await readdir(fixtureDir)).filter(
+      (name) => !name.includes("/") && !name.includes("\\") && !name.startsWith("."),
+    );
+    const entries: Array<[string, Uint8Array]> = await Promise.all(
+      names.map(async (name) => {
+        const buf = await readFile(path.join(fixtureDir, name));
+        return [name, new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)] as [
+          string,
+          Uint8Array,
+        ];
+      }),
+    );
+
+    const ascending = [...entries].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    const descending = [...ascending].reverse();
+
+    const ascendingBytes = await buildZipInRecordOrder(ascending);
+    const descendingBytes = await buildZipInRecordOrder(descending);
+
+    const ascendingResult = await tryLoadArchive(asFile(ascendingBytes, "ascending.zip"));
+    const descendingResult = await tryLoadArchive(asFile(descendingBytes, "descending.zip"));
+
+    expect(ascendingResult.type).toBe("loaded");
+    expect(descendingResult.type).toBe("loaded");
+    if (ascendingResult.type !== "loaded" || descendingResult.type !== "loaded") {
+      return;
+    }
+
+    // Same warnings, same order.
+    expect(descendingResult.venue.warnings).toEqual(ascendingResult.venue.warnings);
+    // Same full LoadedVenue projection: venue, levels, featuresById,
+    // renderFeaturesByLevel, searchEntries, boundsByLevel.
+    expect(descendingResult.venue).toEqual(ascendingResult.venue);
   });
 });

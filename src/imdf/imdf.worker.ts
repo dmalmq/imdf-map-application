@@ -336,6 +336,14 @@ export async function loadArchive(file: File): Promise<ImdfWorkerResponse> {
     mapZipJsError(error);
   }
 
+  // Sort entries bytewise by filename before validation/import so archives
+  // with identical root files in different ZIP record order produce
+  // identical `LoadedVenue` projections and warning order. Matches the Rust
+  // importer's canonical `tests/support/mod.rs` archive-builder sort.
+  entries = [...entries].sort((a, b) =>
+    a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0,
+  );
+
   try {
     if (entries.length > MAX_ARCHIVE_ENTRIES) {
       fail("archive_too_large", archiveErrorCopy.archive_too_large, {
