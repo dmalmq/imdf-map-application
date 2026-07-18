@@ -58,6 +58,49 @@ describe("decodeBundle", () => {
     expect(venueFeature.sourceProperties.address_id).toBe("a1000002-0000-4000-8000-000000000002");
   });
 
+  it("deep-equals representative nested fields across the recursive DTO mapping", async () => {
+    const bytes = await readGoldenBundle();
+    const response = decodeBundle(bytes);
+    const venue = response.venue!;
+
+    expect(venue.manifest.rest).toEqual({
+      created: "2026-01-01T00:00:00Z",
+      extensions: [],
+      generated_by: "imdf-map-viewer-fixture",
+      language: "ja-JP",
+      version: "1.0.0",
+    });
+
+    // Amenity: localized name/alt_name, Point geometry, accessibility
+    // array, and the unit_ids array preserved verbatim in sourceProperties
+    // (an unmodeled IMDF field, passed through rather than dropped).
+    const amenity = venue.features.find((f) => f.id === "e1000001-0000-4000-8000-0000000000a1")!;
+    expect(amenity.labels).toEqual({ "ja-JP": "トイレ", en: "Restroom" });
+    expect(amenity.altLabels).toEqual({ "ja-JP": "お手洗い", en: "WC" });
+    expect(amenity.geometry).toEqual({ type: "Point", coordinates: [139.7674, 35.6811] });
+    expect(amenity.category).toBe("toilet");
+    expect(amenity.accessibility).toEqual(["wheelchair"]);
+    expect(amenity.sourceProperties.unit_ids).toEqual(["c1000011-0000-4000-8000-00000000011f"]);
+
+    // Restricted unit: restriction, display_point-derived center, and full
+    // Polygon geometry round-trip.
+    const restrictedUnit = venue.features.find((f) => f.id === "c1000003-0000-4000-8000-0000000000b3")!;
+    expect(restrictedUnit.restriction).toBe("employeesonly");
+    expect(restrictedUnit.center).toEqual([139.76765, 35.68055]);
+    expect(restrictedUnit.geometry).toEqual({
+      type: "Polygon",
+      coordinates: [
+        [
+          [139.7672, 35.6802],
+          [139.7678, 35.6802],
+          [139.7678, 35.6806],
+          [139.7672, 35.6806],
+          [139.7672, 35.6802],
+        ],
+      ],
+    });
+  });
+
   it("represents boundsByLevel as [levelId, bounds][] tuples", async () => {
     const bytes = await readGoldenBundle();
     const response = decodeBundle(bytes);
