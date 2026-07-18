@@ -13,6 +13,9 @@ export function verifyPassword(password: string, stored: string): boolean {
     return false;
   }
   const expected = Buffer.from(hashHex, "hex");
+  if (expected.length !== 32) {
+    return false;
+  }
   const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
   return timingSafeEqual(actual, expected);
 }

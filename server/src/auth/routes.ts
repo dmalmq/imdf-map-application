@@ -41,7 +41,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     },
   );
 
-  app.post("/api/auth/logout", async (request, reply) => {
+  app.post("/api/auth/logout", { schema: { response: { 204: Type.Null() } } }, async (request, reply) => {
     const token = request.cookies["kiriko_session"];
     if (token) {
       destroySession(request.server.db, token);

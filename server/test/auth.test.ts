@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanupTestApps, loginCookie, makeTestApp, TEST_PASSWORD, TEST_USER } from "./helpers";
+import { verifyPassword } from "../src/auth/passwords";
 
 afterEach(cleanupTestApps);
 
@@ -38,6 +39,12 @@ describe("auth", () => {
     expect(out.statusCode).toBe(204);
     const after = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie } });
     expect(after.statusCode).toBe(401);
+  });
+
+  it("rejects malformed stored hashes instead of verifying trivially", () => {
+    expect(verifyPassword("anything", "scrypt$ab$zz")).toBe(false);
+    expect(verifyPassword("anything", "scrypt$$")).toBe(false);
+    expect(verifyPassword("anything", "plain$deadbeef$deadbeef")).toBe(false);
   });
 
   it("sets the Secure cookie attribute when secureCookies is enabled", async () => {

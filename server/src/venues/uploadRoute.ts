@@ -7,7 +7,17 @@ const TENANT_ID = 1;
 export function registerUploadRoute(app: FastifyInstance): void {
   app.post(
     "/api/venues/:id/versions",
-    { preHandler: requireSession, schema: { params: Type.Object({ id: Type.Integer() }) } },
+    {
+      preHandler: requireSession,
+      schema: {
+        params: Type.Object({ id: Type.Integer() }),
+        response: {
+          202: Type.Object({ jobId: Type.String(), versionId: Type.Number(), seq: Type.Number() }),
+          400: Type.Object({ error: Type.String() }),
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
     async (request, reply) => {
       const { id } = request.params as { id: number };
       const venue = request.server.db

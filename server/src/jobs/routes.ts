@@ -5,7 +5,22 @@ import { requireSession } from "../auth/guard";
 export function registerJobRoutes(app: FastifyInstance): void {
   app.get(
     "/api/jobs/:id",
-    { preHandler: requireSession, schema: { params: Type.Object({ id: Type.String() }) } },
+    {
+      preHandler: requireSession,
+      schema: {
+        params: Type.Object({ id: Type.String() }),
+        response: {
+          200: Type.Object({
+            id: Type.String(),
+            kind: Type.String(),
+            status: Type.String(),
+            error: Type.Union([Type.String(), Type.Null()]),
+            result: Type.Unknown(),
+          }),
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const row = request.server.db
