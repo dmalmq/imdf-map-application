@@ -62,3 +62,11 @@ RED-first for each; whole `src/issues` now 198/198, typecheck clean.
 5. `formatDueDate` adds a localized short era only for Gregorian year 0 (1 BC), which otherwise formats identically to year 1; exact en/ja assertions added ("Jan 1, 1 BC" / 「紀元前1年1月1日」 vs "Jan 1, 1" / 「1年1月1日」).
 
 No server contract changed; no App/map/rail/CSS files touched.
+
+## Gate fix (fourth pass — refetch-failure Retry reachability)
+
+RED-first; whole `src/issues` now 201/201, typecheck clean.
+
+- A loaded-collection refetch that fails after a post-create or post-edit leaves the draft locked on `draftAdmissionResourceId` (composer) or the editor locked on `submittedEdit` (detail), while `collection_fetch_failed` clears refetch demand — and the previous `collectionFailed` alert + Retry only rendered in the queue/null-collection branches, so the composer and detail views had no `retryCollection()` path and stayed permanently locked.
+- The loaded-collection `collectionFailed` alert + Retry now renders at panel level, above the draft/detail/queue switch, so every view exposes it; the plain stale line is suppressed while it shows. The null-collection full error state is unchanged, the duplicate queue-branch alert is removed, and gating (`collection !== null` vs the null branch) keeps exactly one Retry in every state.
+- RED tests cover a failed post-create GET with the draft open and a failed post-edit GET with the editor open: Retry is reachable from that view, `retryCollection()` fires, and a subsequent successful admitting refetch clears the draft / closes the editor. A third test pins a single Retry for the never-loaded collection.

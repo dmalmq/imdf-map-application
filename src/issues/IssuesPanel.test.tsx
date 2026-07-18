@@ -1583,3 +1583,92 @@ describe("terminal mutation copy", () => {
     ).toBeTruthy();
   });
 });
+
+describe("loaded-collection refetch failure", () => {
+  it("exposes Retry in the composer view and admits the draft after retry", async () => {
+    const user = userEvent.setup();
+    const harness = renderPanel({
+      currentUser: MEMBER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "New body" }),
+      },
+    });
+    // Create succeeded (awaiting admission), then the canonical GET failed —
+    // the draft stays locked with no way forward unless Retry is reachable.
+    harness.update({
+      pendingMutations: 0,
+      draftAdmissionResourceId: "new-1",
+      error: { kind: "network", message: "offline" },
+      errorScope: "collection",
+      stale: true,
+    });
+    expect(
+      (screen.getByRole("textbox", { name: "Issue body" }) as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(harness.retryCollection).toHaveBeenCalled();
+
+    harness.update({
+      collection: collection(2, [makeIssue({ id: "new-1", pinNumber: 1, body: "New body" })]),
+      appliedRevision: 2,
+      draft: null,
+      draftAdmissionResourceId: null,
+      error: null,
+      errorScope: null,
+      stale: false,
+    });
+    expect(screen.queryByRole("textbox", { name: "Issue body" })).toBeNull();
+  });
+
+  it("exposes Retry in the detail view and admits the edit after retry", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 8, body: "Before" });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "After" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    harness.update({ pendingMutations: 1 });
+    harness.update({ pendingMutations: 0 });
+    // The post-edit canonical GET fails; the editor is still locked awaiting
+    // admission and must expose Retry from the detail view.
+    harness.update({
+      error: { kind: "network", message: "offline" },
+      errorScope: "collection",
+      stale: true,
+    });
+    expect(
+      (screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(harness.retryCollection).toHaveBeenCalled();
+
+    harness.update({
+      collection: collection(2, [
+        makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 9, body: "After" }),
+      ]),
+      appliedRevision: 2,
+      error: null,
+      errorScope: null,
+      stale: false,
+    });
+    expect(screen.queryByRole("textbox", { name: "Edit issue body" })).toBeNull();
+  });
+
+  it("keeps a single Retry: the full error state when the collection never loaded", () => {
+    renderPanel({
+      currentUser: MEMBER,
+      state: {
+        collection: null,
+        error: { kind: "network", message: "offline" },
+        errorScope: "collection",
+        refetchRequested: false,
+      },
+    });
+    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+  });
+});

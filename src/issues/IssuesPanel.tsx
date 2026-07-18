@@ -207,14 +207,6 @@ export function IssuesPanel({
             ? `${countActiveIssues(issues)} 件の進行中`
             : `${countActiveIssues(issues)} active`}
         </p>
-        {collectionFailed ? (
-          <p className="issues-panel__line" role="alert">
-            {ui.loadFailed[locale]}{" "}
-            <button type="button" className="btn-ghost" onClick={controller.retryCollection}>
-              {ui.retry[locale]}
-            </button>
-          </p>
-        ) : null}
         <IssueQueue
           locale={locale}
           issues={issues}
@@ -271,9 +263,18 @@ export function IssuesPanel({
         <p className="issues-panel__line" role="status">
           {ui.reconnecting[locale]}
         </p>
-      ) : state.stale ? (
+      ) : state.stale && !collectionFailed ? (
         <p className="issues-panel__line" role="status">
           {ui.staleData[locale]}
+        </p>
+      ) : null}
+
+      {collectionFailed && state.collection !== null ? (
+        <p className="issues-panel__line" role="alert">
+          {ui.loadFailed[locale]}{" "}
+          <button type="button" className="btn-ghost" onClick={controller.retryCollection}>
+            {ui.retry[locale]}
+          </button>
         </p>
       ) : null}
 
