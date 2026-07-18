@@ -13,9 +13,21 @@
 //! (id 3) carries every occupant feature. [`split_features`] and
 //! [`reassemble_features`] move features between the single canonical
 //! ordering `kiriko-model` produces and the two-section split, so callers
-//! never see the split or a duplicated feature.
+//! never see the split or a duplicated feature. [`reassemble_features`]
+//! also validates that the split was honest (correct section membership,
+//! canonical type order within each section, no id duplicated across
+//! sections), since a hand-crafted bundle need not have gone through
+//! [`split_features`] at all.
+//!
+//! Every `f64` reachable from a [`BundleDocument`] (level ordinals, bounds,
+//! feature centers, and any number nested in feature geometry or
+//! `source_properties`) is canonicalized by [`canonical_f64`] on both the
+//! encode and decode path: non-finite values are rejected, and `-0.0` is
+//! rewritten to `0.0` so two semantically-equivalent documents always
+//! encode to identical bytes and a decoded document is always in the same
+//! canonical form `kiriko-model` itself produces.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +35,19 @@ use kiriko_model::canonical::{self, Value as CanonicalValue};
 use kiriko_model::model::{Bounds, FeatureType, ImdfManifest, ViewerLevel, ViewerWarning, VenueFeature, WarningCode};
 
 use crate::codec::{BundleDocument, BundleMetadata, BundleStats};
+use crate::error::{BundleError, BundleErrorCode};
+
+/// Reject a non-finite (NaN or +/-Infinity) number, and normalize `-0.0` to
+/// `0.0`. Applied to every `f64` at the codec boundary (see module docs).
+fn canonical_f64(v: f64) -> Result<f64, BundleError> {
+    if !v.is_finite() {
+        return Err(BundleError::new(
+            BundleErrorCode::InvalidBundle,
+            "bundle contains a non-finite (NaN or infinite) number",
+        ));
+    }
+    Ok(if v == 0.0 { 0.0 } else { v })
+}
 
 pub(crate) type JsonObjectDto = BTreeMap<String, JsonValueDto>;
 
@@ -37,34 +62,38 @@ pub(crate) enum JsonValueDto {
     Object(JsonObjectDto),
 }
 
-fn value_to_dto(value: &CanonicalValue) -> JsonValueDto {
-    match value {
+fn value_to_dto(value: &CanonicalValue) -> Result<JsonValueDto, BundleError> {
+    Ok(match value {
         CanonicalValue::Null => JsonValueDto::Null,
         CanonicalValue::Bool(b) => JsonValueDto::Bool(*b),
-        CanonicalValue::Number(n) => JsonValueDto::Number(*n),
+        CanonicalValue::Number(n) => JsonValueDto::Number(canonical_f64(*n)?),
         CanonicalValue::String(s) => JsonValueDto::String(s.clone()),
-        CanonicalValue::Array(items) => JsonValueDto::Array(items.iter().map(value_to_dto).collect()),
-        CanonicalValue::Object(map) => JsonValueDto::Object(object_to_dto(map)),
-    }
+        CanonicalValue::Array(items) => {
+            JsonValueDto::Array(items.iter().map(value_to_dto).collect::<Result<_, _>>()?)
+        }
+        CanonicalValue::Object(map) => JsonValueDto::Object(object_to_dto(map)?),
+    })
 }
 
-fn dto_to_value(dto: &JsonValueDto) -> CanonicalValue {
-    match dto {
+fn dto_to_value(dto: &JsonValueDto) -> Result<CanonicalValue, BundleError> {
+    Ok(match dto {
         JsonValueDto::Null => CanonicalValue::Null,
         JsonValueDto::Bool(b) => CanonicalValue::Bool(*b),
-        JsonValueDto::Number(n) => CanonicalValue::Number(*n),
+        JsonValueDto::Number(n) => CanonicalValue::Number(canonical_f64(*n)?),
         JsonValueDto::String(s) => CanonicalValue::String(s.clone()),
-        JsonValueDto::Array(items) => CanonicalValue::Array(items.iter().map(dto_to_value).collect()),
-        JsonValueDto::Object(map) => CanonicalValue::Object(dto_to_object(map)),
-    }
+        JsonValueDto::Array(items) => {
+            CanonicalValue::Array(items.iter().map(dto_to_value).collect::<Result<_, _>>()?)
+        }
+        JsonValueDto::Object(map) => CanonicalValue::Object(dto_to_object(map)?),
+    })
 }
 
-fn object_to_dto(object: &canonical::Object) -> JsonObjectDto {
-    object.iter().map(|(k, v)| (k.clone(), value_to_dto(v))).collect()
+fn object_to_dto(object: &canonical::Object) -> Result<JsonObjectDto, BundleError> {
+    object.iter().map(|(k, v)| Ok((k.clone(), value_to_dto(v)?))).collect()
 }
 
-fn dto_to_object(dto: &JsonObjectDto) -> canonical::Object {
-    dto.iter().map(|(k, v)| (k.clone(), dto_to_value(v))).collect()
+fn dto_to_object(dto: &JsonObjectDto) -> Result<canonical::Object, BundleError> {
+    dto.iter().map(|(k, v)| Ok((k.clone(), dto_to_value(v)?))).collect()
 }
 
 /// Serializable mirror of `kiriko_model::model::FeatureType`.
@@ -183,41 +212,52 @@ pub(crate) struct FeatureDto {
     pub source_properties: JsonObjectDto,
 }
 
-fn feature_to_dto(feature: &VenueFeature) -> FeatureDto {
-    FeatureDto {
+fn feature_to_dto(feature: &VenueFeature) -> Result<FeatureDto, BundleError> {
+    let center = match feature.center {
+        Some((x, y)) => Some((canonical_f64(x)?, canonical_f64(y)?)),
+        None => None,
+    };
+    Ok(FeatureDto {
         id: feature.id.clone(),
         feature_type: feature.feature_type.into(),
         level_id: feature.level_id.clone(),
-        geometry: feature.geometry.as_ref().map(value_to_dto),
-        center: feature.center,
+        geometry: feature.geometry.as_ref().map(value_to_dto).transpose()?,
+        center,
         labels: feature.labels.clone(),
         alt_labels: feature.alt_labels.clone(),
         category: feature.category.clone(),
         accessibility: feature.accessibility.clone(),
         restriction: feature.restriction.clone(),
-        source_properties: object_to_dto(&feature.source_properties),
-    }
+        source_properties: object_to_dto(&feature.source_properties)?,
+    })
 }
 
-fn dto_to_feature(dto: &FeatureDto) -> VenueFeature {
-    VenueFeature {
+fn dto_to_feature(dto: &FeatureDto) -> Result<VenueFeature, BundleError> {
+    let center = match dto.center {
+        Some((x, y)) => Some((canonical_f64(x)?, canonical_f64(y)?)),
+        None => None,
+    };
+    Ok(VenueFeature {
         id: dto.id.clone(),
         feature_type: dto.feature_type.into(),
         level_id: dto.level_id.clone(),
-        geometry: dto.geometry.as_ref().map(dto_to_value),
-        center: dto.center,
+        geometry: dto.geometry.as_ref().map(dto_to_value).transpose()?,
+        center,
         labels: dto.labels.clone(),
         alt_labels: dto.alt_labels.clone(),
         category: dto.category.clone(),
         accessibility: dto.accessibility.clone(),
         restriction: dto.restriction.clone(),
-        source_properties: dto_to_object(&dto.source_properties),
-    }
+        source_properties: dto_to_object(&dto.source_properties)?,
+    })
 }
 
 /// Split canonically-ordered features into (geometry, stores): every
 /// occupant goes to `stores`, everything else to `geometry`. Relative order
-/// within each output is preserved.
+/// within each output is preserved. This is the *encode*-side split;
+/// [`reassemble_features`] is the decode-side inverse and separately
+/// validates that a section (which need not have come from this function)
+/// actually honors the split it claims to.
 pub(crate) fn split_features(features: &[VenueFeature]) -> (Vec<VenueFeature>, Vec<VenueFeature>) {
     let mut geometry = Vec::new();
     let mut stores = Vec::new();
@@ -231,11 +271,58 @@ pub(crate) fn split_features(features: &[VenueFeature]) -> (Vec<VenueFeature>, V
     (geometry, stores)
 }
 
+fn validate_canonical_type_order(features: &[VenueFeature], section_name: &str) -> Result<(), BundleError> {
+    let mut last_order: Option<usize> = None;
+    for feature in features {
+        let order = feature.feature_type.order();
+        if let Some(last) = last_order {
+            if order < last {
+                return Err(BundleError::new(
+                    BundleErrorCode::InvalidBundle,
+                    format!("{section_name} section is not in canonical feature-type order"),
+                ));
+            }
+        }
+        last_order = Some(order);
+    }
+    Ok(())
+}
+
 /// Reassemble the geometry and stores sections back into the single
-/// canonical feature-type order `kiriko-model` produces. Both inputs are
-/// already individually ordered by `FeatureType::order()`, so a merge on
-/// that order reproduces the exact original sequence.
-pub(crate) fn reassemble_features(geometry: Vec<VenueFeature>, stores: Vec<VenueFeature>) -> Vec<VenueFeature> {
+/// canonical feature-type order `kiriko-model` produces.
+///
+/// A decoded bundle need not have been produced by [`split_features`] (it
+/// may be hand-crafted or corrupted), so this validates the invariants
+/// `split_features` would otherwise guarantee before trusting the merge:
+/// every `geometry` feature is a non-occupant, every `stores` feature is an
+/// occupant, each section is already in non-decreasing canonical
+/// feature-type order, and no feature id repeats across the two sections
+/// combined. Given valid input, both sections are individually ordered by
+/// `FeatureType::order()`, so a merge on that order reproduces the exact
+/// original sequence.
+pub(crate) fn reassemble_features(
+    geometry: Vec<VenueFeature>,
+    stores: Vec<VenueFeature>,
+) -> Result<Vec<VenueFeature>, BundleError> {
+    for feature in &geometry {
+        if feature.feature_type == FeatureType::Occupant {
+            return Err(BundleError::new(
+                BundleErrorCode::InvalidBundle,
+                format!("occupant feature {:?} found in the geometry section", feature.id),
+            ));
+        }
+    }
+    for feature in &stores {
+        if feature.feature_type != FeatureType::Occupant {
+            return Err(BundleError::new(
+                BundleErrorCode::InvalidBundle,
+                format!("non-occupant feature {:?} found in the stores section", feature.id),
+            ));
+        }
+    }
+    validate_canonical_type_order(&geometry, "geometry")?;
+    validate_canonical_type_order(&stores, "stores")?;
+
     let mut g = geometry.into_iter().peekable();
     let mut s = stores.into_iter().peekable();
     let mut out = Vec::new();
@@ -253,14 +340,25 @@ pub(crate) fn reassemble_features(geometry: Vec<VenueFeature>, stores: Vec<Venue
             }
         }
     }
-    out
+
+    let mut seen_ids: HashSet<&str> = HashSet::with_capacity(out.len());
+    for feature in &out {
+        if !seen_ids.insert(feature.id.as_str()) {
+            return Err(BundleError::new(
+                BundleErrorCode::InvalidBundle,
+                format!("duplicate feature id {:?} across sections", feature.id),
+            ));
+        }
+    }
+
+    Ok(out)
 }
 
-pub(crate) fn feature_dtos(features: &[VenueFeature]) -> Vec<FeatureDto> {
+pub(crate) fn feature_dtos(features: &[VenueFeature]) -> Result<Vec<FeatureDto>, BundleError> {
     features.iter().map(feature_to_dto).collect()
 }
 
-pub(crate) fn features_from_dtos(dtos: &[FeatureDto]) -> Vec<VenueFeature> {
+pub(crate) fn features_from_dtos(dtos: &[FeatureDto]) -> Result<Vec<VenueFeature>, BundleError> {
     dtos.iter().map(dto_to_feature).collect()
 }
 
@@ -285,26 +383,22 @@ struct BoundsDto {
     north: f64,
 }
 
-impl From<Bounds> for BoundsDto {
-    fn from(b: Bounds) -> Self {
-        BoundsDto {
-            west: b.west,
-            south: b.south,
-            east: b.east,
-            north: b.north,
-        }
-    }
+fn bounds_to_dto(b: Bounds) -> Result<BoundsDto, BundleError> {
+    Ok(BoundsDto {
+        west: canonical_f64(b.west)?,
+        south: canonical_f64(b.south)?,
+        east: canonical_f64(b.east)?,
+        north: canonical_f64(b.north)?,
+    })
 }
 
-impl From<BoundsDto> for Bounds {
-    fn from(b: BoundsDto) -> Self {
-        Bounds {
-            west: b.west,
-            south: b.south,
-            east: b.east,
-            north: b.north,
-        }
-    }
+fn bounds_from_dto(b: BoundsDto) -> Result<Bounds, BundleError> {
+    Ok(Bounds {
+        west: canonical_f64(b.west)?,
+        south: canonical_f64(b.south)?,
+        east: canonical_f64(b.east)?,
+        north: canonical_f64(b.north)?,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -315,22 +409,22 @@ struct ViewerLevelDto {
     short_name: BTreeMap<String, String>,
 }
 
-fn level_to_dto(level: &ViewerLevel) -> ViewerLevelDto {
-    ViewerLevelDto {
+fn level_to_dto(level: &ViewerLevel) -> Result<ViewerLevelDto, BundleError> {
+    Ok(ViewerLevelDto {
         id: level.id.clone(),
-        ordinal: level.ordinal,
+        ordinal: canonical_f64(level.ordinal)?,
         label: level.label.clone(),
         short_name: level.short_name.clone(),
-    }
+    })
 }
 
-fn level_from_dto(dto: ViewerLevelDto) -> ViewerLevel {
-    ViewerLevel {
+fn level_from_dto(dto: ViewerLevelDto) -> Result<ViewerLevel, BundleError> {
+    Ok(ViewerLevel {
         id: dto.id,
-        ordinal: dto.ordinal,
+        ordinal: canonical_f64(dto.ordinal)?,
         label: dto.label,
         short_name: dto.short_name,
-    }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -379,8 +473,8 @@ pub(crate) struct ManifestSection {
     stats: BundleStatsDto,
 }
 
-pub(crate) fn manifest_to_dto(document: &BundleDocument) -> ManifestSection {
-    ManifestSection {
+pub(crate) fn manifest_to_dto(document: &BundleDocument) -> Result<ManifestSection, BundleError> {
+    Ok(ManifestSection {
         bundle: BundleMetadataDto {
             dataset_id: document.metadata.dataset_id.clone(),
             version: document.metadata.version,
@@ -388,25 +482,28 @@ pub(crate) fn manifest_to_dto(document: &BundleDocument) -> ManifestSection {
         source_manifest: ImdfManifestDto {
             version: document.manifest.version.clone(),
             language: document.manifest.language.clone(),
-            rest: object_to_dto(&document.manifest.rest),
+            rest: object_to_dto(&document.manifest.rest)?,
         },
         venue_id: document.venue_id.clone(),
-        levels: document.levels.iter().map(level_to_dto).collect(),
+        levels: document.levels.iter().map(level_to_dto).collect::<Result<_, _>>()?,
         bounds_by_level: document
             .bounds_by_level
             .iter()
-            .map(|(id, bounds)| (id.clone(), (*bounds).into()))
-            .collect(),
+            .map(|(id, bounds)| Ok((id.clone(), bounds_to_dto(*bounds)?)))
+            .collect::<Result<_, _>>()?,
         warnings: document.warnings.iter().map(warning_to_dto).collect(),
         stats: BundleStatsDto {
             levels: document.stats.levels,
             features: document.stats.features,
         },
-    }
+    })
 }
 
-pub(crate) fn manifest_into_document(dto: ManifestSection, features: Vec<VenueFeature>) -> BundleDocument {
-    BundleDocument {
+pub(crate) fn manifest_into_document(
+    dto: ManifestSection,
+    features: Vec<VenueFeature>,
+) -> Result<BundleDocument, BundleError> {
+    Ok(BundleDocument {
         metadata: BundleMetadata {
             dataset_id: dto.bundle.dataset_id,
             version: dto.bundle.version,
@@ -414,20 +511,155 @@ pub(crate) fn manifest_into_document(dto: ManifestSection, features: Vec<VenueFe
         manifest: ImdfManifest {
             version: dto.source_manifest.version,
             language: dto.source_manifest.language,
-            rest: dto_to_object(&dto.source_manifest.rest),
+            rest: dto_to_object(&dto.source_manifest.rest)?,
         },
         venue_id: dto.venue_id,
-        levels: dto.levels.into_iter().map(level_from_dto).collect(),
+        levels: dto.levels.into_iter().map(level_from_dto).collect::<Result<_, _>>()?,
         bounds_by_level: dto
             .bounds_by_level
             .into_iter()
-            .map(|(id, bounds)| (id, bounds.into()))
-            .collect(),
+            .map(|(id, bounds)| Ok((id, bounds_from_dto(bounds)?)))
+            .collect::<Result<_, _>>()?,
         warnings: dto.warnings.into_iter().map(warning_from_dto).collect(),
         features,
         stats: BundleStats {
             levels: dto.stats.levels,
             features: dto.stats.features,
         },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn feature(id: &str, feature_type: FeatureType) -> VenueFeature {
+        VenueFeature {
+            id: id.to_string(),
+            feature_type,
+            level_id: None,
+            geometry: None,
+            center: None,
+            labels: BTreeMap::new(),
+            alt_labels: BTreeMap::new(),
+            category: None,
+            accessibility: Vec::new(),
+            restriction: None,
+            source_properties: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn reassemble_rejects_an_occupant_placed_in_the_geometry_section() {
+        let geometry = vec![feature("f1", FeatureType::Occupant)];
+        let stores = vec![feature("f2", FeatureType::Occupant)];
+        let err = reassemble_features(geometry, stores).expect_err("an occupant in geometry must be rejected");
+        assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+    }
+
+    #[test]
+    fn reassemble_rejects_a_non_occupant_placed_in_the_stores_section() {
+        let geometry = vec![feature("f1", FeatureType::Address)];
+        let stores = vec![feature("f2", FeatureType::Address)];
+        let err = reassemble_features(geometry, stores).expect_err("a non-occupant in stores must be rejected");
+        assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+    }
+
+    #[test]
+    fn reassemble_accepts_correctly_split_canonically_ordered_features() {
+        let geometry = vec![feature("f1", FeatureType::Address), feature("f2", FeatureType::Venue)];
+        let stores = vec![feature("f3", FeatureType::Occupant)];
+        let out = reassemble_features(geometry, stores).expect("well-formed sections must reassemble");
+        let ids: Vec<&str> = out.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(ids, vec!["f1", "f3", "f2"], "occupant (order 10) sorts between address (0) and venue (15)");
+    }
+
+    #[test]
+    fn canonical_f64_rejects_nan_and_infinity() {
+        assert!(canonical_f64(f64::NAN).is_err());
+        assert!(canonical_f64(f64::INFINITY).is_err());
+        assert!(canonical_f64(f64::NEG_INFINITY).is_err());
+    }
+
+    #[test]
+    fn canonical_f64_normalizes_negative_zero() {
+        let normalized = canonical_f64(-0.0).expect("negative zero is finite");
+        assert_eq!(normalized.to_bits(), 0.0f64.to_bits());
+        assert!(normalized.is_sign_positive());
+    }
+
+    /// A minimal, well-formed `ManifestSection` with a hand-picked ordinal,
+    /// bypassing `canonical_f64` entirely (unlike going through
+    /// `manifest_to_dto`, which would itself reject a non-finite value).
+    /// This is how the tests below "smuggle" a bad float straight into a
+    /// section payload, to prove `decode_bundle` independently enforces the
+    /// same canonicalization `encode_bundle` enforces on the way in.
+    fn manifest_section_with_ordinal(ordinal: f64) -> ManifestSection {
+        ManifestSection {
+            bundle: BundleMetadataDto {
+                dataset_id: "test".to_string(),
+                version: 1,
+            },
+            source_manifest: ImdfManifestDto {
+                version: "1.0.0".to_string(),
+                language: "en".to_string(),
+                rest: BTreeMap::new(),
+            },
+            venue_id: "venue-1".to_string(),
+            levels: vec![ViewerLevelDto {
+                id: "level-1".to_string(),
+                ordinal,
+                label: BTreeMap::new(),
+                short_name: BTreeMap::new(),
+            }],
+            bounds_by_level: BTreeMap::new(),
+            warnings: Vec::new(),
+            stats: BundleStatsDto { levels: 1, features: 0 },
+        }
+    }
+
+    fn wrap_manifest_only_bundle(manifest_bytes: Vec<u8>) -> Vec<u8> {
+        let empty_features: Vec<u8> = postcard::to_allocvec(&Vec::<FeatureDto>::new()).expect("empty vec encodes");
+        let payload = crate::format::build_payload(&[
+            (crate::format::SECTION_MANIFEST, crate::format::SECTION_VERSION, manifest_bytes),
+            (crate::format::SECTION_GEOMETRY, crate::format::SECTION_VERSION, empty_features.clone()),
+            (crate::format::SECTION_STORES, crate::format::SECTION_VERSION, empty_features),
+        ]);
+        crate::format::encode_payload(&payload).expect("hand-built payload encodes")
+    }
+
+    #[test]
+    fn decode_bundle_rejects_a_nan_smuggled_directly_into_a_section_payload() {
+        let manifest_bytes =
+            postcard::to_allocvec(&manifest_section_with_ordinal(f64::NAN)).expect("dto with NaN still postcard-encodes");
+        let bytes = wrap_manifest_only_bundle(manifest_bytes);
+
+        let err = crate::decode_bundle(&bytes).expect_err("a smuggled NaN ordinal must be rejected");
+        assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+    }
+
+    #[test]
+    fn decode_bundle_normalizes_a_smuggled_negative_zero_ordinal() {
+        let manifest_bytes =
+            postcard::to_allocvec(&manifest_section_with_ordinal(-0.0)).expect("dto with -0.0 postcard-encodes");
+        let bytes = wrap_manifest_only_bundle(manifest_bytes);
+
+        let document = crate::decode_bundle(&bytes).expect("a smuggled -0.0 ordinal is finite and must decode");
+        assert_eq!(
+            document.levels[0].ordinal.to_bits(),
+            0.0f64.to_bits(),
+            "decode must normalize -0.0 to +0.0"
+        );
+    }
+
+    #[test]
+    fn decode_bundle_rejects_trailing_bytes_after_a_postcard_section_value() {
+        let mut manifest_bytes =
+            postcard::to_allocvec(&manifest_section_with_ordinal(1.0)).expect("dto encodes");
+        manifest_bytes.push(0xFF); // garbage padding after a valid postcard value
+        let bytes = wrap_manifest_only_bundle(manifest_bytes);
+
+        let err = crate::decode_bundle(&bytes).expect_err("trailing bytes after a section value must be rejected");
+        assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 }

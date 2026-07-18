@@ -23,7 +23,7 @@
 //! public codec surface is `compile_imdf`, `encode_bundle`, and
 //! `decode_bundle`.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 
 use sha2::{Digest, Sha256};
 
@@ -157,12 +157,6 @@ pub(crate) fn parse_directory(payload: &[u8]) -> Result<Directory, BundleError> 
         if offset < dir_len as u64 || end > payload.len() as u64 {
             return Err(invalid("section row is out of bounds"));
         }
-        for other in &rows {
-            let other_end = other.offset + other.length;
-            if offset < other_end && other.offset < end {
-                return Err(invalid("section rows overlap"));
-            }
-        }
 
         if REQUIRED_SECTIONS.contains(&id) && version != SECTION_VERSION {
             return Err(BundleError::new(
@@ -172,6 +166,21 @@ pub(crate) fn parse_directory(payload: &[u8]) -> Result<Directory, BundleError> 
         }
 
         rows.push(SectionRow { id, offset, length });
+    }
+
+    // Overlap check in O(n log n): sort a copy of the (already id-sorted)
+    // rows by offset, then a single linear scan over adjacent pairs is
+    // sufficient -- two intervals overlap only if some pair is adjacent in
+    // offset order. A row count up to `u16::MAX` makes the previous O(n^2)
+    // all-pairs scan (~2.1 billion comparisons at the limit) a real
+    // decompression-time DoS; this stays fast at any row count.
+    let mut by_offset: Vec<&SectionRow> = rows.iter().collect();
+    by_offset.sort_unstable_by_key(|row| row.offset);
+    for pair in by_offset.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if a.offset + a.length > b.offset {
+            return Err(invalid("section rows overlap"));
+        }
     }
 
     for required in REQUIRED_SECTIONS {
@@ -281,25 +290,57 @@ fn zstd_compress(payload: &[u8]) -> Vec<u8> {
     encoder.finish().expect("finishing an in-memory zstd stream never fails")
 }
 
+/// Decompress exactly one zstd frame, enforcing the declared uncompressed
+/// length exactly and rejecting any trailing bytes after the frame (e.g. a
+/// concatenated second frame).
+///
+/// The output buffer is allocated once at its final fixed size
+/// (`declared_len`, already capped by the caller before this function is
+/// reached) and never grows: a lying frame is caught by `read_exact` erroring
+/// (too short) or the follow-up one-byte probe finding more data (too long),
+/// so there is never a `Vec` reallocation that could temporarily double an
+/// already-large buffer.
 fn zstd_decompress(frame: &[u8], declared_len: u64) -> Result<Vec<u8>, BundleError> {
-    let decoder = zstd::stream::read::Decoder::new(frame).map_err(|e| {
-        BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("open zstd frame: {e}"))
+    let mut decoder = zstd::stream::read::Decoder::new(frame)
+        .map_err(|e| BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("open zstd frame: {e}")))?
+        .single_frame();
+
+    let mut out = vec![0u8; declared_len as usize];
+    decoder.read_exact(&mut out).map_err(|e| {
+        BundleError::new(
+            BundleErrorCode::BundleIntegrityFailed,
+            format!("decompressed payload is shorter than the envelope's declared length: {e}"),
+        )
     })?;
-    // Bound the reader to one byte past the declared length so a frame that
-    // decompresses to more than declared is detected without ever growing
-    // `out` unbounded; the allocation itself is capped by the declared-length
-    // check the caller performs before this function is reached.
-    let mut limited = decoder.take(declared_len.saturating_add(1));
-    let mut out = Vec::with_capacity(declared_len as usize);
-    limited
-        .read_to_end(&mut out)
-        .map_err(|e| BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("decompress zstd frame: {e}")))?;
-    if out.len() as u64 != declared_len {
+
+    // Probe for one more byte, without ever growing `out`, to detect a
+    // frame that decompresses to more than the declared length.
+    let mut probe = [0u8; 1];
+    let extra = decoder
+        .read(&mut probe)
+        .map_err(|e| BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("probe zstd frame: {e}")))?;
+    if extra != 0 {
         return Err(BundleError::new(
             BundleErrorCode::BundleIntegrityFailed,
             "decompressed payload length does not match the envelope's declared length",
         ));
     }
+
+    // Exactly one zstd frame: `single_frame()` stops decoding after the
+    // first frame completes, but does not by itself reject bytes left over
+    // in the underlying reader. Any remaining bytes (a concatenated second
+    // frame, or trailing garbage) are treated as a corrupted frame.
+    let mut remainder = decoder.finish();
+    let trailing = remainder.fill_buf().map_err(|e| {
+        BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("check for trailing frame bytes: {e}"))
+    })?;
+    if !trailing.is_empty() {
+        return Err(BundleError::new(
+            BundleErrorCode::BundleIntegrityFailed,
+            "bundle contains data after the first zstd frame",
+        ));
+    }
+
     Ok(out)
 }
 
@@ -422,5 +463,37 @@ mod tests {
         let bundle = encode_payload(&payload).expect("payload encodes");
         let decoded = decode_payload(&bundle).expect("bundle decodes");
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn detects_overlap_efficiently_among_many_sections() {
+        // Row count near a realistic upper bound to prove overlap detection
+        // is not the O(n^2) all-pairs scan a naive implementation would use
+        // (which would make a maliciously large directory a decompression-
+        // time DoS). No timing assertion -- only that overlap is still
+        // correctly detected at this scale.
+        const N: usize = 5000;
+        let dir_len = (DIRECTORY_COUNT_LEN + N * DIRECTORY_ROW_LEN) as u64;
+
+        let mut offsets = Vec::with_capacity(N);
+        let mut cursor = dir_len;
+        for _ in 0..N {
+            offsets.push(cursor);
+            cursor += 1;
+        }
+        // Deliberately overlap the last two sections; ids 0..N-1 stay
+        // strictly ascending (ids 1..3 -- the required sections -- are
+        // covered since the id range starts at 0), independent of offsets.
+        offsets[N - 1] = offsets[N - 2];
+
+        let rows: Vec<[u8; DIRECTORY_ROW_LEN]> = offsets
+            .iter()
+            .enumerate()
+            .map(|(i, &offset)| row_bytes(i as u16, SECTION_VERSION, offset, 1))
+            .collect();
+        let payload = payload_with_rows(&rows, &vec![0u8; (cursor - dir_len) as usize]);
+
+        let err = parse_directory(&payload).expect_err("an overlap among many sections must still be detected");
+        assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 }

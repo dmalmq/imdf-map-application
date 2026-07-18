@@ -3,13 +3,14 @@
 
 mod support;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
-use kiriko_bundle::{compile_imdf, decode_bundle, BundleErrorCode, BundleMetadata};
+use kiriko_bundle::{compile_imdf, decode_bundle, encode_bundle, BundleDocument, BundleErrorCode, BundleMetadata, BundleStats};
 
 fn metadata() -> BundleMetadata {
     BundleMetadata {
@@ -209,15 +210,7 @@ fn corrupted_frame_byte_is_integrity_failure() {
     assert_eq!(err.code, BundleErrorCode::BundleIntegrityFailed);
 }
 
-/// Hand-wraps a raw uncompressed payload into a valid `kvb1` envelope so a
-/// malformed section directory can be exercised through the public
-/// `decode_bundle` API (payload-level directory corruption is covered
-/// exhaustively by `format`'s own unit tests; this proves the end-to-end
-/// wiring surfaces the same stable code through the public API).
-fn wrap_payload_for_test(payload: &[u8]) -> Vec<u8> {
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&Sha256::digest(payload));
-
+fn zstd_frame_bytes(payload: &[u8]) -> Vec<u8> {
     let mut raw = zstd::stream::raw::Encoder::new(9).expect("zstd encoder init");
     raw.set_parameter(zstd::stream::raw::CParameter::ChecksumFlag(true))
         .expect("checksum flag");
@@ -226,8 +219,17 @@ fn wrap_payload_for_test(payload: &[u8]) -> Vec<u8> {
     raw.set_pledged_src_size(Some(payload.len() as u64)).expect("pledged size");
     let mut encoder = zstd::stream::write::Encoder::with_encoder(Vec::new(), raw);
     encoder.write_all(payload).expect("write payload");
-    let compressed = encoder.finish().expect("finish frame");
+    encoder.finish().expect("finish frame")
+}
 
+/// Hand-wraps a raw uncompressed payload into a valid `kvb1` envelope so a
+/// malformed section directory can be exercised through the public
+/// `decode_bundle` API (payload-level directory corruption is covered
+/// exhaustively by `format`'s own unit tests; this proves the end-to-end
+/// wiring surfaces the same stable code through the public API).
+fn wrap_payload_for_test(payload: &[u8]) -> Vec<u8> {
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&Sha256::digest(payload));
     let mut out = Vec::new();
     out.extend_from_slice(b"KVB\0");
     out.extend_from_slice(&1u16.to_le_bytes());
@@ -235,7 +237,7 @@ fn wrap_payload_for_test(payload: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&1u32.to_le_bytes());
     out.extend_from_slice(&(payload.len() as u64).to_le_bytes());
     out.extend_from_slice(&hash);
-    out.extend_from_slice(&compressed);
+    out.extend_from_slice(&zstd_frame_bytes(payload));
     out
 }
 
@@ -260,6 +262,120 @@ fn decode_bundle_rejects_a_missing_required_section_via_the_public_api() {
     let bundle = wrap_payload_for_test(&payload);
     let err = decode_bundle(&bundle).expect_err("a missing required section must fail");
     assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
+fn decode_bundle_rejects_a_concatenated_second_zstd_frame() {
+    // A legitimate single-frame bundle's uncompressed payload, obtained by
+    // decompressing an already-valid encoded bundle.
+    let valid = compile_minimal();
+    let payload = decompress_payload(&valid);
+
+    // A well-formed envelope + first frame (hash and declared length both
+    // match `payload` exactly), with a second, independently valid frame
+    // for the very same payload appended after it.
+    let mut bytes = wrap_payload_for_test(&payload);
+    bytes.extend_from_slice(&zstd_frame_bytes(&payload));
+
+    let err = decode_bundle(&bytes).expect_err("a concatenated second zstd frame must be rejected");
+    assert_eq!(
+        err.code,
+        BundleErrorCode::BundleIntegrityFailed,
+        "trailing frame data after a complete, hash-matching first frame is treated as a corrupted/tampered \
+         frame (bundle_integrity_failed), not a structural directory problem (invalid_bundle)"
+    );
+}
+
+fn minimal_feature(id: &str, feature_type: kiriko_model::model::FeatureType) -> kiriko_model::model::VenueFeature {
+    kiriko_model::model::VenueFeature {
+        id: id.to_string(),
+        feature_type,
+        level_id: None,
+        geometry: None,
+        center: None,
+        labels: BTreeMap::new(),
+        alt_labels: BTreeMap::new(),
+        category: None,
+        accessibility: Vec::new(),
+        restriction: None,
+        source_properties: BTreeMap::new(),
+    }
+}
+
+fn minimal_document(features: Vec<kiriko_model::model::VenueFeature>) -> BundleDocument {
+    BundleDocument {
+        metadata: metadata(),
+        manifest: kiriko_model::model::ImdfManifest {
+            version: "1.0.0".to_string(),
+            language: "en".to_string(),
+            rest: BTreeMap::new(),
+        },
+        venue_id: "venue-1".to_string(),
+        levels: Vec::new(),
+        features,
+        bounds_by_level: BTreeMap::new(),
+        warnings: Vec::new(),
+        stats: BundleStats { levels: 0, features: 0 },
+    }
+}
+
+#[test]
+fn decode_bundle_rejects_misordered_geometry_features_via_the_public_api() {
+    use kiriko_model::model::FeatureType;
+    // `split_features` only filters by occupant/non-occupant membership; it
+    // does not re-sort. A document whose non-occupant features are already
+    // out of canonical feature-type order (Venue, order 15, before Address,
+    // order 0) therefore encodes exactly as given, and must be rejected on
+    // decode.
+    let document = minimal_document(vec![
+        minimal_feature("f1", FeatureType::Venue),
+        minimal_feature("f2", FeatureType::Address),
+    ]);
+    let bytes = encode_bundle(&document).expect("encode does not itself validate feature-type order");
+    let err = decode_bundle(&bytes).expect_err("misordered geometry features must be rejected");
+    assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
+fn decode_bundle_rejects_a_duplicate_feature_id_across_sections_via_the_public_api() {
+    use kiriko_model::model::FeatureType;
+    // Address (non-occupant) lands in geometry, Occupant lands in stores;
+    // both legitimately carry the same id through `split_features`, so this
+    // is a cross-section duplicate producible via the public encode API.
+    let document = minimal_document(vec![
+        minimal_feature("dup", FeatureType::Address),
+        minimal_feature("dup", FeatureType::Occupant),
+    ]);
+    let bytes = encode_bundle(&document).expect("encode does not itself validate cross-section id uniqueness");
+    let err = decode_bundle(&bytes).expect_err("a duplicate feature id across sections must be rejected");
+    assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+}
+
+#[test]
+fn encode_bundle_normalizes_negative_zero_to_identical_bytes() {
+    let with_negative_zero = minimal_document(vec![]);
+    let mut with_negative_zero = with_negative_zero;
+    with_negative_zero.levels.push(kiriko_model::model::ViewerLevel {
+        id: "level-1".to_string(),
+        ordinal: -0.0,
+        label: BTreeMap::new(),
+        short_name: BTreeMap::new(),
+    });
+
+    let mut with_positive_zero = minimal_document(vec![]);
+    with_positive_zero.levels.push(kiriko_model::model::ViewerLevel {
+        id: "level-1".to_string(),
+        ordinal: 0.0,
+        label: BTreeMap::new(),
+        short_name: BTreeMap::new(),
+    });
+
+    let negative_bytes = encode_bundle(&with_negative_zero).expect("encodes");
+    let positive_bytes = encode_bundle(&with_positive_zero).expect("encodes");
+    assert_eq!(
+        negative_bytes, positive_bytes,
+        "documents differing only by -0.0 vs 0.0 must encode to identical bytes"
+    );
 }
 
 // -- Step 5: golden fixture -------------------------------------------------

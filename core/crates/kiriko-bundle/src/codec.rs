@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use kiriko_model::import_imdf;
 use kiriko_model::model::{Bounds, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning};
+use serde::Deserialize;
 
 use crate::error::{BundleError, BundleErrorCode, CompileError};
 use crate::format;
@@ -77,23 +78,40 @@ pub fn compile_imdf(source: &[u8], metadata: BundleMetadata) -> Result<CompiledB
     })
 }
 
-fn postcard_err(context: &str) -> impl Fn(postcard::Error) -> BundleError + '_ {
+fn postcard_encode_err(context: &str) -> impl Fn(postcard::Error) -> BundleError + '_ {
     move |e| BundleError::new(BundleErrorCode::InvalidBundle, format!("{context}: {e}"))
+}
+
+/// Deserialize exactly one postcard value from `bytes` and require that no
+/// bytes are left over. Plain `postcard::from_bytes` silently ignores a
+/// trailing remainder, which would let a corrupted bundle pad a section with
+/// garbage after a validly-encoded prefix and still decode "successfully".
+fn postcard_take_exact<'a, T: Deserialize<'a>>(bytes: &'a [u8], context: &str) -> Result<T, BundleError> {
+    let (value, remainder) = postcard::take_from_bytes(bytes)
+        .map_err(|e| BundleError::new(BundleErrorCode::InvalidBundle, format!("{context}: {e}")))?;
+    if !remainder.is_empty() {
+        return Err(BundleError::new(
+            BundleErrorCode::InvalidBundle,
+            format!("{context}: {} trailing byte(s) after the section value", remainder.len()),
+        ));
+    }
+    Ok(value)
 }
 
 /// Encode a [`BundleDocument`] as `kvb1` bundle bytes. `document.features`
 /// is split into the geometry (non-occupant) and stores (occupant) sections;
 /// no section is duplicated and no empty style/graph/beacon section is
-/// emitted.
+/// emitted. Every `f64` reachable from `document` is validated as finite and
+/// `-0.0` is normalized to `0.0` (see `sections::canonical_f64`).
 pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> {
-    let manifest_dto = sections::manifest_to_dto(document);
+    let manifest_dto = sections::manifest_to_dto(document)?;
     let (geometry, stores) = sections::split_features(&document.features);
 
-    let manifest_bytes = postcard::to_allocvec(&manifest_dto).map_err(postcard_err("encode manifest section"))?;
-    let geometry_bytes =
-        postcard::to_allocvec(&sections::feature_dtos(&geometry)).map_err(postcard_err("encode geometry section"))?;
-    let stores_bytes =
-        postcard::to_allocvec(&sections::feature_dtos(&stores)).map_err(postcard_err("encode stores section"))?;
+    let manifest_bytes = postcard::to_allocvec(&manifest_dto).map_err(postcard_encode_err("encode manifest section"))?;
+    let geometry_bytes = postcard::to_allocvec(&sections::feature_dtos(&geometry)?)
+        .map_err(postcard_encode_err("encode geometry section"))?;
+    let stores_bytes = postcard::to_allocvec(&sections::feature_dtos(&stores)?)
+        .map_err(postcard_encode_err("encode stores section"))?;
 
     let payload = format::build_payload(&[
         (format::SECTION_MANIFEST, format::SECTION_VERSION, manifest_bytes),
@@ -106,8 +124,10 @@ pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> 
 
 /// Decode `kvb1` bundle bytes into a [`BundleDocument`]. Verifies the
 /// envelope, decompresses and integrity-checks the payload, validates the
-/// section directory, and reassembles the geometry/stores split back into
-/// the single canonical feature order.
+/// section directory, decodes each section requiring no trailing bytes,
+/// validates every reachable `f64` is finite (normalizing `-0.0`), validates
+/// geometry/stores section membership and canonical ordering, and
+/// reassembles the split back into the single canonical feature order.
 pub fn decode_bundle(bytes: &[u8]) -> Result<BundleDocument, BundleError> {
     let payload = format::decode_payload(bytes)?;
     let directory = format::parse_directory(&payload)?;
@@ -122,16 +142,105 @@ pub fn decode_bundle(bytes: &[u8]) -> Result<BundleDocument, BundleError> {
         .section(&payload, format::SECTION_STORES)
         .expect("presence checked by parse_directory");
 
-    let manifest_dto = postcard::from_bytes(manifest_bytes).map_err(postcard_err("decode manifest section"))?;
-    let geometry_dtos: Vec<sections::FeatureDto> =
-        postcard::from_bytes(geometry_bytes).map_err(postcard_err("decode geometry section"))?;
-    let stores_dtos: Vec<sections::FeatureDto> =
-        postcard::from_bytes(stores_bytes).map_err(postcard_err("decode stores section"))?;
+    let manifest_dto: sections::ManifestSection = postcard_take_exact(manifest_bytes, "decode manifest section")?;
+    let geometry_dtos: Vec<sections::FeatureDto> = postcard_take_exact(geometry_bytes, "decode geometry section")?;
+    let stores_dtos: Vec<sections::FeatureDto> = postcard_take_exact(stores_bytes, "decode stores section")?;
 
     let features = sections::reassemble_features(
-        sections::features_from_dtos(&geometry_dtos),
-        sections::features_from_dtos(&stores_dtos),
-    );
+        sections::features_from_dtos(&geometry_dtos)?,
+        sections::features_from_dtos(&stores_dtos)?,
+    )?;
 
-    Ok(sections::manifest_into_document(manifest_dto, features))
+    sections::manifest_into_document(manifest_dto, features)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kiriko_model::canonical::Value as CanonicalValue;
+    use kiriko_model::model::FeatureType;
+
+    #[test]
+    fn encode_bundle_rejects_nan_in_every_reachable_float_family() {
+        let base = |features: Vec<VenueFeature>, ordinal: f64, bounds: Option<Bounds>| BundleDocument {
+            metadata: BundleMetadata {
+                dataset_id: "test".to_string(),
+                version: 1,
+            },
+            manifest: ImdfManifest {
+                version: "1.0.0".to_string(),
+                language: "en".to_string(),
+                rest: BTreeMap::new(),
+            },
+            venue_id: "venue-1".to_string(),
+            levels: vec![ViewerLevel {
+                id: "level-1".to_string(),
+                ordinal,
+                label: BTreeMap::new(),
+                short_name: BTreeMap::new(),
+            }],
+            features,
+            bounds_by_level: bounds.map(|b| ("level-1".to_string(), b)).into_iter().collect(),
+            warnings: Vec::new(),
+            stats: BundleStats { levels: 1, features: 0 },
+        };
+
+        // Level ordinal.
+        assert_eq!(
+            encode_bundle(&base(Vec::new(), f64::NAN, None)).unwrap_err().code,
+            BundleErrorCode::InvalidBundle
+        );
+
+        // Bounds.
+        let bad_bounds = Bounds {
+            west: f64::INFINITY,
+            south: 0.0,
+            east: 1.0,
+            north: 1.0,
+        };
+        assert_eq!(
+            encode_bundle(&base(Vec::new(), 0.0, Some(bad_bounds))).unwrap_err().code,
+            BundleErrorCode::InvalidBundle
+        );
+
+        // Feature center.
+        let mut center_feature = VenueFeature {
+            id: "f1".to_string(),
+            feature_type: FeatureType::Address,
+            level_id: None,
+            geometry: None,
+            center: Some((f64::NAN, 0.0)),
+            labels: BTreeMap::new(),
+            alt_labels: BTreeMap::new(),
+            category: None,
+            accessibility: Vec::new(),
+            restriction: None,
+            source_properties: BTreeMap::new(),
+        };
+        assert_eq!(
+            encode_bundle(&base(vec![center_feature.clone()], 0.0, None)).unwrap_err().code,
+            BundleErrorCode::InvalidBundle
+        );
+
+        // Geometry coordinate, nested inside an array.
+        center_feature.center = None;
+        center_feature.geometry = Some(CanonicalValue::Array(vec![
+            CanonicalValue::Number(f64::NAN),
+            CanonicalValue::Number(35.0),
+        ]));
+        assert_eq!(
+            encode_bundle(&base(vec![center_feature.clone()], 0.0, None)).unwrap_err().code,
+            BundleErrorCode::InvalidBundle
+        );
+
+        // source_properties value, nested inside an object.
+        center_feature.geometry = None;
+        center_feature
+            .source_properties
+            .insert("weight".to_string(), CanonicalValue::Number(f64::NEG_INFINITY));
+        assert_eq!(
+            encode_bundle(&base(vec![center_feature], 0.0, None)).unwrap_err().code,
+            BundleErrorCode::InvalidBundle
+        );
+    }
 }
