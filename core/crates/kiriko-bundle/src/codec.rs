@@ -8,8 +8,8 @@ use kiriko_model::import_imdf;
 use kiriko_model::model::{
     Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning,
 };
-use sha2::{Digest, Sha256};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::error::{BundleError, BundleErrorCode, CompileError};
 use crate::format;

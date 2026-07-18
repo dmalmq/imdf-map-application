@@ -527,8 +527,7 @@ fn inspect_bundle_projects_the_committed_golden_fixture() {
             inspected
                 .feature_levels
                 .iter()
-                .any(|(feature, level)| feature == level_id
-                    && level.as_deref() == Some(level_id)),
+                .any(|(feature, level)| feature == level_id && level.as_deref() == Some(level_id)),
             "level feature {level_id} must map to its own id"
         );
     }
@@ -594,12 +593,10 @@ fn inspect_bundle_rejects_a_feature_referencing_an_unknown_level() {
     use kiriko_model::model::FeatureType;
     let mut unit = minimal_feature("u1", FeatureType::Unit);
     unit.level_id = Some("nope".to_string());
-    let mut document =
-        minimal_document(vec![minimal_feature("l1", FeatureType::Level), unit]);
+    let mut document = minimal_document(vec![minimal_feature("l1", FeatureType::Level), unit]);
     document.levels = vec![level_row("l1", 0.0)];
     let bytes = encode_bundle(&document).expect("encode does not validate level semantics");
-    let err =
-        inspect_bundle(&bytes).expect_err("an unknown level reference must be rejected");
+    let err = inspect_bundle(&bytes).expect_err("an unknown level reference must be rejected");
     assert_eq!(err.code, BundleErrorCode::InvalidBundle);
 }
 
@@ -623,8 +620,7 @@ fn inspect_bundle_accepts_a_semantically_consistent_document() {
     use kiriko_model::model::FeatureType;
     let mut unit = minimal_feature("u1", FeatureType::Unit);
     unit.level_id = Some("l1".to_string());
-    let mut document =
-        minimal_document(vec![minimal_feature("l1", FeatureType::Level), unit]);
+    let mut document = minimal_document(vec![minimal_feature("l1", FeatureType::Level), unit]);
     document.levels = vec![level_row("l1", 0.0)];
     let bytes = encode_bundle(&document).expect("encodes");
     let inspected = inspect_bundle(&bytes).expect("consistent document inspects");
@@ -667,7 +663,9 @@ fn inspect_bundle_propagates_all_four_decode_error_codes() {
     let mut oversized = golden;
     oversized[12..20].copy_from_slice(&(512u64 * 1024 * 1024 + 1).to_le_bytes());
     assert_eq!(
-        inspect_bundle(&oversized).expect_err("oversized declared length").code,
+        inspect_bundle(&oversized)
+            .expect_err("oversized declared length")
+            .code,
         BundleErrorCode::BundleTooLarge
     );
 }

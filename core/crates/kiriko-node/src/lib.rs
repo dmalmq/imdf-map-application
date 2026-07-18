@@ -21,8 +21,8 @@
 extern crate napi_derive;
 
 use kiriko_bundle::{
-    BundleError, BundleMetadata, CompileError, CompiledBundle,
-    compile_imdf as compile_bundle, inspect_bundle as inspect_bundle_pure,
+    BundleError, BundleMetadata, CompileError, CompiledBundle, compile_imdf as compile_bundle,
+    inspect_bundle as inspect_bundle_pure,
 };
 use kiriko_model::model::ViewerWarning;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
