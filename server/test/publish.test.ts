@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMinimalImdfZip } from "../../tests/fixtures/buildMinimalImdfZip";
+import type { CompileVenueMetadata, ImdfStats, ViewerWarning } from "../src/core/native";
 import { makePublishRunner } from "../src/jobs/publish";
 import { cleanupTestApps, loginCookie, makeTestApp } from "./helpers";
 
@@ -224,5 +225,191 @@ describe("upload + publish", () => {
       headers: { cookie },
     });
     expect(job.json().status).toBe("done");
+  });
+});
+
+describe("publish identity race", () => {
+  it("never publishes onto, or fails, a version row whose id was reused by a different row while compiling", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venue = await createVenue(app, cookie);
+
+    // Insert the *only* version row directly (bypassing the upload route)
+    // so the versions table starts and ends this setup with exactly one
+    // row — SQLite then deterministically reuses its rowid for the next
+    // insert once it (and its venue) are deleted.
+    const sourceA = await buildMinimalImdfZip();
+    const { hash: sourceHashA } = app.blobs.put(sourceA);
+    app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHashA, sourceA.byteLength);
+    const insertA = app.db
+      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
+      .run(venue.id, sourceHashA);
+    const versionId = Number(insertA.lastInsertRowid);
+
+    // A deferred compile we control: resolves only once we say so, well
+    // after the row has been deleted and replaced below.
+    let resolveCompile!: (result: { bundle: Buffer; stats: ImdfStats; warnings: ViewerWarning[] }) => void;
+    const deferred = new Promise<{ bundle: Buffer; stats: ImdfStats; warnings: ViewerWarning[] }>((resolve) => {
+      resolveCompile = resolve;
+    });
+    const compile = async (_source: Buffer, _metadata: CompileVenueMetadata) => deferred;
+
+    const runner = makePublishRunner(app.db, app.blobs, compile);
+    const publishPromise = runner(JSON.stringify({ versionId }));
+
+    // While the compile above is still pending: delete the venue (cascades
+    // to delete its only version row) and create a brand new venue +
+    // version. SQLite reuses the freed rowid since the table is empty
+    // again, so the replacement deterministically gets the same id.
+    app.db.prepare("DELETE FROM venues WHERE id = ?").run(venue.id);
+    const venue2 = await createVenue(app, cookie, "Replacement Venue");
+    const sourceB = await buildMinimalImdfZip({ extraEntries: { "note.txt": "replacement" } });
+    const { hash: sourceHashB } = app.blobs.put(sourceB);
+    app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHashB, sourceB.byteLength);
+    const insertB = app.db
+      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
+      .run(venue2.id, sourceHashB);
+    const replacementId = Number(insertB.lastInsertRowid);
+    expect(replacementId).toBe(versionId); // confirms the rowid was actually reused
+
+    const replacementBefore = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
+      .get(replacementId);
+
+    // Now let the stale compile (against the *deleted* row's source)
+    // resolve successfully.
+    resolveCompile({
+      bundle: Buffer.from([0x4b, 0x56, 0x42, 0x00, 0xde, 0xad]),
+      stats: { levels: 3, features: 27 },
+      warnings: [],
+    });
+
+    let caught: unknown;
+    try {
+      await publishPromise;
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const structured = JSON.parse((caught as Error).message) as { code: string; message: string };
+    expect(structured.code).toBe("stale_version");
+
+    // The replacement row (same reused id, different venue/seq/source) is
+    // completely untouched: not published with the stale compile's bundle,
+    // and not marked failed either.
+    const replacementAfter = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
+      .get(replacementId);
+    expect(replacementAfter).toEqual(replacementBefore);
+    expect((replacementAfter as { sourceHash: string }).sourceHash).toBe(sourceHashB);
+  });
+});
+
+describe("publish failure paths", () => {
+  it("marks the version failed with a structured error when the retained source blob cannot be read", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venue = await createVenue(app, cookie);
+
+    // A source hash the version row references but that was never
+    // persisted via `blobs.put` — simulates a missing/corrupted blob.
+    const missingHash = "0".repeat(64);
+    const insert = app.db
+      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
+      .run(venue.id, missingHash);
+    const versionId = Number(insert.lastInsertRowid);
+
+    const runner = makePublishRunner(app.db, app.blobs);
+    await expect(runner(JSON.stringify({ versionId }))).rejects.toThrow();
+
+    const row = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
+      .get(versionId) as { status: string; bundleHash: string | null; sourceHash: string; error: string | null };
+    expect(row.status).toBe("failed");
+    expect(row.bundleHash).toBeNull();
+    expect(row.sourceHash).toBe(missingHash);
+    const structured = JSON.parse(row.error ?? "null") as { code: string; message: string };
+    expect(structured.code).toBe("internal_error");
+    expect(structured.message).toBeTruthy();
+  });
+
+  it("marks the version failed with a structured error when persisting the compiled bundle blob fails, preserving the source", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venue = await createVenue(app, cookie);
+
+    const realPut = app.blobs.put.bind(app.blobs);
+    const putSpy = vi.spyOn(app.blobs, "put");
+    // First call is the upload route storing the source blob — let it
+    // succeed; only the *second* call (publish persisting the compiled
+    // bundle) simulates the disk-full failure.
+    putSpy.mockImplementationOnce((bytes) => realPut(bytes));
+    putSpy.mockImplementation(() => {
+      throw new Error("simulated disk full");
+    });
+    const { payload, headers } = multipartZip(await buildMinimalImdfZip());
+    const upload = await app.inject({
+      method: "POST",
+      url: `/api/venues/${venue.id}/versions`,
+      headers: { ...headers, cookie },
+      payload,
+    });
+    const { versionId, jobId } = upload.json();
+    await app.queue.idle();
+    putSpy.mockRestore();
+
+    const job = await app.inject({ method: "GET", url: `/api/jobs/${jobId}`, headers: { cookie } });
+    expect(job.json().status).toBe("error");
+    const jobError = JSON.parse(job.json().error) as { code: string; message: string };
+    expect(jobError.code).toBe("internal_error");
+    expect(jobError.message).toContain("simulated disk full");
+
+    const row = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash FROM versions WHERE id = ?")
+      .get(versionId) as { status: string; bundleHash: string | null; sourceHash: string };
+    expect(row.status).toBe("failed");
+    expect(row.bundleHash).toBeNull();
+    expect(app.blobs.has(row.sourceHash)).toBe(true);
+  });
+
+  it("marks the version failed when the published-state SQLite write fails, and the failure write itself still commits", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venue = await createVenue(app, cookie);
+
+    // Fires only on the transition to status='published' — the later
+    // failure-marking UPDATE sets status='failed' instead, so it is
+    // unaffected and must still commit.
+    app.db.exec(`
+      CREATE TRIGGER fail_on_publish_transition
+      BEFORE UPDATE OF status ON versions
+      WHEN NEW.status = 'published'
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated publish commit failure');
+      END;
+    `);
+
+    const { payload, headers } = multipartZip(await buildMinimalImdfZip());
+    const upload = await app.inject({
+      method: "POST",
+      url: `/api/venues/${venue.id}/versions`,
+      headers: { ...headers, cookie },
+      payload,
+    });
+    const { versionId, jobId } = upload.json();
+    await app.queue.idle();
+
+    const job = await app.inject({ method: "GET", url: `/api/jobs/${jobId}`, headers: { cookie } });
+    expect(job.json().status).toBe("error");
+    const jobError = JSON.parse(job.json().error) as { code: string; message: string };
+    expect(jobError.code).toBe("internal_error");
+    expect(jobError.message).toContain("simulated publish commit failure");
+
+    const row = app.db
+      .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash FROM versions WHERE id = ?")
+      .get(versionId) as { status: string; bundleHash: string | null; sourceHash: string };
+    expect(row.status).toBe("failed");
+    expect(row.bundleHash).toBeNull();
+    expect(app.blobs.has(row.sourceHash)).toBe(true);
   });
 });
