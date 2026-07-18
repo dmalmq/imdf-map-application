@@ -182,7 +182,7 @@ Tier 1 map display → Tier 2 store info + search → Tier 3 on-device routing �
 - **Rust core:** strict-import, geometry, canonicalization, KVB integrity/determinism, native/WASM binding, and golden-file round-trip tests. Native inspection verifies source and bundle anchors without compiling on request.
 - **Conformance vectors:** the minimal IMDF fixture and committed KVB golden prove byte-identical native compilation and equivalent TypeScript local-ZIP projection.
 - **Server:** repository/service/API tests against real SQLite files cover source-identity pinning, permanent public version IDs, transactionality, mutation permissions/idempotency/concurrency, bounded SSE streams, and stale publish-job isolation.
-- **Web app:** Vitest covers provenance admission, monotonic revision synchronization, Markdown safety, issue state, map pins/camera, auth recovery, and accessibility. Playwright exercises the live publish/bundle/review lifecycle in Chromium and Firefox and proves embed/local/source provenance starts zero issue requests.
+- **Web app:** Vitest covers provenance admission, monotonic revision synchronization, Markdown safety, issue state, map pins/camera, auth recovery, and accessibility. Playwright exercises the live publish/bundle/review lifecycle in Chromium and Firefox, proves anonymous and authenticated contexts converge by SSE-triggered canonical refetch, verifies version changes and delete/recreate cycles cannot reuse review identity, and proves embed/local/source provenance starts zero issue requests.
 
 ## 8. Phasing
 

@@ -268,14 +268,20 @@ test.describe("version-pinned review issues", () => {
       expect(deletion.status(), await deletion.text()).toBe(204);
       originalDeleted = true;
       await waitForIssueStreamClose(page, old.publicVersionId);
-      await reconnect404;
+      const reconnectResponse = await reconnect404;
+      const reconnectBody = (await reconnectResponse.json()) as { error?: string };
+      expect(reconnectBody.error).toBe("not_found");
 
       const oldCollection = await page.request.get(collectionPath(old.publicVersionId));
-      expect(oldCollection.status(), await oldCollection.text()).toBe(404);
+      const oldCollectionBody = (await oldCollection.json()) as { error?: string };
+      expect(oldCollection.status(), JSON.stringify(oldCollectionBody)).toBe(404);
+      expect(oldCollectionBody.error).toBe("not_found");
       const oldMutation = await page.request.patch(`/api/issues/${oldIssue.id}`, {
         data: { type: "status", status: "closed", expectedVersion: oldIssue.rowVersion },
       });
-      expect(oldMutation.status(), await oldMutation.text()).toBe(404);
+      const oldMutationBody = (await oldMutation.json()) as { error?: string };
+      expect(oldMutation.status(), JSON.stringify(oldMutationBody)).toBe(404);
+      expect(oldMutationBody.error).toBe("not_found");
 
       const replacement = await publishVenue(page.request, name);
       replacementVenueId = replacement.venueId;
