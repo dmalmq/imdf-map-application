@@ -8,6 +8,13 @@
  * Phase Two Task 4: WASM decode adapter (browser side).
  */
 import init, { decodeBundle as decodeBundleWasm } from "@kiriko/wasm";
+// Vite emits a hashed, origin-relative asset path (e.g.
+// `/assets/kiriko_wasm_bg-[hash].wasm`) for this `?url` import. Resolving
+// it explicitly here — instead of letting `@kiriko/wasm`'s generated glue
+// re-resolve `kiriko_wasm_bg.wasm` against its own `import.meta.url` — is
+// what makes instantiation work inside a Vite **inline** worker, where
+// `import.meta.url` is a `blob:` URL and `new URL(path, "blob:...")` throws.
+import wasmAssetUrl from "@kiriko/wasm/pkg/kiriko_wasm_bg.wasm?url";
 import type { readFile as ReadFileFn } from "node:fs/promises";
 
 export type BoundsTuple = [west: number, south: number, east: number, north: number];
@@ -74,12 +81,13 @@ export interface DecodeResponseDto {
 let initPromise: Promise<void> | null = null;
 
 /**
- * In a real browser, `init()`'s default `fetch(new URL(..., import.meta.url))`
- * resolves against the page origin and works unmodified (see the Vite
- * config's `optimizeDeps.exclude` entry for `@kiriko/wasm`, which keeps
- * that URL intact). Under Vitest/Node there is no HTTP origin to fetch
- * from — Node's `fetch` does not support `file:` URLs — so the module
- * bytes are read from disk and instantiated directly instead.
+ * In a real browser, the WASM asset URL is resolved explicitly (see
+ * `resolveWasmUrl`) and passed to `init()`, because `@kiriko/wasm`'s
+ * generated glue would otherwise resolve `kiriko_wasm_bg.wasm` against its
+ * own `import.meta.url` — which is a `blob:` URL inside a Vite inline
+ * worker, where `new URL(path, blobUrl)` throws. Under Vitest/Node there is
+ * no HTTP origin to fetch from — Node's `fetch` does not support `file:`
+ * URLs — so the module bytes are read from disk and instantiated directly.
  */
 async function initFromDisk(): Promise<void> {
   // `node:fs/promises` only exists under Node.js and must never enter the
@@ -95,16 +103,29 @@ async function initFromDisk(): Promise<void> {
 function isNodeRuntime(): boolean {
   return typeof process !== "undefined" && process.versions?.node != null;
 }
+/**
+ * Resolves the imported WASM asset path to an absolute URL the generated
+ * `@kiriko/wasm` glue can `fetch`. Vite's `?url` import is always emitted
+ * as a root-relative path (`/assets/kiriko_wasm_bg-[hash].wasm`) or an
+ * already-absolute URL, so resolving it against the page origin is correct
+ * in both normal modules and Vite **inline** workers. (An inline worker's
+ * `import.meta.url` is a `blob:` URL, against which `new URL(path, blobUrl)`
+ * throws `TypeError: Invalid URL`; the worker still inherits its creator
+ * origin through `globalThis.location`.)
+ */
+function resolveWasmUrl(): URL {
+  return new URL(wasmAssetUrl, globalThis.location.origin);
+}
 
 /**
  * Instantiates the Kiriko WASM decoder module. Idempotent: every caller
  * (including every worker instance, and every test) can call this
  * unconditionally; the underlying WASM module is only instantiated once.
  * The same function works under both a real browser (Vite) and Vitest/Node
- * — see `initFromDisk`.
+ * — see `initFromDisk` / `resolveWasmUrl`.
  */
 export async function initKirikoWasm(): Promise<void> {
-  initPromise ??= isNodeRuntime() ? initFromDisk() : init().then(() => undefined);
+  initPromise ??= isNodeRuntime() ? initFromDisk() : init({ module_or_path: resolveWasmUrl() }).then(() => undefined);
   await initPromise;
 }
 
