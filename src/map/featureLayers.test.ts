@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { LineLayerSpecification } from "maplibre-gl";
+import type { CircleLayerSpecification, LineLayerSpecification } from "maplibre-gl";
 import { themes } from "../theme/presets";
 import {
   applyThemePaintProperties,
   buildFeatureLayers,
   CLICKABLE_LAYER_IDS,
   LAYER_ISSUE_HIGHLIGHT_OUTLINE,
+  LAYER_ISSUE_HIGHLIGHT_POINT,
   LAYER_SELECTED_OUTLINE,
   LAYER_NONPUBLIC_FILL,
   LAYER_NONPUBLIC_OUTLINE,
@@ -151,6 +152,28 @@ describe("issue highlight outline", () => {
     const selected = findLayer(LAYER_SELECTED_OUTLINE) as LineLayerSpecification;
     expect(layer.paint?.["line-color"]).not.toBe(selected.paint?.["line-color"]);
     expect(JSON.stringify(selected.paint?.["line-opacity"])).not.toContain("issueHighlight");
+  });
+
+  it("gates a point-highlight circle on the issueHighlight feature-state for Point features", () => {
+    const layer = findLayer(LAYER_ISSUE_HIGHLIGHT_POINT) as CircleLayerSpecification;
+    expect(layer.type).toBe("circle");
+    expect(layer.paint?.["circle-stroke-opacity"]).toEqual([
+      "case",
+      ["boolean", ["feature-state", "issueHighlight"], false],
+      1,
+      0,
+    ]);
+    expect(layer.paint?.["circle-stroke-color"]).toBe(theme.colors.warning);
+    // Independent of map selection: the circle never keys off the selected state.
+    expect(JSON.stringify(layer.paint?.["circle-stroke-opacity"])).not.toContain("selected");
+  });
+
+  it("repaints the point highlight color on theme switch", () => {
+    const calls: [string, string, unknown][] = [];
+    applyThemePaintProperties((layerId, name, value) => {
+      calls.push([layerId, name, value]);
+    }, theme);
+    expect(calls).toContainEqual([LAYER_ISSUE_HIGHLIGHT_POINT, "circle-stroke-color", theme.colors.warning]);
   });
 
   it("repaints the issue highlight color on theme switch", () => {
