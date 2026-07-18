@@ -29,6 +29,8 @@ describe("decodeBundle", () => {
 
     expect(response.ok).toBe(true);
     const venue = response.venue!;
+    expect(venue.datasetId).toBe("minimal");
+    expect(venue.version).toBe(1);
     expect(venue.venueId).toBe("a1000001-0000-4000-8000-000000000001");
     expect(venue.levels.map((l) => l.ordinal)).toEqual([1, 0, -1]);
     expect(venue.features).toHaveLength(27);

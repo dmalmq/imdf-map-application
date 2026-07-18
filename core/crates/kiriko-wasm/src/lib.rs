@@ -73,10 +73,13 @@ struct StatsDto {
 
 /// Decoded venue payload. `bounds_by_level` is `[levelId, bounds][]`, where
 /// `bounds` is `[west, south, east, north]` (matches the browser's existing
-/// `BoundsTuple`).
+/// `BoundsTuple`). `dataset_id`/`version` are the bundle's own publish
+/// identity (`BundleMetadata`), not part of the IMDF content itself.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DecodedVenueDto {
+    dataset_id: String,
+    version: u32,
     venue_id: String,
     manifest: ManifestDto,
     levels: Vec<LevelDto>,
@@ -168,6 +171,8 @@ fn bounds_tuple(bounds: &Bounds) -> (f64, f64, f64, f64) {
 
 fn document_dto(document: BundleDocument) -> DecodedVenueDto {
     DecodedVenueDto {
+        dataset_id: document.metadata.dataset_id,
+        version: document.metadata.version,
         venue_id: document.venue_id,
         manifest: manifest_dto(&document.manifest),
         levels: document.levels.iter().map(level_dto).collect(),

@@ -47,6 +47,8 @@ export interface DecodedWarningDto {
 }
 
 export interface DecodedVenueDto {
+  datasetId: string;
+  version: number;
   venueId: string;
   manifest: DecodedManifestDto;
   levels: DecodedLevelDto[];
