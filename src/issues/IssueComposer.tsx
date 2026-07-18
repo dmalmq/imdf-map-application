@@ -137,6 +137,7 @@ export function IssueComposer({
         placeholder={ui.bodyPlaceholder[locale]}
         rows={5}
         value={draft.bodyMarkdown}
+        disabled={pending}
         onChange={(event) => {
           onUpdateDraft({ bodyMarkdown: event.target.value });
         }}
@@ -151,6 +152,7 @@ export function IssueComposer({
           <select
             aria-label={ui.assignee[locale]}
             value={draft.assigneeId ?? ""}
+            disabled={pending}
             onChange={(event) => {
               onUpdateDraft({
                 assigneeId: event.target.value === "" ? null : Number(event.target.value),
@@ -176,6 +178,7 @@ export function IssueComposer({
             type="date"
             aria-label={ui.dueDate[locale]}
             value={draft.dueDate ?? ""}
+            disabled={pending}
             onChange={(event) => {
               onUpdateDraft({ dueDate: event.target.value === "" ? null : event.target.value });
             }}
@@ -200,6 +203,7 @@ export function IssueComposer({
           <button
             type="button"
             className="btn-ghost"
+            disabled={pending}
             onClick={() => {
               const { featureId: _featureId, ...anchor } = draft.anchor;
               onUpdateDraft({ anchor });

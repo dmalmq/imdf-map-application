@@ -50,3 +50,15 @@ RED-first for each; whole `src/issues` now 189/189, typecheck clean.
 6. `formatDueDate` builds in leap-year 2000 then `setFullYear`, so years 0000–0099 avoid the legacy Date 1900 offset; low-year cases tested.
 7. Every Markdown editor (composer, root edit, reply edit, reply box) shares `MarkdownEditorFeedback`: localized hint, `N/4000` count, `role="alert"` validation reason, and an empty-state note explaining a disabled Save/Post.
 8. An expired session auto-calls `onRequestSignIn` once per `authRequired` episode (explicit button retained; no repeat modal); signing back in returns focus to the retained composer textarea.
+
+## Gate fixes (third pass — five blockers)
+
+RED-first for each; whole `src/issues` now 198/198, typecheck clean.
+
+1. Post-submit edits are no longer discarded. `ReplyComposer` disables its textarea + action while its serialized mutation is in flight and keeps the submitted body; the inline `BodyEditor` has a submitted→inflight→admission phase — locked (textarea + Save disabled) from save until the canonical body+version admits the exact edit, and unlocked with the draft unchanged on failure; the root composer's `pending` now includes `draftAdmissionResourceId !== null`, disabling textarea/assignee/due/feature controls through canonical admission (re-enabled on failure).
+2. A `ReplyComposer` `idempotency_conflict` renders an explicit localized "Post as new reply" action; only that click generates a fresh local UUID and resubmits the retained text — no silent rotation. Retryable/other failures keep the same UUID + text.
+3. Reply local text/UUID survive `currentUser` becoming null: the composer stays mounted across the signed-out branch (textarea shown whenever it holds text or the account is known) and refocuses on null→actor recovery. **Task 12 integration invariant (must enforce):** exact props cannot signal same-actor reauth, so the App's auth-recovery `onRequestSignIn` MUST set `currentUser` to null before opening the modal; successful sign-in then re-installs the actor as a null→actor transition, which is what drives reply/composer refocus.
+4. Terminal vs retryable mutation copy is branched: `issue_deleted` = permanently deleted / no retry; `forbidden` (403) = denied / no retry; `idempotency_conflict` = cancel or restart; `stale_issue` and network/other keep review-and-retry copy. All ja/en.
+5. `formatDueDate` adds a localized short era only for Gregorian year 0 (1 BC), which otherwise formats identically to year 1; exact en/ja assertions added ("Jan 1, 1 BC" / 「紀元前1年1月1日」 vs "Jan 1, 1" / 「1年1月1日」).
+
+No server contract changed; no App/map/rail/CSS files touched.

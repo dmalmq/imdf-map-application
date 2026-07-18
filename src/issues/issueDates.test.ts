@@ -121,6 +121,14 @@ describe("formatDueDate", () => {
     expect(formatDueDate("0001-01-01", "ja")).toBe("1年1月1日");
     expect(formatDueDate("0004-02-29", "en")).toBe("Feb 29, 4");
   });
+
+  it("disambiguates Gregorian year 0000 from 0001 with a localized era", () => {
+    // Year 0 (1 BC) and year 1 (1 AD) both format as "1" without an era.
+    expect(formatDueDate("0000-01-01", "en")).toBe("Jan 1, 1 BC");
+    expect(formatDueDate("0000-01-01", "ja")).toBe("紀元前1年1月1日");
+    expect(formatDueDate("0001-01-01", "en")).toBe("Jan 1, 1");
+    expect(formatDueDate("0001-01-01", "ja")).toBe("1年1月1日");
+  });
 });
 
 describe("formatIssueInstant", () => {

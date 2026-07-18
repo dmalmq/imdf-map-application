@@ -41,6 +41,14 @@ const ui = {
     ja: "このリクエストは別の内容で送信済みです。入力内容は保持されています。キャンセルして新しく作成し直してください。",
     en: "This request was already submitted with different content. Your input is kept — cancel and start again to post it.",
   },
+  deletedTerminal: {
+    ja: "この課題は完全に削除されました。",
+    en: "This issue was permanently deleted.",
+  },
+  forbidden: {
+    ja: "この操作を行う権限がありません。",
+    en: "You don't have permission to do that.",
+  },
   mutationFailed: {
     ja: "変更を保存できませんでした。入力内容は保持されています。もう一度お試しください。",
     en: "The change couldn't be saved. Your input is safe — try again.",
@@ -127,6 +135,9 @@ export function IssuesPanel({
   const collectionFailed = state.errorScope === "collection" && state.error !== null;
   const mutationFailed = state.errorScope === "mutation" && state.error !== null;
   const pending = state.pendingMutations > 0;
+  const composerPending = pending || state.draftAdmissionResourceId !== null;
+  const forbidden =
+    state.error !== null && state.error.kind === "api" && state.error.error === "forbidden";
 
   let body: ReactNode;
   if (state.draft !== null) {
@@ -136,7 +147,7 @@ export function IssuesPanel({
         draft={state.draft}
         currentUser={currentUser}
         reviewers={reviewers}
-        pending={pending}
+        pending={composerPending}
         onUpdateDraft={controller.ui.updateDraft}
         onSubmit={(input) => {
           void controller.commands.createIssue(input);
@@ -155,6 +166,7 @@ export function IssuesPanel({
         reviewers={reviewers}
         pending={pending}
         mutationFailed={mutationFailed || state.conflict !== null || state.authRequired}
+        idempotencyConflict={state.conflict?.error === "idempotency_conflict"}
         onBack={() => {
           controller.ui.selectIssue(null);
         }}
@@ -285,15 +297,15 @@ export function IssuesPanel({
 
       {state.conflict !== null ? (
         <p className="issues-panel__line" role="alert">
-          {state.conflict.error === "idempotency_conflict"
-            ? ui.idempotencyConflict[locale]
-            : ui.conflict[locale]}
+          {state.conflict.error === "issue_deleted"
+            ? ui.deletedTerminal[locale]
+            : state.conflict.error === "idempotency_conflict"
+              ? ui.idempotencyConflict[locale]
+              : ui.conflict[locale]}
         </p>
-      ) : null}
-
-      {mutationFailed && state.conflict === null && !state.authRequired ? (
+      ) : mutationFailed && !state.authRequired ? (
         <p className="issues-panel__line" role="alert">
-          {ui.mutationFailed[locale]}
+          {forbidden ? ui.forbidden[locale] : ui.mutationFailed[locale]}
         </p>
       ) : null}
 

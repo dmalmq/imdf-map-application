@@ -51,6 +51,7 @@ const ui = {
   clearDueDate: { ja: "期限をクリア", en: "Clear due date" },
   replies: { ja: "返信", en: "Replies" },
   reply: { ja: "返信", en: "Reply" },
+  postAsNewReply: { ja: "新しい返信として投稿", en: "Post as new reply" },
   replyPlaceholder: { ja: "返信を入力…", en: "Write a reply…" },
   signInToReply: { ja: "返信するにはサインイン", en: "Sign in to reply" },
   edited: { ja: "編集済み", en: "Edited" },
@@ -64,11 +65,13 @@ export interface IssueDetailProps {
   /** True while any mutation is in flight; submit controls disable. */
   pending: boolean;
   /**
-   * True when the most recent mutation outcome failed (mutation-scope error,
-   * conflict, or expired session). Mutations are UI-serialized, so together
-   * with `pending` this identifies the submitted command's own outcome.
+   * True when the latest mutation outcome failed (mutation-scope error,
+   * conflict, or expired session). Mutations are UI-serialized, so with
+   * `pending` this identifies the submitted command's own outcome.
    */
   mutationFailed: boolean;
+  /** True when the latest conflict is an idempotency-key collision. */
+  idempotencyConflict: boolean;
   onBack: () => void;
   onRequestSignIn: () => void;
   onPatchIssue: (patch: IssuePatch) => void;
@@ -89,6 +92,8 @@ interface BodyEditorProps {
   locale: LocaleCode;
   label: string;
   initial: string;
+  /** Locked from save through canonical admission; unlocked on failure. */
+  locked: boolean;
   pending: boolean;
   onSave: (normalized: string) => void;
   onCancel: () => void;
@@ -96,10 +101,11 @@ interface BodyEditorProps {
 
 /**
  * Inline body editor. Saving never closes the editor by itself — the owner
- * closes it when the canonical projection admits the edit, so text survives
- * network failures and stale-issue conflicts.
+ * closes it only when the canonical projection admits the exact edit, and
+ * keeps it locked meanwhile so an in-flight edit is never discarded. On
+ * failure the owner unlocks it with the submitted text intact.
  */
-function BodyEditor({ locale, label, initial, pending, onSave, onCancel }: BodyEditorProps) {
+function BodyEditor({ locale, label, initial, locked, pending, onSave, onCancel }: BodyEditorProps) {
   const [text, setText] = useState(initial);
   const normalized = normalizeIssueMarkdown(text);
   const check = checkIssueBody(normalized);
@@ -110,6 +116,7 @@ function BodyEditor({ locale, label, initial, pending, onSave, onCancel }: BodyE
         aria-label={label}
         rows={4}
         value={text}
+        disabled={locked}
         onChange={(event) => {
           setText(event.target.value);
         }}
@@ -122,7 +129,7 @@ function BodyEditor({ locale, label, initial, pending, onSave, onCancel }: BodyE
         <button
           type="button"
           className="btn-primary"
-          disabled={pending || check.problem !== null}
+          disabled={locked || pending || check.problem !== null}
           onClick={() => {
             onSave(normalized);
           }}
@@ -136,23 +143,40 @@ function BodyEditor({ locale, label, initial, pending, onSave, onCancel }: BodyE
 
 interface ReplyComposerProps {
   locale: LocaleCode;
+  signedIn: boolean;
   pending: boolean;
   mutationFailed: boolean;
+  idempotencyConflict: boolean;
   onSubmit: (input: CreateReplyInput) => void;
+  onRequestSignIn: () => void;
 }
 
 /**
- * Reply box. The request ID is allocated once per composed reply and reused
- * across failed retries so the server-side idempotency key stays stable.
- * Mutations are UI-serialized, so this submission's own outcome is observed
- * through the pending flag: when the in-flight mutation settles without a
- * failure, the box clears and the ID rotates; any failure keeps both. Remote
- * revisions and refetches never touch the composed text.
+ * Reply box. Kept mounted across a signed-out gap so its text and request ID
+ * survive a mid-reply session loss; focus returns to it when the account
+ * comes back (the App clears currentUser to null before the sign-in modal, so
+ * recovery is a null→actor transition). The request ID is allocated once and
+ * reused across failed retries; mutations are UI-serialized, so this box's own
+ * outcome clears and rotates it only on success. An idempotency collision
+ * offers an explicit "Post as new reply" that rotates the ID and resends the
+ * retained text — never a silent rotation.
  */
-function ReplyComposer({ locale, pending, mutationFailed, onSubmit }: ReplyComposerProps) {
+function ReplyComposer({
+  locale,
+  signedIn,
+  pending,
+  mutationFailed,
+  idempotencyConflict,
+  onSubmit,
+  onRequestSignIn,
+}: ReplyComposerProps) {
   const [text, setText] = useState("");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  const [inFlight, setInFlight] = useState(false);
+  const [restart, setRestart] = useState(false);
   const phaseRef = useRef<"idle" | "submitted" | "inflight">("idle");
+  const submittedBodyRef = useRef("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (phaseRef.current === "submitted" && pending) {
@@ -161,40 +185,89 @@ function ReplyComposer({ locale, pending, mutationFailed, onSubmit }: ReplyCompo
     }
     if (phaseRef.current === "inflight" && !pending) {
       phaseRef.current = "idle";
+      setInFlight(false);
       if (!mutationFailed) {
         setText("");
         setRequestId(crypto.randomUUID());
+        setRestart(false);
+      } else {
+        setText(submittedBodyRef.current);
+        if (idempotencyConflict) {
+          setRestart(true);
+        }
       }
     }
-  }, [pending, mutationFailed]);
+  }, [pending, mutationFailed, idempotencyConflict]);
+
+  const wasSignedOutRef = useRef(!signedIn);
+  useEffect(() => {
+    if (wasSignedOutRef.current && signedIn) {
+      textareaRef.current?.focus();
+    }
+    wasSignedOutRef.current = !signedIn;
+  }, [signedIn]);
 
   const normalized = normalizeIssueMarkdown(text);
   const check = checkIssueBody(normalized);
+  const showTextarea = signedIn || text !== "";
+
+  const submit = (id: string) => {
+    submittedBodyRef.current = normalized;
+    phaseRef.current = "submitted";
+    setInFlight(true);
+    setRestart(false);
+    onSubmit({ requestId: id, bodyMarkdown: normalized });
+  };
+
   return (
     <div className="issue-reply-composer">
-      <textarea
-        className="issue-reply-composer__input"
-        aria-label={ui.reply[locale]}
-        placeholder={ui.replyPlaceholder[locale]}
-        rows={3}
-        value={text}
-        onChange={(event) => {
-          setText(event.target.value);
-        }}
-      />
-      <MarkdownEditorFeedback locale={locale} check={check} />
+      {showTextarea ? (
+        <>
+          <textarea
+            ref={textareaRef}
+            className="issue-reply-composer__input"
+            aria-label={ui.reply[locale]}
+            placeholder={ui.replyPlaceholder[locale]}
+            rows={3}
+            value={text}
+            disabled={inFlight}
+            onChange={(event) => {
+              setText(event.target.value);
+            }}
+          />
+          <MarkdownEditorFeedback locale={locale} check={check} />
+        </>
+      ) : null}
       <div className="issue-reply-composer__actions">
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={pending || check.problem !== null}
-          onClick={() => {
-            phaseRef.current = "submitted";
-            onSubmit({ requestId, bodyMarkdown: normalized });
-          }}
-        >
-          {ui.reply[locale]}
-        </button>
+        {!signedIn ? (
+          <button type="button" className="btn-ghost" onClick={onRequestSignIn}>
+            {ui.signInToReply[locale]}
+          </button>
+        ) : restart ? (
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={pending || check.problem !== null}
+            onClick={() => {
+              const id = crypto.randomUUID();
+              setRequestId(id);
+              submit(id);
+            }}
+          >
+            {ui.postAsNewReply[locale]}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={inFlight || pending || check.problem !== null}
+            onClick={() => {
+              submit(requestId);
+            }}
+          >
+            {ui.reply[locale]}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -206,6 +279,7 @@ interface ReplyRowProps {
   currentUser: IssueActor | null;
   pending: boolean;
   editing: boolean;
+  locked: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSaveEdit: (normalized: string) => void;
@@ -218,6 +292,7 @@ function ReplyRow({
   currentUser,
   pending,
   editing,
+  locked,
   onStartEdit,
   onCancelEdit,
   onSaveEdit,
@@ -241,6 +316,7 @@ function ReplyRow({
           locale={locale}
           label={ui.editReplyBody[locale]}
           initial={reply.bodyMarkdown ?? ""}
+          locked={locked}
           pending={pending}
           onSave={onSaveEdit}
           onCancel={onCancelEdit}
@@ -288,6 +364,7 @@ export function IssueDetail({
   reviewers,
   pending,
   mutationFailed,
+  idempotencyConflict,
   onBack,
   onRequestSignIn,
   onPatchIssue,
@@ -297,18 +374,42 @@ export function IssueDetail({
   onDeleteReply,
 }: IssueDetailProps) {
   const [editing, setEditing] = useState<Editing>(null);
-  // The body edit submitted from the currently open editor. The editor closes
-  // only when the canonical projection carries this exact body at a newer row
-  // version (admission) or on explicit cancel — never on failure.
-  const submittedEditRef = useRef<SubmittedEdit | null>(null);
+  // The body edit submitted from the open editor. Together with `editFailed`
+  // it drives the editor lock: locked from save until the canonical
+  // projection carries this exact body at a newer row version (admission), or
+  // until this submission fails (unlock, text intact).
+  const [submittedEdit, setSubmittedEdit] = useState<SubmittedEdit | null>(null);
+  const [editFailed, setEditFailed] = useState(false);
+  const editPhaseRef = useRef<"idle" | "submitted" | "inflight">("idle");
 
+  const closeEditor = () => {
+    setEditing(null);
+    setSubmittedEdit(null);
+    setEditFailed(false);
+    editPhaseRef.current = "idle";
+  };
+
+  const openEditor = (target: Exclude<Editing, null>) => {
+    setEditing(target);
+    setSubmittedEdit(null);
+    setEditFailed(false);
+    editPhaseRef.current = "idle";
+  };
+
+  const beginSubmit = (edit: SubmittedEdit) => {
+    setSubmittedEdit(edit);
+    setEditFailed(false);
+    editPhaseRef.current = "submitted";
+  };
+
+  // Admission: close the editor once the canonical projection carries the
+  // submitted body at a newer row version.
   useEffect(() => {
-    const submitted = submittedEditRef.current;
-    if (submitted === null || editing === null) {
+    if (submittedEdit === null || editing === null) {
       return;
     }
-    let canonicalBody: string | null = null;
-    let canonicalVersion = 0;
+    let canonicalBody: string | null;
+    let canonicalVersion: number;
     if (editing.kind === "root") {
       canonicalBody = issue.bodyMarkdown;
       canonicalVersion = issue.rowVersion;
@@ -320,14 +421,27 @@ export function IssueDetail({
       canonicalBody = reply.bodyMarkdown;
       canonicalVersion = reply.rowVersion;
     }
-    if (
-      canonicalVersion > submitted.expectedVersion
-      && canonicalBody === submitted.bodyMarkdown
-    ) {
-      submittedEditRef.current = null;
-      setEditing(null);
+    if (canonicalVersion > submittedEdit.expectedVersion && canonicalBody === submittedEdit.bodyMarkdown) {
+      closeEditor();
     }
-  }, [issue, editing]);
+  }, [issue, editing, submittedEdit]);
+
+  // Outcome: this submission's failure unlocks the editor (text intact);
+  // success keeps it locked until admission closes it.
+  useEffect(() => {
+    if (editPhaseRef.current === "submitted" && pending) {
+      editPhaseRef.current = "inflight";
+      return;
+    }
+    if (editPhaseRef.current === "inflight" && !pending) {
+      editPhaseRef.current = "idle";
+      if (mutationFailed) {
+        setEditFailed(true);
+      }
+    }
+  }, [pending, mutationFailed]);
+
+  const editorLocked = submittedEdit !== null && !editFailed;
 
   const live = issue.deletedAt === null;
   const isAuthor = currentUser !== null && currentUser.id === issue.author.id;
@@ -335,11 +449,6 @@ export function IssueDetail({
     currentUser !== null && (currentUser.role === "member" || currentUser.role === "admin");
   const canEditRoot = live && isAuthor;
   const canDeleteRoot = live && (isAuthor || currentUser?.role === "admin");
-
-  const closeEditor = () => {
-    submittedEditRef.current = null;
-    setEditing(null);
-  };
 
   const assigneeOptions: ReviewerSummary[] = [];
   {
@@ -371,12 +480,10 @@ export function IssueDetail({
           locale={locale}
           label={ui.editIssueBody[locale]}
           initial={issue.bodyMarkdown ?? ""}
+          locked={editorLocked}
           pending={pending}
           onSave={(normalized) => {
-            submittedEditRef.current = {
-              bodyMarkdown: normalized,
-              expectedVersion: issue.rowVersion,
-            };
+            beginSubmit({ bodyMarkdown: normalized, expectedVersion: issue.rowVersion });
             onPatchIssue({
               type: "body",
               bodyMarkdown: normalized,
@@ -400,7 +507,7 @@ export function IssueDetail({
               type="button"
               className="btn-ghost"
               onClick={() => {
-                setEditing({ kind: "root" });
+                openEditor({ kind: "root" });
               }}
             >
               {ui.editIssue[locale]}
@@ -598,15 +705,13 @@ export function IssueDetail({
                 currentUser={currentUser}
                 pending={pending}
                 editing={editing?.kind === "reply" && editing.replyId === reply.id}
+                locked={editorLocked}
                 onStartEdit={() => {
-                  setEditing({ kind: "reply", replyId: reply.id });
+                  openEditor({ kind: "reply", replyId: reply.id });
                 }}
                 onCancelEdit={closeEditor}
                 onSaveEdit={(normalized) => {
-                  submittedEditRef.current = {
-                    bodyMarkdown: normalized,
-                    expectedVersion: reply.rowVersion,
-                  };
+                  beginSubmit({ bodyMarkdown: normalized, expectedVersion: reply.rowVersion });
                   onPatchReply(reply.id, {
                     type: "body",
                     bodyMarkdown: normalized,
@@ -619,18 +724,15 @@ export function IssueDetail({
           </ul>
         ) : null}
         {live ? (
-          currentUser !== null ? (
-            <ReplyComposer
-              locale={locale}
-              pending={pending}
-              mutationFailed={mutationFailed}
-              onSubmit={onCreateReply}
-            />
-          ) : (
-            <button type="button" className="btn-ghost" onClick={onRequestSignIn}>
-              {ui.signInToReply[locale]}
-            </button>
-          )
+          <ReplyComposer
+            locale={locale}
+            signedIn={currentUser !== null}
+            pending={pending}
+            mutationFailed={mutationFailed}
+            idempotencyConflict={idempotencyConflict}
+            onSubmit={onCreateReply}
+            onRequestSignIn={onRequestSignIn}
+          />
         ) : null}
       </section>
     </div>

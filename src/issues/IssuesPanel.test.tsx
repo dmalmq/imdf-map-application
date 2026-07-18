@@ -1423,3 +1423,163 @@ describe("automatic sign-in flow", () => {
     expect(textarea.value).toBe("Preserved");
   });
 });
+
+describe("in-flight submission locks", () => {
+  it("locks the reply box while its own submission is in flight", async () => {
+    const user = userEvent.setup();
+    const harness = renderDetail(makeIssue({ id: "i1", pinNumber: 1, authorId: 2 }), VIEWER);
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply" }), {
+      target: { value: "In flight" },
+    });
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    expect((screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByRole("button", { name: "Reply" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    void harness;
+  });
+
+  it("locks the root editor until admission and unlocks unchanged on failure", async () => {
+    const user = userEvent.setup();
+    const issue = makeIssue({ id: "i1", pinNumber: 1, authorId: 1, rowVersion: 8, body: "Before" });
+    const harness = renderDetail(issue, VIEWER);
+
+    await user.click(screen.getByRole("button", { name: "Edit issue" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit issue body" }), {
+      target: { value: "After" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    harness.update({ pendingMutations: 1 });
+    expect(
+      (screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+
+    harness.update({
+      pendingMutations: 0,
+      error: { kind: "network", message: "offline" },
+      errorScope: "mutation",
+    });
+    const editor = screen.getByRole("textbox", { name: "Edit issue body" }) as HTMLTextAreaElement;
+    expect(editor.disabled).toBe(false);
+    expect(editor.value).toBe("After");
+  });
+
+  it("disables the composer inputs from post through canonical admission", () => {
+    const harness = renderPanel({
+      currentUser: MEMBER,
+      state: {
+        collection: collection(1, []),
+        appliedRevision: 1,
+        draft: makeDraft({ bodyMarkdown: "Body" }),
+      },
+    });
+    harness.update({ pendingMutations: 0, draftAdmissionResourceId: "new-1" });
+    expect(
+      (screen.getByRole("textbox", { name: "Issue body" }) as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("combobox", { name: "Assignee" }) as HTMLSelectElement).disabled,
+    ).toBe(true);
+    expect((screen.getByLabelText("Due date") as HTMLInputElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Post issue" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    harness.update({
+      pendingMutations: 0,
+      draftAdmissionResourceId: null,
+      error: { kind: "network", message: "offline" },
+      errorScope: "mutation",
+    });
+    expect(
+      (screen.getByRole("textbox", { name: "Issue body" }) as HTMLTextAreaElement).disabled,
+    ).toBe(false);
+  });
+});
+
+describe("reply idempotency restart", () => {
+  it("offers Post as new reply after an idempotency conflict and rotates only then", async () => {
+    const user = userEvent.setup();
+    const harness = renderDetail(makeIssue({ id: "i1", pinNumber: 1, authorId: 2 }), VIEWER);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply" }), {
+      target: { value: "Same text" },
+    });
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    harness.update({ pendingMutations: 1 });
+    harness.update({
+      pendingMutations: 0,
+      error: { kind: "api", status: 409, error: "idempotency_conflict", message: "conflict" },
+      conflict: { kind: "api", status: 409, error: "idempotency_conflict", message: "conflict" },
+    });
+
+    expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Post as new reply" }));
+    expect(harness.commands.createReply).toHaveBeenCalledTimes(2);
+    const first = harness.commands.createReply.mock.calls[0] as [string, { requestId: string; bodyMarkdown: string }];
+    const second = harness.commands.createReply.mock.calls[1] as [string, { requestId: string; bodyMarkdown: string }];
+    expect(second[1].requestId).not.toBe(first[1].requestId);
+    expect(second[1].bodyMarkdown).toBe("Same text");
+    expect(UUID_V4.test(second[1].requestId)).toBe(true);
+  });
+});
+
+describe("reply survives a signed-out gap", () => {
+  it("preserves reply text across null and refocuses on the account's return", () => {
+    const harness = renderDetail(makeIssue({ id: "i1", pinNumber: 1, authorId: 2 }), VIEWER);
+    fireEvent.change(screen.getByRole("textbox", { name: "Reply" }), {
+      target: { value: "Draft reply" },
+    });
+
+    harness.setUser(null);
+    expect((screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement).value).toBe(
+      "Draft reply",
+    );
+    expect(screen.getByRole("button", { name: "Sign in to reply" })).toBeTruthy();
+
+    harness.setUser(VIEWER);
+    const box = screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement;
+    expect(box.value).toBe("Draft reply");
+    expect(document.activeElement).toBe(box);
+  });
+});
+
+describe("terminal mutation copy", () => {
+  it("marks a deleted issue permanently gone with no retry", () => {
+    renderDetail(makeIssue({ id: "i1", pinNumber: 1, authorId: 1 }), VIEWER, {
+      error: { kind: "api", status: 409, error: "issue_deleted", message: "gone" },
+      conflict: { kind: "api", status: 409, error: "issue_deleted", message: "gone" },
+    });
+    expect(screen.getByText("This issue was permanently deleted.")).toBeTruthy();
+    expect(
+      screen.queryByText(
+        "This issue changed while you were working. Your input is safe — review it and try again.",
+      ),
+    ).toBeNull();
+  });
+
+  it("explains a forbidden action with no retry", () => {
+    renderDetail(makeIssue({ id: "i1", pinNumber: 1, authorId: 1 }), VIEWER, {
+      error: { kind: "api", status: 403, error: "forbidden", message: "no" },
+      errorScope: "mutation",
+    });
+    expect(screen.getByText("You don't have permission to do that.")).toBeTruthy();
+    expect(
+      screen.queryByText("The change couldn't be saved. Your input is safe — try again."),
+    ).toBeNull();
+  });
+
+  it("keeps the review-and-retry copy for a stale conflict", () => {
+    renderDetail(makeIssue({ id: "i1", pinNumber: 1, authorId: 1 }), VIEWER, {
+      error: { kind: "api", status: 409, error: "stale_issue", message: "stale" },
+      conflict: { kind: "api", status: 409, error: "stale_issue", message: "stale" },
+    });
+    expect(
+      screen.getByText(
+        "This issue changed while you were working. Your input is safe — review it and try again.",
+      ),
+    ).toBeTruthy();
+  });
+});

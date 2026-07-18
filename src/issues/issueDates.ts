@@ -99,6 +99,9 @@ export function formatDueDate(dueDate: string, locale: LocaleCode): string {
     year: "numeric",
     month: "short",
     day: "numeric",
+    // Gregorian year 0 is 1 BC and, without an era, formats identically to
+    // year 1 (1 AD). Show the localized era only at that boundary.
+    ...(components.year === 0 ? { era: "short" as const } : {}),
   }).format(date);
 }
 
