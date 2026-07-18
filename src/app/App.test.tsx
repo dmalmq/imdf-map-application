@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
+import type * as ReactModule from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IndoorMapProps } from "../map/IndoorMap";
 import type * as FetchImdfArchiveModule from "../imdf/fetchImdfArchive";
@@ -12,6 +13,35 @@ import type {
   ViewerWarning,
 } from "../imdf/types";
 import { VenueLoadError, venueLoadErrorCopy } from "../errors/VenueLoadError";
+import type { KirikoBundleLoadResult } from "../bundle/loadKirikoBundle";
+
+const { provenanceUpdates } = vi.hoisted(() => ({
+  provenanceUpdates: [] as Array<Record<string, unknown> | null>,
+}));
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactModule>();
+  const useState = ((initialState: unknown) => {
+    const [state, setState] = actual.useState(initialState);
+    return [
+      state,
+      (value: unknown) => {
+        if (
+          value === null ||
+          (typeof value === "object" &&
+            value !== null &&
+            "datasetId" in value &&
+            "version" in value &&
+            "publicVersionId" in value)
+        ) {
+          provenanceUpdates.push(value as Record<string, unknown> | null);
+        }
+        setState(value);
+      },
+    ];
+  }) as typeof actual.useState;
+  return { ...actual, useState };
+});
 
 const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
@@ -136,6 +166,27 @@ function buildMinimalVenue(overrides?: Partial<LoadedVenue>): LoadedVenue {
   };
 }
 
+const PUBLIC_VERSION_ID = "a".repeat(64);
+
+function bundleLoadResult(
+  venue = buildMinimalVenue(),
+  publicVersionId: string | null = PUBLIC_VERSION_ID,
+): KirikoBundleLoadResult {
+  return {
+    venue,
+    metadata: { datasetId: "default/tokyo-station", version: 7 },
+    publicVersionId,
+  };
+}
+
+function expectedProvenance(publicVersionId: string | null = PUBLIC_VERSION_ID) {
+  return {
+    datasetId: "default/tokyo-station",
+    version: 7,
+    publicVersionId,
+  };
+}
+
 const loadImdfArchiveMock = vi.fn();
 
 vi.mock("../imdf/loadImdfArchive", () => ({
@@ -211,6 +262,7 @@ describe("App", () => {
     loadImdfArchiveMock.mockReset();
     loadKirikoBundleMock.mockReset();
     fetchImdfFileMock.mockReset();
+    provenanceUpdates.length = 0;
   });
 
   afterEach(() => {
@@ -268,6 +320,7 @@ describe("App", () => {
     expect(loadImdfArchiveMock).toHaveBeenCalledWith(expect.any(File), expect.any(AbortSignal));
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
     expect(loadKirikoBundleMock).not.toHaveBeenCalled();
+    expect(provenanceUpdates).toEqual([null]);
   });
   it("routes dropped ZIP files only through the local archive loader", async () => {
     loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
@@ -284,6 +337,7 @@ describe("App", () => {
     });
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
     expect(loadKirikoBundleMock).not.toHaveBeenCalled();
+    expect(provenanceUpdates).toEqual([null]);
   });
 
   it("shows venueLoadErrorCopy in role=alert and keeps the previous venue when replacement fails", async () => {
@@ -436,15 +490,19 @@ describe("App deep links", () => {
     loadImdfArchiveMock.mockReset();
     fetchImdfFileMock.mockReset();
     loadKirikoBundleMock.mockReset();
+    provenanceUpdates.length = 0;
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
     window.history.replaceState(null, "", "/");
   });
 
-  it("routes dataset deep links only through the bundle loader and preserves viewer params", async () => {
-    loadKirikoBundleMock.mockResolvedValue(buildMinimalVenue());
+  it("admits a dataset envelope with permanent identity and preserves viewer params in embed mode", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    loadKirikoBundleMock.mockResolvedValue(bundleLoadResult());
     window.history.replaceState(
       null,
       "",
@@ -463,10 +521,26 @@ describe("App deep links", () => {
     expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
     expect(loadImdfArchiveMock).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(provenanceUpdates).toEqual([expectedProvenance()]);
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-locale")).toBe("en");
     expect(container.querySelector(".context-bar")).toBeNull();
     expect(container.querySelector(".icon-rail")).toBeNull();
+  });
+
+  it("admits a dataset venue when its permanent identity is missing", async () => {
+    loadKirikoBundleMock.mockResolvedValue(bundleLoadResult(buildMinimalVenue(), null));
+    window.history.replaceState(null, "", "/?dataset=tokyo-station");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("テスト駅")).toBeTruthy();
+    });
+    expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(provenanceUpdates).toEqual([expectedProvenance(null)]);
   });
 
   it("retries a failed dataset through the same bundle provenance only", async () => {
@@ -478,7 +552,8 @@ describe("App deep links", () => {
     render(<App />);
 
     await screen.findByRole("alert");
-    loadKirikoBundleMock.mockResolvedValueOnce(buildMinimalVenue());
+    expect(provenanceUpdates).toEqual([]);
+    loadKirikoBundleMock.mockResolvedValueOnce(bundleLoadResult());
     await user.click(screen.getByRole("button", { name: "再試行" }));
 
     await waitFor(() => {
@@ -497,11 +572,12 @@ describe("App deep links", () => {
     );
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
     expect(loadImdfArchiveMock).not.toHaveBeenCalled();
+    expect(provenanceUpdates).toEqual([expectedProvenance()]);
   });
 
   it("retries a failed local replacement without switching back to dataset provenance", async () => {
     const user = userEvent.setup();
-    loadKirikoBundleMock.mockResolvedValueOnce(buildMinimalVenue());
+    loadKirikoBundleMock.mockResolvedValueOnce(bundleLoadResult());
     window.history.replaceState(null, "", "/?dataset=tokyo-station");
     render(<App />);
     await waitFor(() => {
@@ -514,6 +590,7 @@ describe("App deep links", () => {
     await uploadViaHiddenInput(zipFile("replacement.zip"));
     await screen.findByRole("alert");
     expect(screen.getByText("テスト駅")).toBeTruthy();
+    expect(provenanceUpdates).toEqual([expectedProvenance()]);
 
     const replacementVenue = buildMinimalVenue({
       venue: {
@@ -530,14 +607,41 @@ describe("App deep links", () => {
     expect(loadImdfArchiveMock).toHaveBeenCalledTimes(2);
     expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
+    expect(provenanceUpdates).toEqual([expectedProvenance(), null]);
   });
 
-  it("aborts a dataset attempt and ignores its stale result when a local ZIP replaces it", async () => {
-    let resolveDataset: ((venue: LoadedVenue) => void) | undefined;
+  it("clears dataset provenance only after a successful local replacement", async () => {
+    loadKirikoBundleMock.mockResolvedValueOnce(bundleLoadResult());
+    window.history.replaceState(null, "", "/?dataset=tokyo-station");
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("テスト駅")).toBeTruthy();
+    });
+    expect(provenanceUpdates).toEqual([expectedProvenance()]);
+
+    const localVenue = buildMinimalVenue({
+      venue: {
+        ...VENUE_FEATURE,
+        labels: { ja: "ローカル会場", en: "Local Venue" },
+      },
+    });
+    loadImdfArchiveMock.mockResolvedValueOnce(localVenue);
+    await uploadViaHiddenInput(zipFile("local.zip"));
+
+    await waitFor(() => {
+      expect(screen.getByText("ローカル会場")).toBeTruthy();
+    });
+    expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
+    expect(loadImdfArchiveMock).toHaveBeenCalledTimes(1);
+    expect(provenanceUpdates).toEqual([expectedProvenance(), null]);
+  });
+
+  it("aborts a dataset attempt and suppresses its stale venue and provenance", async () => {
+    let resolveDataset: ((result: KirikoBundleLoadResult) => void) | undefined;
     let datasetSignal: AbortSignal | undefined;
     loadKirikoBundleMock.mockImplementation(
       (_src: string, signal: AbortSignal) =>
-        new Promise<LoadedVenue>((resolve) => {
+        new Promise<KirikoBundleLoadResult>((resolve) => {
           datasetSignal = signal;
           resolveDataset = resolve;
         }),
@@ -560,15 +664,17 @@ describe("App deep links", () => {
     await waitFor(() => {
       expect(screen.getByText("ローカル会場")).toBeTruthy();
     });
+    expect(provenanceUpdates).toEqual([null]);
     expect(datasetSignal?.aborted).toBe(true);
-    resolveDataset?.(buildMinimalVenue());
+    resolveDataset?.(bundleLoadResult());
     await waitFor(() => {
       expect(screen.queryByText("テスト駅")).toBeNull();
       expect(screen.getByText("ローカル会場")).toBeTruthy();
     });
+    expect(provenanceUpdates).toEqual([null]);
   });
 
-  it("embed deep link hides chrome, auto-loads src, and selects the requested level", async () => {
+  it("gives src precedence over dataset, clears provenance, and preserves embed viewer params", async () => {
     const venue = buildMinimalVenue();
     fetchImdfFileMock.mockResolvedValue(zipFile("minimal.zip"));
     loadImdfArchiveMock.mockResolvedValue(venue);
@@ -587,6 +693,7 @@ describe("App deep links", () => {
     expect(fetchImdfFileMock).toHaveBeenCalledWith("/venues/minimal.zip", expect.any(AbortSignal));
     expect(loadKirikoBundleMock).not.toHaveBeenCalled();
     expect(loadImdfArchiveMock).toHaveBeenCalledWith(expect.any(File), expect.any(AbortSignal));
+    expect(provenanceUpdates).toEqual([null]);
     // Deep-linked level 2f (short_name 2F) instead of the default ordinal-0 1F.
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
     expect(screen.getByRole("button", { name: "2F" }).getAttribute("aria-pressed")).toBe("true");

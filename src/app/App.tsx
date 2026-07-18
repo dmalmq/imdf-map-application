@@ -136,9 +136,20 @@ function liveMessage(state: ViewerState): string {
       return ui.empty[locale];
   }
 }
+type BundleProvenance = {
+  datasetId: string;
+  version: number;
+  publicVersionId: string | null;
+};
+
+type ViewerLoadResult = {
+  venue: LoadedVenue;
+  provenance: BundleProvenance | null;
+};
+
 interface LoadAttempt {
   fileName: string;
-  loadVenue: (signal: AbortSignal) => Promise<LoadedVenue>;
+  loadVenue: (signal: AbortSignal) => Promise<ViewerLoadResult>;
   requestedLevel?: string;
 }
 
@@ -167,6 +178,7 @@ export function App() {
   const [mapControls, setMapControls] = useState<IndoorMapControls | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [, setBundleProvenance] = useState<BundleProvenance | null>(null);
 
   const locale = state.locale;
   const venueState = activeVenue(state);
@@ -230,7 +242,7 @@ export function App() {
   const runLoad = useCallback(
     (
       fileName: string,
-      loadVenue: (signal: AbortSignal) => Promise<LoadedVenue>,
+      loadVenue: (signal: AbortSignal) => Promise<ViewerLoadResult>,
       requestedLevel?: string,
     ) => {
       retryAttemptRef.current = {
@@ -247,15 +259,16 @@ export function App() {
       dispatch({ type: "load_started", fileName });
 
       void loadVenue(controller.signal)
-        .then((venue) => {
+        .then((result) => {
           if (token !== attemptTokenRef.current) {
             return;
           }
           retryAttemptRef.current = null;
+          setBundleProvenance(result.provenance);
           dispatch({
             type: "load_succeeded",
             fileName,
-            venue,
+            venue: result.venue,
             ...(requestedLevel !== undefined ? { requestedLevel } : {}),
           });
         })
@@ -279,7 +292,10 @@ export function App() {
 
   const handleFile = useCallback(
     (file: File) => {
-      runLoad(file.name, (signal) => loadImdfArchive(file, signal));
+      runLoad(file.name, async (signal) => ({
+        venue: await loadImdfArchive(file, signal),
+        provenance: null,
+      }));
     },
     [runLoad],
   );
@@ -300,7 +316,10 @@ export function App() {
         fileNameFromSrc(src),
         async (signal) => {
           const file = await fetchImdfFile(src, signal);
-          return loadImdfArchive(file, signal);
+          return {
+            venue: await loadImdfArchive(file, signal),
+            provenance: null,
+          };
         },
         requestedLevel,
       );
@@ -309,7 +328,20 @@ export function App() {
     if (params.dataset !== null) {
       const dataset = params.dataset;
       const bundleUrl = datasetBundleUrl(dataset);
-      runLoad(dataset, (signal) => loadKirikoBundle(bundleUrl, signal), requestedLevel);
+      runLoad(
+        dataset,
+        async (signal) => {
+          const result = await loadKirikoBundle(bundleUrl, signal);
+          return {
+            venue: result.venue,
+            provenance: {
+              ...result.metadata,
+              publicVersionId: result.publicVersionId,
+            },
+          };
+        },
+        requestedLevel,
+      );
     }
   }, [runLoad, params]);
 

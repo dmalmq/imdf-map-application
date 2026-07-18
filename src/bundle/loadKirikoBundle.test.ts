@@ -63,10 +63,15 @@ import { loadKirikoBundle } from "./loadKirikoBundle";
 
 const SRC = "/v/default/minimal/bundle";
 
-function okResponse(buffer: ArrayBuffer): Response {
+function okResponse(buffer: ArrayBuffer, publicVersionId?: string): Response {
+  const headers = new Headers();
+  if (publicVersionId !== undefined) {
+    headers.set("Kiriko-Version-Id", publicVersionId);
+  }
   return {
     ok: true,
     status: 200,
+    headers,
     arrayBuffer: vi.fn().mockResolvedValue(buffer),
   } as unknown as Response;
 }
@@ -80,9 +85,16 @@ afterEach(() => {
 });
 
 describe("loadKirikoBundle", () => {
-  it("fetches, spawns exactly one worker, and transfers the buffer without cloning", async () => {
+  it("returns hydrated venue, decoded metadata, and a valid public version identity", async () => {
     const buffer = new TextEncoder().encode("kvb1-fixture").buffer;
-    const fetchMock = vi.fn().mockResolvedValue(okResponse(buffer));
+    const publicVersionId = "a".repeat(64);
+    const response = okResponse(buffer, publicVersionId);
+    const arrayBuffer = vi.mocked(response.arrayBuffer);
+    arrayBuffer.mockImplementationOnce(async () => {
+      response.headers.set("Kiriko-Version-Id", "B".repeat(64));
+      return buffer;
+    });
+    const fetchMock = vi.fn().mockResolvedValue(response);
     vi.stubGlobal("fetch", fetchMock);
 
     const promise = loadKirikoBundle(SRC);
@@ -96,14 +108,47 @@ describe("loadKirikoBundle", () => {
     expect(message).toEqual({ type: "decode", buffer });
     expect(transfer).toEqual([buffer]);
 
-    const dto = { venueId: "v1" };
+    const dto = { venueId: "v1", datasetId: "default/minimal", version: 1 };
     const hydrated = { venue: { id: "v1" } };
     hydrateVenueMock.mockReturnValueOnce(hydrated);
     worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: dto } }));
 
-    await expect(promise).resolves.toBe(hydrated);
+    await expect(promise).resolves.toEqual({
+      venue: hydrated,
+      metadata: { datasetId: "default/minimal", version: 1 },
+      publicVersionId,
+    });
     expect(hydrateVenueMock).toHaveBeenCalledWith(dto);
     expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["uppercase", "A".repeat(64)],
+    ["short", "a".repeat(63)],
+    ["non-hex", `${"a".repeat(63)}g`],
+  ])("loads the venue but returns null identity for a %s header", async (_label, header) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4), header)));
+    const hydrated = { venue: { id: "v1" } };
+    hydrateVenueMock.mockReturnValueOnce(hydrated);
+
+    const promise = loadKirikoBundle(SRC);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    createdWorkers[0]!.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          type: "loaded",
+          venue: { venueId: "v1", datasetId: "default/minimal", version: 1 },
+        },
+      }),
+    );
+
+    await expect(promise).resolves.toEqual({
+      venue: hydrated,
+      metadata: { datasetId: "default/minimal", version: 1 },
+      publicVersionId: null,
+    });
+    expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);
   });
 
   it("creates a new worker for each call", async () => {
@@ -266,6 +311,7 @@ describe("loadKirikoBundle", () => {
     const response = {
       ok: true,
       status: 200,
+      headers: new Headers(),
       arrayBuffer: vi.fn().mockRejectedValue(new TypeError("body stream error")),
     } as unknown as Response;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
@@ -281,6 +327,7 @@ describe("loadKirikoBundle", () => {
     const response = {
       ok: true,
       status: 200,
+      headers: new Headers(),
       arrayBuffer: vi.fn().mockRejectedValue(abort),
     } as unknown as Response;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
@@ -447,8 +494,19 @@ describe("loadKirikoBundle", () => {
     const promise = loadKirikoBundle(SRC);
     await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
     const worker = createdWorkers[0]!;
-    worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: {} } }));
-    await expect(promise).resolves.toBe(hydrated);
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          type: "loaded",
+          venue: { datasetId: "default/minimal", version: 1 },
+        },
+      }),
+    );
+    await expect(promise).resolves.toEqual({
+      venue: hydrated,
+      metadata: { datasetId: "default/minimal", version: 1 },
+      publicVersionId: null,
+    });
     expect(worker.terminate).toHaveBeenCalledTimes(1);
 
     worker.dispatchEvent(new Event("error"));
@@ -523,7 +581,10 @@ describe("loadKirikoBundle", () => {
     const buffer2 = new ArrayBuffer(4);
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValueOnce(okResponse(buffer1)).mockResolvedValueOnce(okResponse(buffer2)),
+      vi
+        .fn()
+        .mockResolvedValueOnce(okResponse(buffer1, "1".repeat(64)))
+        .mockResolvedValueOnce(okResponse(buffer2, "2".repeat(64))),
     );
 
     const first = loadKirikoBundle(SRC);
@@ -532,15 +593,27 @@ describe("loadKirikoBundle", () => {
 
     hydrateVenueMock.mockReturnValueOnce({ n: 1 }).mockReturnValueOnce({ n: 2 });
     createdWorkers[0]!.dispatchEvent(
-      new MessageEvent("message", { data: { type: "loaded", venue: {} } }),
+      new MessageEvent("message", {
+        data: { type: "loaded", venue: { datasetId: "default/one", version: 1 } },
+      }),
     );
     createdWorkers[1]!.dispatchEvent(
-      new MessageEvent("message", { data: { type: "loaded", venue: {} } }),
+      new MessageEvent("message", {
+        data: { type: "loaded", venue: { datasetId: "default/two", version: 2 } },
+      }),
     );
 
     const [r1, r2] = await Promise.all([first, second]);
-    expect(r1).toEqual({ n: 1 });
-    expect(r2).toEqual({ n: 2 });
+    expect(r1).toEqual({
+      venue: { n: 1 },
+      metadata: { datasetId: "default/one", version: 1 },
+      publicVersionId: "1".repeat(64),
+    });
+    expect(r2).toEqual({
+      venue: { n: 2 },
+      metadata: { datasetId: "default/two", version: 2 },
+      publicVersionId: "2".repeat(64),
+    });
     expect(createdWorkers[0]).not.toBe(createdWorkers[1]);
     expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);
     expect(createdWorkers[1]!.terminate).toHaveBeenCalledTimes(1);
