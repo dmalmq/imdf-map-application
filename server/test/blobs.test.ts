@@ -21,4 +21,14 @@ describe("BlobStore", () => {
     expect(store.read(a.hash).toString()).toBe("kiriko");
     expect(store.path(a.hash)).toContain(join("blobs", "sha256", a.hash.slice(0, 2), a.hash));
   });
+
+  it("reads exact bytes asynchronously and propagates missing-file errors", async () => {
+    dir = mkdtempSync(join(tmpdir(), "kiriko-blob-"));
+    const store = new BlobStore(dir);
+    const bytes = Buffer.from([0, 1, 2, 255]);
+    const stored = store.put(bytes);
+
+    await expect(store.readAsync(stored.hash)).resolves.toEqual(bytes);
+    await expect(store.readAsync("0".repeat(64))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
