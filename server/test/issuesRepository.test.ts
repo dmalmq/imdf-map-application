@@ -762,25 +762,37 @@ describe("IssueRepository cascades (contract 11)", () => {
 
 describe("IssueRepository timestamps (contract 12)", () => {
   it("stores exact application toISOString values under TZ=Asia/Tokyo", () => {
-    expect(process.env.TZ).toBe("Asia/Tokyo");
-    const now = new Date().toISOString();
-    const root = ok(repo.createRoot(rootCommand({ now })));
-    expect(
-      db
-        .prepare("SELECT created_at AS c, updated_at AS u, deleted_at AS d FROM comments WHERE id = ?")
-        .get(root.resourceId),
-    ).toEqual({ c: now, u: now, d: null });
+    const previousTimeZone = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+    try {
+      expect(process.env.TZ).toBe("Asia/Tokyo");
+      const createdAt = new Date().toISOString();
+      const updatedAt = new Date("2026-07-18T00:00:02.222Z").toISOString();
+      const deletedAt = new Date("2026-07-18T00:00:03.333Z").toISOString();
+      const root = ok(repo.createRoot(rootCommand({ now: createdAt })));
+      expect(
+        db
+          .prepare("SELECT created_at AS c, updated_at AS u, deleted_at AS d FROM comments WHERE id = ?")
+          .get(root.resourceId),
+      ).toEqual({ c: createdAt, u: createdAt, d: null });
 
-    ok(repo.patchIssue({
-      issueId: root.resourceId,
-      patch: { type: "body", bodyMarkdown: "Edited", expectedVersion: 1 },
-      now: T2,
-    }));
-    ok(repo.deleteIssue({ issueId: root.resourceId, expectedVersion: 2, now: T3 }));
-    expect(
-      db
-        .prepare("SELECT created_at AS c, updated_at AS u, deleted_at AS d FROM comments WHERE id = ?")
-        .get(root.resourceId),
-    ).toEqual({ c: now, u: T3, d: T3 });
+      ok(repo.patchIssue({
+        issueId: root.resourceId,
+        patch: { type: "body", bodyMarkdown: "Edited", expectedVersion: 1 },
+        now: updatedAt,
+      }));
+      ok(repo.deleteIssue({ issueId: root.resourceId, expectedVersion: 2, now: deletedAt }));
+      expect(
+        db
+          .prepare("SELECT created_at AS c, updated_at AS u, deleted_at AS d FROM comments WHERE id = ?")
+          .get(root.resourceId),
+      ).toEqual({ c: createdAt, u: deletedAt, d: deletedAt });
+    } finally {
+      if (previousTimeZone === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = previousTimeZone;
+      }
+    }
   });
 });
