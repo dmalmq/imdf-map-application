@@ -10,6 +10,24 @@ const { createdWorkers, FakeBundleWorker, postMessageBehavior } = vi.hoisted(() 
       }
     });
     terminate = vi.fn();
+    addEventListener = vi.fn(
+      (
+        type: string,
+        listener: EventListenerOrEventListenerObject | null,
+        options?: boolean | AddEventListenerOptions,
+      ) => {
+        EventTarget.prototype.addEventListener.call(this, type, listener, options);
+      },
+    );
+    removeEventListener = vi.fn(
+      (
+        type: string,
+        listener: EventListenerOrEventListenerObject | null,
+        options?: boolean | EventListenerOptions,
+      ) => {
+        EventTarget.prototype.removeEventListener.call(this, type, listener, options);
+      },
+    );
   }
   const created: BaseFakeBundleWorker[] = [];
   class TrackedFakeBundleWorker extends BaseFakeBundleWorker {
@@ -366,6 +384,9 @@ describe("loadKirikoBundle", () => {
     ["null", null],
     ["an array", ["oops"]],
     ["a scalar", "oops"],
+    ["a Map instance", new Map([["a", 1]])],
+    ["a Set instance", new Set(["a"])],
+    ["a Date instance", new Date(0)],
   ] as const)(
     "treats a failed message with %s details as malformed, not a reconstructed VenueLoadError",
     async (_label, details) => {
@@ -453,5 +474,86 @@ describe("loadKirikoBundle", () => {
     expect(createdWorkers[0]).not.toBe(createdWorkers[1]);
     expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);
     expect(createdWorkers[1]!.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes every worker listener and the abort listener after a successful resolution", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    const controller = new AbortController();
+    const addSignalSpy = vi.spyOn(controller.signal, "addEventListener");
+    const removeSignalSpy = vi.spyOn(controller.signal, "removeEventListener");
+    hydrateVenueMock.mockReturnValueOnce({ n: "ok" });
+
+    const promise = loadKirikoBundle(SRC, controller.signal);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: {} } }));
+    await promise;
+
+    const addCalls = vi.mocked(worker.addEventListener).mock.calls;
+    const removeCalls = vi.mocked(worker.removeEventListener).mock.calls;
+    expect(addCalls.map((call) => call[0]).sort()).toEqual(["error", "message", "messageerror"]);
+    expect(removeCalls.map((call) => call[0]).sort()).toEqual(["error", "message", "messageerror"]);
+    for (const type of ["message", "error", "messageerror"]) {
+      const added = addCalls.find((call) => call[0] === type)?.[1];
+      const removed = removeCalls.find((call) => call[0] === type)?.[1];
+      expect(removed).toBe(added);
+    }
+
+    expect(addSignalSpy).toHaveBeenCalledTimes(1);
+    expect(addSignalSpy).toHaveBeenCalledWith("abort", expect.any(Function), { once: true });
+    expect(removeSignalSpy).toHaveBeenCalledTimes(1);
+    expect(removeSignalSpy.mock.calls[0]?.[1]).toBe(addSignalSpy.mock.calls[0]?.[1]);
+  });
+
+  it("removes every worker listener and the abort listener after a structured domain failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    const controller = new AbortController();
+    const addSignalSpy = vi.spyOn(controller.signal, "addEventListener");
+    const removeSignalSpy = vi.spyOn(controller.signal, "removeEventListener");
+
+    const promise = loadKirikoBundle(SRC, controller.signal);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "failed", error: { code: "invalid_bundle", message: "bad" } },
+      }),
+    );
+    await promise.catch(() => {});
+
+    const addCalls = vi.mocked(worker.addEventListener).mock.calls;
+    const removeCalls = vi.mocked(worker.removeEventListener).mock.calls;
+    expect(removeCalls.map((call) => call[0]).sort()).toEqual(["error", "message", "messageerror"]);
+    for (const type of ["message", "error", "messageerror"]) {
+      const added = addCalls.find((call) => call[0] === type)?.[1];
+      const removed = removeCalls.find((call) => call[0] === type)?.[1];
+      expect(removed).toBe(added);
+    }
+    expect(removeSignalSpy).toHaveBeenCalledTimes(1);
+    expect(removeSignalSpy.mock.calls[0]?.[1]).toBe(addSignalSpy.mock.calls[0]?.[1]);
+  });
+
+  it("removes every worker listener and the abort listener after an abort", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse(new ArrayBuffer(4))));
+    const controller = new AbortController();
+    const addSignalSpy = vi.spyOn(controller.signal, "addEventListener");
+    const removeSignalSpy = vi.spyOn(controller.signal, "removeEventListener");
+
+    const promise = loadKirikoBundle(SRC, controller.signal);
+    await vi.waitFor(() => expect(createdWorkers).toHaveLength(1));
+    const worker = createdWorkers[0]!;
+    controller.abort();
+    await promise.catch(() => {});
+
+    const addCalls = vi.mocked(worker.addEventListener).mock.calls;
+    const removeCalls = vi.mocked(worker.removeEventListener).mock.calls;
+    expect(removeCalls.map((call) => call[0]).sort()).toEqual(["error", "message", "messageerror"]);
+    for (const type of ["message", "error", "messageerror"]) {
+      const added = addCalls.find((call) => call[0] === type)?.[1];
+      const removed = removeCalls.find((call) => call[0] === type)?.[1];
+      expect(removed).toBe(added);
+    }
+    expect(removeSignalSpy).toHaveBeenCalledTimes(1);
+    expect(removeSignalSpy.mock.calls[0]?.[1]).toBe(addSignalSpy.mock.calls[0]?.[1]);
   });
 });

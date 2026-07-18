@@ -18,10 +18,26 @@ export interface BundleDecodeSuccess {
   venue: DecodedVenueDto;
 }
 
+/**
+ * The only `VenueLoadErrorCode` values a `bundle.worker.ts` failure response
+ * may legitimately carry: the four `kvb1` domain codes plus the shared
+ * runtime/protocol `worker_failed`. ZIP-only codes (`fetch_failed`,
+ * `invalid_archive`, …) can never inhabit this type — see
+ * `loadKirikoBundle.test.ts`'s compile-time assertions.
+ */
+export type BundleWorkerFailureCode = Extract<
+  VenueLoadErrorCode,
+  | "invalid_bundle"
+  | "unsupported_bundle_version"
+  | "bundle_integrity_failed"
+  | "bundle_too_large"
+  | "worker_failed"
+>;
+
 export interface BundleDecodeFailure {
   type: "failed";
   error: {
-    code: VenueLoadErrorCode;
+    code: BundleWorkerFailureCode;
     message: string;
     details?: Record<string, unknown>;
   };

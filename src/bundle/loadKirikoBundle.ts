@@ -1,8 +1,8 @@
-import { VenueLoadError, type VenueLoadErrorCode } from "../errors/VenueLoadError";
+import { VenueLoadError } from "../errors/VenueLoadError";
 import type { LoadedVenue } from "../imdf/types";
 import { hydrateVenue } from "./hydrateVenue";
 import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
-import type { BundleDecodeRequest, BundleWorkerResponse } from "./types";
+import type { BundleDecodeRequest, BundleWorkerFailureCode, BundleWorkerResponse } from "./types";
 import BundleWorker from "./bundle.worker?worker&inline";
 
 /**
@@ -19,13 +19,24 @@ const BUNDLE_WORKER_FAILURE_CODES: Record<string, true> = {
   worker_failed: true,
 };
 
-function isBundleWorkerFailureCode(value: unknown): value is VenueLoadErrorCode {
+function isBundleWorkerFailureCode(value: unknown): value is BundleWorkerFailureCode {
   return typeof value === "string" && BUNDLE_WORKER_FAILURE_CODES[value] === true;
 }
 
-/** `details`, when present, must be a non-null, non-array plain object. */
+/**
+ * `details`, when present, must be a plain object: not `null`, not an
+ * array, and not a `Map`/`Set`/`Date`/class instance (only a literal
+ * `{...}` or `Object.create(null)` prototype is accepted).
+ */
 function isValidErrorDetails(value: unknown): boolean {
-  return value === undefined || (value !== null && typeof value === "object" && !Array.isArray(value));
+  if (value === undefined) {
+    return true;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype: object | null = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function isWorkerResponse(value: unknown): value is BundleWorkerResponse {
@@ -55,7 +66,7 @@ function isWorkerResponse(value: unknown): value is BundleWorkerResponse {
 }
 
 function rebuildVenueLoadError(payload: {
-  code: VenueLoadErrorCode;
+  code: BundleWorkerFailureCode;
   message: string;
   details?: Record<string, unknown>;
 }): VenueLoadError {
