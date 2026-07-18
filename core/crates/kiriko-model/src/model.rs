@@ -89,7 +89,7 @@ impl FeatureType {
     /// Parse a collection name into a `FeatureType`. Returns `None` for any
     /// unrecognized value.
     #[must_use]
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "address" => Self::Address,
             "amenity" => Self::Amenity,
@@ -119,7 +119,7 @@ impl FeatureType {
 /// otherwise ignored.
 #[must_use]
 pub fn feature_type_for_filename(name: &str) -> Option<FeatureType> {
-    FeatureType::from_str(match name {
+    FeatureType::parse(match name {
         "address.geojson" => "address",
         "amenity.geojson" => "amenity",
         "anchor.geojson" => "anchor",

@@ -20,11 +20,11 @@
 #[macro_use]
 extern crate napi_derive;
 
-use kiriko_bundle::{compile_imdf as compile_bundle, BundleMetadata, CompileError, CompiledBundle};
+use kiriko_bundle::{BundleMetadata, CompileError, CompiledBundle, compile_imdf as compile_bundle};
 use kiriko_model::model::ViewerWarning;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// JS-facing discriminated compile result. `ok` selects which of the
 /// remaining fields are populated: success carries `bundle`, `statsJson`,
@@ -122,7 +122,11 @@ fn error_json(err: &CompileError) -> Value {
             obj.insert("code".to_string(), json!(e.code.as_str()));
             obj.insert("message".to_string(), json!(e.message));
             if !e.details.is_empty() {
-                let details: Map<String, Value> = e.details.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+                let details: Map<String, Value> = e
+                    .details
+                    .iter()
+                    .map(|(k, v)| (k.clone(), json!(v)))
+                    .collect();
                 obj.insert("details".to_string(), Value::Object(details));
             }
         }

@@ -38,7 +38,11 @@ fn imports_minimal_fixture_into_canonical_model() {
     assert_eq!(venue.levels.len(), 3);
 
     assert_eq!(venue.features.len(), 27, "fixture defines 27 features");
-    assert_eq!(venue.warnings.len(), 5, "fixture produces exactly five warnings");
+    assert_eq!(
+        venue.warnings.len(),
+        5,
+        "fixture produces exactly five warnings"
+    );
 
     // The canonical feature ordering: amenity precedes occupant precedes unit.
     let amenity_idx = feature_index(&venue.features, AMENITY_ID);
@@ -93,10 +97,7 @@ fn warnings_match_exact_codes_and_messages() {
         .iter()
         .map(|w| (w.code, w.feature_id.as_deref().unwrap_or("")))
         .collect();
-    let mut wanted: Vec<(WarningCode, &str)> = expected
-        .iter()
-        .map(|(c, f)| (*c, *f))
-        .collect();
+    let mut wanted: Vec<(WarningCode, &str)> = expected.iter().map(|(c, f)| (*c, *f)).collect();
     actual.sort();
     wanted.sort();
     assert_eq!(actual, wanted, "warning codes and feature ids must match");
@@ -123,15 +124,29 @@ fn source_properties_preserves_known_and_unknown_keys() {
     let props = &occupant.source_properties;
 
     // Known IMDF keys retained.
-    assert_eq!(props.get("category").and_then(|v| v.as_str()), Some("shopping"));
-    assert_eq!(props.get("anchor_id").and_then(|v| v.as_str()), Some(ANCHOR_ID));
-    assert_eq!(props.get("hours").and_then(|v| v.as_str()), Some("Mo-Fr 10:00-20:00"));
+    assert_eq!(
+        props.get("category").and_then(|v| v.as_str()),
+        Some("shopping")
+    );
+    assert_eq!(
+        props.get("anchor_id").and_then(|v| v.as_str()),
+        Some(ANCHOR_ID)
+    );
+    assert_eq!(
+        props.get("hours").and_then(|v| v.as_str()),
+        Some("Mo-Fr 10:00-20:00")
+    );
 
     // Nulls preserved as Null, not stripped.
     assert!(props.get("phone").map(|v| v.is_null()).unwrap_or(false));
     assert!(props.get("website").map(|v| v.is_null()).unwrap_or(false));
     assert!(props.get("validity").map(|v| v.is_null()).unwrap_or(false));
-    assert!(props.get("correlation_id").map(|v| v.is_null()).unwrap_or(false));
+    assert!(
+        props
+            .get("correlation_id")
+            .map(|v| v.is_null())
+            .unwrap_or(false)
+    );
 
     // Unknown keys (e.g. feature_type foreign member) preserved.
     assert_eq!(
@@ -161,7 +176,10 @@ fn bounds_by_level_covers_each_level() {
     }
 }
 
-fn warn(code: kiriko_model::model::WarningCode, feature_id: &str) -> (kiriko_model::model::WarningCode, &str) {
+fn warn(
+    code: kiriko_model::model::WarningCode,
+    feature_id: &str,
+) -> (kiriko_model::model::WarningCode, &str) {
     (code, feature_id)
 }
 
@@ -209,7 +227,11 @@ fn preserves_full_finite_ordinal_domain_and_orders_by_it() {
             .find(|l| l.id == id)
             .unwrap_or_else(|| panic!("level {id} must be present"))
     };
-    assert_eq!(by_id(FRACTIONAL_ID).ordinal, 2.5, "fractional ordinal preserved exactly");
+    assert_eq!(
+        by_id(FRACTIONAL_ID).ordinal,
+        2.5,
+        "fractional ordinal preserved exactly"
+    );
     assert_eq!(
         by_id(HIGH_ID).ordinal,
         3_000_000_000.0,
@@ -223,7 +245,11 @@ fn preserves_full_finite_ordinal_domain_and_orders_by_it() {
 
     // Descending sort uses the real values, not any truncated/coerced form.
     assert_eq!(
-        venue.levels.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
+        venue
+            .levels
+            .iter()
+            .map(|l| l.id.as_str())
+            .collect::<Vec<_>>(),
         vec![HIGH_ID, FRACTIONAL_ID, LOW_ID],
         "levels sorted descending by the full-precision ordinal"
     );

@@ -45,7 +45,6 @@ test.describe("gallery journey", () => {
     await waitForReadyVenue(page, VENUE_NAME_JA);
     page.off("request", onDatasetRequest);
     expect(datasetResourcePaths).toEqual([expectedBundlePath]);
-    expect(datasetResourcePaths.some((path) => path.endsWith("/archive"))).toBe(false);
 
     // Back to the gallery: the card shows stats from the publish pipeline.
     await page.goto("/");

@@ -63,11 +63,7 @@ impl ImportError {
         }
     }
 
-    pub(crate) fn with_detail(
-        mut self,
-        key: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn with_detail(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.details.push((key.into(), value.into()));
         self
     }
@@ -78,9 +74,7 @@ impl ImportError {
     #[must_use]
     pub fn corrective_copy(&self) -> &'static str {
         match self.code {
-            ImportErrorCode::UnsupportedFile => {
-                "Choose an Apple IMDF .zip archive."
-            }
+            ImportErrorCode::UnsupportedFile => "Choose an Apple IMDF .zip archive.",
             ImportErrorCode::ArchiveTooLarge => {
                 "This archive exceeds the prototype\u{2019}s 100 MiB compressed or 300 MiB uncompressed limit."
             }
@@ -90,9 +84,7 @@ impl ImportError {
             ImportErrorCode::InvalidArchive => {
                 "This ZIP is encrypted, damaged, or has conflicting archive records."
             }
-            ImportErrorCode::MissingRequiredFile => {
-                "This archive is missing a required IMDF file."
-            }
+            ImportErrorCode::MissingRequiredFile => "This archive is missing a required IMDF file.",
             ImportErrorCode::InvalidJson => "One of the IMDF files is not valid JSON.",
             ImportErrorCode::InvalidManifestVersion => {
                 "This viewer supports IMDF manifest version 1.0.0."

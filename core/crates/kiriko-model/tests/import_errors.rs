@@ -6,8 +6,8 @@
 
 mod support;
 
-use kiriko_model::import_imdf;
 use kiriko_model::ImportErrorCode;
+use kiriko_model::import_imdf;
 
 const VENUE_ID: &str = "a1000001-0000-4000-8000-000000000001";
 
@@ -115,9 +115,9 @@ fn rejects_unsafe_path_embedded_nul() {
 #[test]
 fn rejects_directory_entry() {
     // Build a fresh tiny ZIP that includes a directory entry.
+    use std::io::{Cursor, Write};
     use zip::write::SimpleFileOptions;
     use zip::{DateTime, ZipWriter};
-    use std::io::{Cursor, Write};
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default()
@@ -182,17 +182,21 @@ fn rejects_unsupported_manifest_version() {
 #[test]
 fn rejects_missing_manifest_language() {
     let bytes = support::ZipBuilder::new()
-        .replace(
-            "manifest.json",
-            br#"{"version":"1.0.0"}"#.to_vec(),
-        )
+        .replace("manifest.json", br#"{"version":"1.0.0"}"#.to_vec())
         .build();
     assert_eq!(reject(&bytes), ImportErrorCode::InvalidManifestVersion);
 }
 
 #[test]
 fn rejects_malformed_manifest_version_lookalikes() {
-    for version in ["1.0.00", "1.0.0evil", "1.0.0.", "1.0.0-", "1.0.0-", "1.0.0-rc-1"] {
+    for version in [
+        "1.0.00",
+        "1.0.0evil",
+        "1.0.0.",
+        "1.0.0-",
+        "1.0.0-",
+        "1.0.0-rc-1",
+    ] {
         let body = format!(r#"{{"version":"{version}","language":"ja-JP"}}"#);
         let bytes = support::ZipBuilder::new()
             .replace("manifest.json", body.into_bytes())
@@ -220,13 +224,19 @@ fn accepts_pre_release_manifest_versions() {
 #[test]
 fn rejects_missing_required_files() {
     let missing_manifest = support::ZipBuilder::new().omit("manifest.json").build();
-    assert_eq!(reject(&missing_manifest), ImportErrorCode::MissingRequiredFile);
+    assert_eq!(
+        reject(&missing_manifest),
+        ImportErrorCode::MissingRequiredFile
+    );
 
     let missing_venue = support::ZipBuilder::new().omit("venue.geojson").build();
     assert_eq!(reject(&missing_venue), ImportErrorCode::MissingRequiredFile);
 
     let missing_address = support::ZipBuilder::new().omit("address.geojson").build();
-    assert_eq!(reject(&missing_address), ImportErrorCode::MissingRequiredFile);
+    assert_eq!(
+        reject(&missing_address),
+        ImportErrorCode::MissingRequiredFile
+    );
 }
 
 #[test]
@@ -310,10 +320,7 @@ fn rejects_unknown_safe_entry_with_warning_not_error() {
                 && w.archive_entry.as_deref() == Some("extra.txt")
         })
         .expect("an unknown_archive_entry warning should be emitted");
-    assert_eq!(
-        unknown.message,
-        "Ignored unknown archive entry extra.txt."
-    );
+    assert_eq!(unknown.message, "Ignored unknown archive entry extra.txt.");
 }
 
 #[test]

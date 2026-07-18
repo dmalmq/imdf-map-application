@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    name: Linux acceptance (Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.12.0
+
+      - name: Install Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Rust 1.97 and wasm target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          targets: wasm32-unknown-unknown
+          components: clippy,rustfmt
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: ${{ runner.os }}-cargo-1.97-${{ hashFiles('core/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.97-
+
+      - name: Install wasm-pack 0.13.1
+        run: cargo install wasm-pack --version 0.13.1 --locked
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium firefox
+
+      - name: Run complete acceptance sequence
+        run: |
+          source "$HOME/.cargo/env"
+          cargo fmt --manifest-path core/Cargo.toml --all -- --check
+          cargo clippy --manifest-path core/Cargo.toml --workspace --all-targets -- -D warnings
+          cargo test --manifest-path core/Cargo.toml --workspace
+          cargo check --manifest-path core/Cargo.toml -p kiriko-wasm --target wasm32-unknown-unknown
+          pnpm install --frozen-lockfile
+          pnpm core:build
+          pnpm typecheck
+          pnpm test
+          pnpm test:server
+          pnpm build
+          pnpm exec playwright test --project=chromium
+          pnpm exec playwright test --project=firefox
+          npx -y node@24 -e "const core=require('./core/crates/kiriko-node'); if(typeof core.compileImdf!=='function') process.exit(1)"
+
+  native-addon:
+    name: Native addon (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24, 26]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.12.0
+
+      - name: Install Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install Rust 1.97
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: ${{ runner.os }}-cargo-1.97-node-${{ matrix.node }}-${{ hashFiles('core/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.97-node-${{ matrix.node }}-
+            ${{ runner.os }}-cargo-1.97-
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and require native addon
+        run: |
+          pnpm core:build:node
+          node -e "const core=require('./core/crates/kiriko-node'); if(typeof core.compileImdf!=='function') process.exit(1)"

@@ -13,9 +13,9 @@ interface LegacyRow {
 type CompileFn = typeof compileVenueBundle;
 
 /**
- * Recompiles Phase One rows published by the pre-Task-5 runner, which
- * aliased `bundle_hash = source_blob_hash` instead of compiling a real
- * `.kvb` bundle. Runs sequentially in `(venue_id, seq)` order so a shared
+ * Recompiles Phase One rows published by the pre-Task-5 runner, whose bundle
+ * hashes still alias their retained source hashes. Runs sequentially in
+ * `(venue_id, seq)` order so a shared
  * dataset never races itself, and updates each row only after its
  * compiled bytes are durably content-addressed.
  *

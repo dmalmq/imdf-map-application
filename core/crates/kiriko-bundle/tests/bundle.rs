@@ -10,7 +10,10 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
-use kiriko_bundle::{compile_imdf, decode_bundle, encode_bundle, BundleDocument, BundleErrorCode, BundleMetadata, BundleStats};
+use kiriko_bundle::{
+    BundleDocument, BundleErrorCode, BundleMetadata, BundleStats, compile_imdf, decode_bundle,
+    encode_bundle,
+};
 
 fn metadata() -> BundleMetadata {
     BundleMetadata {
@@ -29,8 +32,13 @@ fn compile_minimal() -> Vec<u8> {
 fn decompress_payload(bytes: &[u8]) -> Vec<u8> {
     let declared_len = u64::from_le_bytes(bytes[12..20].try_into().unwrap());
     let frame = &bytes[52..];
-    let payload = zstd::decode_all(frame).expect("a valid frame must decompress with the crate's own decoder");
-    assert_eq!(payload.len() as u64, declared_len, "declared length must match the frame's content");
+    let payload = zstd::decode_all(frame)
+        .expect("a valid frame must decompress with the crate's own decoder");
+    assert_eq!(
+        payload.len() as u64,
+        declared_len,
+        "declared length must match the frame's content"
+    );
     payload
 }
 
@@ -39,7 +47,10 @@ fn decompress_payload(bytes: &[u8]) -> Vec<u8> {
 #[test]
 fn envelope_matches_documented_byte_layout() {
     let bytes = compile_minimal();
-    assert!(bytes.len() > 52, "an envelope plus a zstd frame must be produced");
+    assert!(
+        bytes.len() > 52,
+        "an envelope plus a zstd frame must be produced"
+    );
     assert_eq!(&bytes[0..4], b"KVB\0", "magic");
     assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 1, "major");
     assert_eq!(u16::from_le_bytes([bytes[6], bytes[7]]), 0, "minor");
@@ -56,7 +67,10 @@ fn directory_is_sorted_fixed_width_and_required_sections_only() {
     let payload = decompress_payload(&bytes);
 
     let count = u16::from_le_bytes([payload[0], payload[1]]) as usize;
-    assert_eq!(count, 3, "Phase Two emits exactly manifest, geometry, and stores");
+    assert_eq!(
+        count, 3,
+        "Phase Two emits exactly manifest, geometry, and stores"
+    );
 
     let mut ids = Vec::new();
     let mut cursor = 2 + count * 20;
@@ -68,12 +82,23 @@ fn directory_is_sorted_fixed_width_and_required_sections_only() {
         let length = u64::from_le_bytes(payload[base + 12..base + 20].try_into().unwrap());
 
         assert_eq!(version, 1, "section {id} must declare version 1");
-        assert_eq!(offset, cursor as u64, "sections must be packed contiguously in id order");
+        assert_eq!(
+            offset, cursor as u64,
+            "sections must be packed contiguously in id order"
+        );
         cursor += length as usize;
         ids.push(id);
     }
-    assert_eq!(ids, vec![1, 2, 3], "only manifest(1), geometry(2), and stores(3) are emitted");
-    assert_eq!(cursor, payload.len(), "sections must fill the payload with no trailing bytes");
+    assert_eq!(
+        ids,
+        vec![1, 2, 3],
+        "only manifest(1), geometry(2), and stores(3) are emitted"
+    );
+    assert_eq!(
+        cursor,
+        payload.len(),
+        "sections must fill the payload with no trailing bytes"
+    );
 }
 
 // -- Step 2/3: section round trip and determinism --------------------------
@@ -88,9 +113,15 @@ fn decode_roundtrip_preserves_every_feature_field_and_warning() {
     assert_eq!(document.venue_id, venue.venue_id);
     assert_eq!(document.manifest, venue.manifest);
     assert_eq!(document.levels, venue.levels);
-    assert_eq!(document.features, venue.features, "every normalized feature field must round-trip");
+    assert_eq!(
+        document.features, venue.features,
+        "every normalized feature field must round-trip"
+    );
     assert_eq!(document.bounds_by_level, venue.bounds_by_level);
-    assert_eq!(document.warnings, venue.warnings, "every warning must round-trip");
+    assert_eq!(
+        document.warnings, venue.warnings,
+        "every warning must round-trip"
+    );
     assert_eq!(document.stats.levels as usize, venue.levels.len());
     assert_eq!(document.stats.features as usize, venue.features.len());
     assert_eq!(document.metadata, metadata());
@@ -108,11 +139,17 @@ fn compiling_the_same_fixture_twice_is_byte_identical() {
 fn reversed_zip_record_order_is_byte_identical() {
     let forward = support::build_minimal_imdf_zip();
     let reversed = support::build_minimal_imdf_zip_reversed();
-    assert_ne!(forward, reversed, "the two archives must actually differ in ZIP record order");
+    assert_ne!(
+        forward, reversed,
+        "the two archives must actually differ in ZIP record order"
+    );
 
     let a = compile_imdf(&forward, metadata()).expect("forward order compiles");
     let b = compile_imdf(&reversed, metadata()).expect("reversed order compiles");
-    assert_eq!(a.bytes, b.bytes, "record order must not affect the compiled bundle bytes");
+    assert_eq!(
+        a.bytes, b.bytes,
+        "record order must not affect the compiled bundle bytes"
+    );
 }
 
 // -- Step 4: corruption matrix ---------------------------------------------
@@ -150,7 +187,8 @@ fn zero_major_is_rejected() {
 fn newer_minor_version_is_tolerated() {
     let mut bytes = compile_minimal();
     bytes[6..8].copy_from_slice(&9999u16.to_le_bytes());
-    let document = decode_bundle(&bytes).expect("a newer minor with understood required sections must still decode");
+    let document = decode_bundle(&bytes)
+        .expect("a newer minor with understood required sections must still decode");
     assert!(!document.venue_id.is_empty());
 }
 
@@ -175,7 +213,8 @@ fn declared_length_mismatch_is_integrity_failure() {
 fn declared_length_above_512_mib_is_bundle_too_large() {
     let mut bytes = compile_minimal();
     bytes[12..20].copy_from_slice(&(512u64 * 1024 * 1024 + 1).to_le_bytes());
-    let err = decode_bundle(&bytes).expect_err("a declared length above 512 MiB must fail before allocation");
+    let err = decode_bundle(&bytes)
+        .expect_err("a declared length above 512 MiB must fail before allocation");
     assert_eq!(err.code, BundleErrorCode::BundleTooLarge);
 }
 
@@ -216,7 +255,8 @@ fn zstd_frame_bytes(payload: &[u8]) -> Vec<u8> {
         .expect("checksum flag");
     raw.set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
         .expect("content-size flag");
-    raw.set_pledged_src_size(Some(payload.len() as u64)).expect("pledged size");
+    raw.set_pledged_src_size(Some(payload.len() as u64))
+        .expect("pledged size");
     let mut encoder = zstd::stream::write::Encoder::with_encoder(Vec::new(), raw);
     encoder.write_all(payload).expect("write payload");
     encoder.finish().expect("finish frame")
@@ -286,7 +326,10 @@ fn decode_bundle_rejects_a_concatenated_second_zstd_frame() {
     );
 }
 
-fn minimal_feature(id: &str, feature_type: kiriko_model::model::FeatureType) -> kiriko_model::model::VenueFeature {
+fn minimal_feature(
+    id: &str,
+    feature_type: kiriko_model::model::FeatureType,
+) -> kiriko_model::model::VenueFeature {
     kiriko_model::model::VenueFeature {
         id: id.to_string(),
         feature_type,
@@ -315,7 +358,10 @@ fn minimal_document(features: Vec<kiriko_model::model::VenueFeature>) -> BundleD
         features,
         bounds_by_level: BTreeMap::new(),
         warnings: Vec::new(),
-        stats: BundleStats { levels: 0, features: 0 },
+        stats: BundleStats {
+            levels: 0,
+            features: 0,
+        },
     }
 }
 
@@ -331,7 +377,8 @@ fn decode_bundle_rejects_misordered_geometry_features_via_the_public_api() {
         minimal_feature("f1", FeatureType::Venue),
         minimal_feature("f2", FeatureType::Address),
     ]);
-    let bytes = encode_bundle(&document).expect("encode does not itself validate feature-type order");
+    let bytes =
+        encode_bundle(&document).expect("encode does not itself validate feature-type order");
     let err = decode_bundle(&bytes).expect_err("misordered geometry features must be rejected");
     assert_eq!(err.code, BundleErrorCode::InvalidBundle);
 }
@@ -346,8 +393,10 @@ fn decode_bundle_rejects_a_duplicate_feature_id_across_sections_via_the_public_a
         minimal_feature("dup", FeatureType::Address),
         minimal_feature("dup", FeatureType::Occupant),
     ]);
-    let bytes = encode_bundle(&document).expect("encode does not itself validate cross-section id uniqueness");
-    let err = decode_bundle(&bytes).expect_err("a duplicate feature id across sections must be rejected");
+    let bytes = encode_bundle(&document)
+        .expect("encode does not itself validate cross-section id uniqueness");
+    let err =
+        decode_bundle(&bytes).expect_err("a duplicate feature id across sections must be rejected");
     assert_eq!(err.code, BundleErrorCode::InvalidBundle);
 }
 
@@ -355,20 +404,24 @@ fn decode_bundle_rejects_a_duplicate_feature_id_across_sections_via_the_public_a
 fn encode_bundle_normalizes_negative_zero_to_identical_bytes() {
     let with_negative_zero = minimal_document(vec![]);
     let mut with_negative_zero = with_negative_zero;
-    with_negative_zero.levels.push(kiriko_model::model::ViewerLevel {
-        id: "level-1".to_string(),
-        ordinal: -0.0,
-        label: BTreeMap::new(),
-        short_name: BTreeMap::new(),
-    });
+    with_negative_zero
+        .levels
+        .push(kiriko_model::model::ViewerLevel {
+            id: "level-1".to_string(),
+            ordinal: -0.0,
+            label: BTreeMap::new(),
+            short_name: BTreeMap::new(),
+        });
 
     let mut with_positive_zero = minimal_document(vec![]);
-    with_positive_zero.levels.push(kiriko_model::model::ViewerLevel {
-        id: "level-1".to_string(),
-        ordinal: 0.0,
-        label: BTreeMap::new(),
-        short_name: BTreeMap::new(),
-    });
+    with_positive_zero
+        .levels
+        .push(kiriko_model::model::ViewerLevel {
+            id: "level-1".to_string(),
+            ordinal: 0.0,
+            label: BTreeMap::new(),
+            short_name: BTreeMap::new(),
+        });
 
     let negative_bytes = encode_bundle(&with_negative_zero).expect("encodes");
     let positive_bytes = encode_bundle(&with_positive_zero).expect("encodes");
@@ -408,5 +461,8 @@ fn golden_fixture_matches_committed_bytes_and_checksum() {
     digest.copy_from_slice(&Sha256::digest(&compiled.bytes));
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     let expected_line = format!("{hex}  tests/fixtures/minimal.kvb\n");
-    assert_eq!(checksum_file, expected_line, "the committed sha256 file must match the golden bytes");
+    assert_eq!(
+        checksum_file, expected_line,
+        "the committed sha256 file must match the golden bytes"
+    );
 }

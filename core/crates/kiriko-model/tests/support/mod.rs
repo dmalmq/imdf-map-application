@@ -14,12 +14,11 @@ use std::io::{Cursor, Write};
 use std::path::PathBuf;
 
 use zip::write::SimpleFileOptions;
-use zip::{DateTime, ZipWriter, CompressionMethod};
+use zip::{CompressionMethod, DateTime, ZipWriter};
 
 /// Path to `tests/fixtures/minimal-imdf/` from this crate's manifest dir.
 pub fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tests/fixtures/minimal-imdf")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/minimal-imdf")
 }
 
 /// A deterministic ZIP builder. Entries are written sorted bytewise by name
@@ -132,7 +131,9 @@ where
         writer
             .start_file(*name, options)
             .unwrap_or_else(|e| panic!("start_file {name}: {e}"));
-        writer.write_all(data).unwrap_or_else(|e| panic!("write {name}: {e}"));
+        writer
+            .write_all(data)
+            .unwrap_or_else(|e| panic!("write {name}: {e}"));
     }
 
     let cursor = writer.finish().expect("finish zip");

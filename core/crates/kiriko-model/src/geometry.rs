@@ -3,7 +3,7 @@
 //! geometry tree (point/multi/geometry-collection) and never panic on
 //! malformed shapes: a non-position yields no contribution.
 
-use crate::canonical::{normalize_zero, Value};
+use crate::canonical::{Value, normalize_zero};
 use crate::model::Bounds;
 
 /// Running axis-aligned bounding box of every finite position seen so far.
@@ -79,7 +79,10 @@ pub fn geometry_center(geometry: &Value) -> Option<(f64, f64)> {
     let mut bounds = BoundsAccum::new();
     visit_geometry(geometry, &mut bounds);
     if bounds.found {
-        Some(((bounds.west + bounds.east) / 2.0, (bounds.south + bounds.north) / 2.0))
+        Some((
+            (bounds.west + bounds.east) / 2.0,
+            (bounds.south + bounds.north) / 2.0,
+        ))
     } else {
         None
     }
@@ -111,13 +114,13 @@ fn visit_positions(value: &Value, bounds: &mut BoundsAccum) {
         _ => return,
     };
     if let Some(Value::Number(lon)) = arr.first() {
-        if arr.len() >= 2 {
-            if let Some(lat) = arr[1].as_f64() {
-                if lon.is_finite() && lat.is_finite() {
-                    bounds.add_point(normalize_zero(*lon), normalize_zero(lat));
-                }
-                return;
+        if arr.len() >= 2
+            && let Some(lat) = arr[1].as_f64()
+        {
+            if lon.is_finite() && lat.is_finite() {
+                bounds.add_point(normalize_zero(*lon), normalize_zero(lat));
             }
+            return;
         }
         return;
     }
@@ -125,7 +128,6 @@ fn visit_positions(value: &Value, bounds: &mut BoundsAccum) {
         visit_positions(nested, bounds);
     }
 }
-
 
 /// Returns `Some(geometry)` only when its center is computable. Matches
 /// `usableGeometry` in `src/imdf/normalizeVenue.ts`.

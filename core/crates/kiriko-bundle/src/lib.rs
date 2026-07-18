@@ -20,5 +20,8 @@ mod error;
 mod format;
 mod sections;
 
-pub use codec::{compile_imdf, decode_bundle, encode_bundle, BundleDocument, BundleMetadata, BundleStats, CompiledBundle};
+pub use codec::{
+    BundleDocument, BundleMetadata, BundleStats, CompiledBundle, compile_imdf, decode_bundle,
+    encode_bundle,
+};
 pub use error::{BundleError, BundleErrorCode, CompileError};

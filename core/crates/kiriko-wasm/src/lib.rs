@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use kiriko_bundle::{decode_bundle, BundleDocument, BundleError};
+use kiriko_bundle::{BundleDocument, BundleError, decode_bundle};
 use kiriko_model::canonical::{Object as CanonicalObject, Value as CanonicalValue};
 use kiriko_model::model::{Bounds, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning};
 use serde::Serialize;
@@ -112,15 +112,21 @@ fn canonical_to_json(value: &CanonicalValue) -> JsonValue {
         // Bundle decode already validates every reachable number is finite,
         // so `from_f64` never returns `None` here; `Null` is a defensive
         // fallback only.
-        CanonicalValue::Number(n) => serde_json::Number::from_f64(*n).map_or(JsonValue::Null, JsonValue::Number),
+        CanonicalValue::Number(n) => {
+            serde_json::Number::from_f64(*n).map_or(JsonValue::Null, JsonValue::Number)
+        }
         CanonicalValue::String(s) => JsonValue::String(s.clone()),
-        CanonicalValue::Array(items) => JsonValue::Array(items.iter().map(canonical_to_json).collect()),
+        CanonicalValue::Array(items) => {
+            JsonValue::Array(items.iter().map(canonical_to_json).collect())
+        }
         CanonicalValue::Object(obj) => JsonValue::Object(canonical_object_to_json(obj)),
     }
 }
 
 fn canonical_object_to_json(obj: &CanonicalObject) -> serde_json::Map<String, JsonValue> {
-    obj.iter().map(|(k, v)| (k.clone(), canonical_to_json(v))).collect()
+    obj.iter()
+        .map(|(k, v)| (k.clone(), canonical_to_json(v)))
+        .collect()
 }
 
 fn manifest_dto(manifest: &ImdfManifest) -> ManifestDto {

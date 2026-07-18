@@ -53,7 +53,7 @@ function seedVenue(db: Database.Database, slug: string, name: string): number {
   return Number(info.lastInsertRowid);
 }
 
-/** Inserts a Phase One-style published row aliasing bundle_hash = source_blob_hash. */
+/** Inserts a Phase One-style published row with a source-alias bundle hash. */
 function seedLegacyPublishedVersion(
   db: Database.Database,
   blobs: BlobStore,

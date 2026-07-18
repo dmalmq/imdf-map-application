@@ -9,12 +9,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Seek};
 
-use zip::result::ZipError;
 use zip::ZipArchive;
+use zip::result::ZipError;
 
 use crate::canonical::{self, Object, Value};
 use crate::error::{ImportError, ImportErrorCode};
-use crate::model::{feature_type_for_filename, FeatureType};
+use crate::model::{FeatureType, feature_type_for_filename};
 
 /// Maximum compressed size of the input ZIP (100 MiB).
 pub const MAX_COMPRESSED_BYTES: usize = 100 * 1024 * 1024;
@@ -36,11 +36,7 @@ pub(crate) fn is_valid_feature_id(id: &str) -> bool {
     if bytes.len() != 36 {
         return false;
     }
-    if bytes[8] != b'-'
-        || bytes[13] != b'-'
-        || bytes[18] != b'-'
-        || bytes[23] != b'-'
-    {
+    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
         return false;
     }
     let groups: [&[u8]; 5] = [
@@ -57,7 +53,7 @@ pub(crate) fn is_valid_feature_id(id: &str) -> bool {
         return false;
     }
     // version 4
-    if groups[2][0].to_ascii_lowercase() != b'4' {
+    if !groups[2][0].eq_ignore_ascii_case(&b'4') {
         return false;
     }
     // variant: 8/9/a/b
@@ -128,10 +124,8 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
     // crafted central directory with a huge entry count must be rejected on
     // cheap metadata (`archive.len()`) alone, not after pairwise range work.
     if archive.len() > MAX_ARCHIVE_ENTRIES {
-        return Err(
-            fail(ImportErrorCode::ArchiveTooLarge, "archive_too_large")
-                .with_detail("entryCount", archive.len().to_string()),
-        );
+        return Err(fail(ImportErrorCode::ArchiveTooLarge, "archive_too_large")
+            .with_detail("entryCount", archive.len().to_string()));
     }
 
     // Reject archives whose compressed entry data overlaps: not always
@@ -152,9 +146,7 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
     // validation and import are independent of ZIP record order.
     let mut entries: Vec<EntryMeta> = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
-        let file = archive
-            .by_index_raw(index)
-            .map_err(map_zip_read_error)?;
+        let file = archive.by_index_raw(index).map_err(map_zip_read_error)?;
         entries.push(EntryMeta {
             name: file.name().to_string(),
             encrypted: file.encrypted(),
@@ -207,8 +199,11 @@ pub(crate) fn parse(source: &[u8]) -> Result<ParsedArchive, ImportError> {
     }
 
     let manifest = manifest_value.ok_or_else(|| {
-        fail(ImportErrorCode::MissingRequiredFile, "missing_required_file")
-            .with_detail("missing", "manifest.json")
+        fail(
+            ImportErrorCode::MissingRequiredFile,
+            "missing_required_file",
+        )
+        .with_detail("missing", "manifest.json")
     })?;
 
     validate_collection_shapes(&collections)?;
@@ -231,13 +226,17 @@ fn validate_entries(entries: &[EntryMeta]) -> Result<(), ImportError> {
     let mut declared_total: u64 = 0;
     for entry in entries {
         if entry.is_dir {
-            return Err(fail(ImportErrorCode::UnsafeArchivePath, "unsafe_archive_path")
-                .with_detail("entry", entry.name.clone())
-                .with_detail("reason", "directory"));
+            return Err(
+                fail(ImportErrorCode::UnsafeArchivePath, "unsafe_archive_path")
+                    .with_detail("entry", entry.name.clone())
+                    .with_detail("reason", "directory"),
+            );
         }
         if is_unsafe_path(&entry.name) {
-            return Err(fail(ImportErrorCode::UnsafeArchivePath, "unsafe_archive_path")
-                .with_detail("entry", entry.name.clone()));
+            return Err(
+                fail(ImportErrorCode::UnsafeArchivePath, "unsafe_archive_path")
+                    .with_detail("entry", entry.name.clone()),
+            );
         }
         if entry.encrypted {
             return Err(fail(ImportErrorCode::InvalidArchive, "invalid_archive")
@@ -261,14 +260,14 @@ fn validate_entries(entries: &[EntryMeta]) -> Result<(), ImportError> {
 }
 
 fn validate_required_files(entries: &[EntryMeta]) -> Result<(), ImportError> {
-    let present: BTreeSet<String> = entries
-        .iter()
-        .map(|e| e.name.to_lowercase())
-        .collect();
+    let present: BTreeSet<String> = entries.iter().map(|e| e.name.to_lowercase()).collect();
     for required in REQUIRED_FILES {
         if !present.contains(*required) {
-            return Err(fail(ImportErrorCode::MissingRequiredFile, "missing_required_file")
-                .with_detail("missing", (*required).to_string()));
+            return Err(fail(
+                ImportErrorCode::MissingRequiredFile,
+                "missing_required_file",
+            )
+            .with_detail("missing", (*required).to_string()));
         }
     }
     Ok(())
@@ -282,18 +281,24 @@ fn validate_collection_shapes(
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     if venue.len() != 1 {
-        return Err(fail(ImportErrorCode::InvalidFeatureCollection, "invalid_feature_collection")
-            .with_detail("reason", "venue_count")
-            .with_detail("count", venue.len().to_string()));
+        return Err(fail(
+            ImportErrorCode::InvalidFeatureCollection,
+            "invalid_feature_collection",
+        )
+        .with_detail("reason", "venue_count")
+        .with_detail("count", venue.len().to_string()));
     }
     let level = collections
         .get(&FeatureType::Level)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     if level.is_empty() {
-        return Err(fail(ImportErrorCode::InvalidFeatureCollection, "invalid_feature_collection")
-            .with_detail("reason", "level_count")
-            .with_detail("count", "0"));
+        return Err(fail(
+            ImportErrorCode::InvalidFeatureCollection,
+            "invalid_feature_collection",
+        )
+        .with_detail("reason", "level_count")
+        .with_detail("count", "0"));
     }
 
     // Duplicate feature IDs across the whole archive.
@@ -301,9 +306,11 @@ fn validate_collection_shapes(
     for (feature_type, features) in collections {
         for feature in features {
             if !seen_ids.insert(feature.id.clone()) {
-                return Err(fail(ImportErrorCode::DuplicateFeatureId, "duplicate_feature_id")
-                    .with_detail("featureId", feature.id.clone())
-                    .with_detail("featureType", feature_type.as_str().to_string()));
+                return Err(
+                    fail(ImportErrorCode::DuplicateFeatureId, "duplicate_feature_id")
+                        .with_detail("featureId", feature.id.clone())
+                        .with_detail("featureType", feature_type.as_str().to_string()),
+                );
             }
         }
     }
@@ -318,10 +325,7 @@ fn read_entry<R>(
 where
     R: Read + Seek,
 {
-
-    let mut file = archive
-        .by_index(entry.index)
-        .map_err(map_zip_read_error)?;
+    let mut file = archive.by_index(entry.index).map_err(map_zip_read_error)?;
 
     // Per-entry counter guards against decompression bombs even when the
     // declared size was patched small but the actual stream is huge.
@@ -368,20 +372,26 @@ fn validate_manifest(value: Value, entry_name: &str) -> Result<Object, ImportErr
         Value::Object(map) => map,
         _ => {
             return Err(fail(ImportErrorCode::InvalidJson, "invalid_json")
-                .with_detail("entry", entry_name.to_string()))
+                .with_detail("entry", entry_name.to_string()));
         }
     };
 
     let version = obj.get("version").and_then(|v| v.as_str());
     let supported = version.map(is_supported_manifest_version).unwrap_or(false);
     if !supported {
-        return Err(fail(ImportErrorCode::InvalidManifestVersion, "invalid_manifest_version"));
+        return Err(fail(
+            ImportErrorCode::InvalidManifestVersion,
+            "invalid_manifest_version",
+        ));
     }
 
     let language = obj.get("language").and_then(|v| v.as_str()).unwrap_or("");
     if language.is_empty() {
-        return Err(fail(ImportErrorCode::InvalidManifestVersion, "invalid_manifest_version")
-            .with_detail("reason", "language"));
+        return Err(fail(
+            ImportErrorCode::InvalidManifestVersion,
+            "invalid_manifest_version",
+        )
+        .with_detail("reason", "language"));
     }
 
     // Normalize manifest: rewrite version to "1.0.0" (strip pre-release), keep
@@ -427,9 +437,9 @@ fn assert_feature_collection(
     feature_type: FeatureType,
     entry_name: &str,
 ) -> Result<Vec<RawFeature>, ImportError> {
-    let obj = value.as_object().ok_or_else(|| {
-        feature_collection_error(entry_name, None)
-    })?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| feature_collection_error(entry_name, None))?;
     if obj.get("type").and_then(|v| v.as_str()) != Some("FeatureCollection") {
         return Err(feature_collection_error(entry_name, None));
     }
@@ -440,14 +450,15 @@ fn assert_feature_collection(
 
     let mut out = Vec::with_capacity(features.len());
     for feature in features {
-        let f = feature.as_object().ok_or_else(|| feature_collection_error(entry_name, None))?;
+        let f = feature
+            .as_object()
+            .ok_or_else(|| feature_collection_error(entry_name, None))?;
         if f.get("type").and_then(|v| v.as_str()) != Some("Feature") {
             return Err(feature_collection_error(entry_name, None));
         }
 
-        let id = feature_id(feature).ok_or_else(|| {
-            feature_collection_error(entry_name, Some("feature_id"))
-        })?;
+        let id = feature_id(feature)
+            .ok_or_else(|| feature_collection_error(entry_name, Some("feature_id")))?;
         if !is_valid_feature_id(&id) {
             return Err(feature_collection_error_reason(entry_name, "feature_id"));
         }
@@ -486,10 +497,10 @@ fn feature_id(feature: &Value) -> Option<String> {
     if let Some(Value::String(s)) = obj.get("id") {
         return Some(s.clone());
     }
-    if let Some(Value::Object(props)) = obj.get("properties") {
-        if let Some(Value::String(s)) = props.get("id") {
-            return Some(s.clone());
-        }
+    if let Some(Value::Object(props)) = obj.get("properties")
+        && let Some(Value::String(s)) = props.get("id")
+    {
+        return Some(s.clone());
     }
     None
 }
@@ -497,12 +508,12 @@ fn feature_id(feature: &Value) -> Option<String> {
 fn declared_feature_type(feature: &Value) -> Option<FeatureType> {
     let obj = feature.as_object()?;
     if let Some(Value::String(s)) = obj.get("feature_type") {
-        return FeatureType::from_str(s);
+        return FeatureType::parse(s);
     }
-    if let Some(Value::Object(props)) = obj.get("properties") {
-        if let Some(Value::String(s)) = props.get("feature_type") {
-            return FeatureType::from_str(s);
-        }
+    if let Some(Value::Object(props)) = obj.get("properties")
+        && let Some(Value::String(s)) = props.get("feature_type")
+    {
+        return FeatureType::parse(s);
     }
     None
 }
@@ -540,7 +551,10 @@ fn feature_collection_error_mismatch(
     .with_detail("entry", entry_name.to_string())
     .with_detail("reason", "feature_type_mismatch")
     .with_detail("expected", expected.as_str().to_string())
-    .with_detail("actual", actual.map(|t| t.as_str().to_string()).unwrap_or_default())
+    .with_detail(
+        "actual",
+        actual.map(|t| t.as_str().to_string()).unwrap_or_default(),
+    )
 }
 
 fn is_zip_magic(bytes: &[u8]) -> bool {
@@ -549,8 +563,7 @@ fn is_zip_magic(bytes: &[u8]) -> bool {
     }
     // PK\x03\x04 (local file) or PK\x05\x06 (empty end-of-central-dir).
     (bytes[0] == 0x50 && bytes[1] == 0x4b)
-        && ((bytes[2] == 0x03 && bytes[3] == 0x04)
-            || (bytes[2] == 0x05 && bytes[3] == 0x06))
+        && ((bytes[2] == 0x03 && bytes[3] == 0x04) || (bytes[2] == 0x05 && bytes[3] == 0x06))
 }
 
 fn map_zip_open_error(err: ZipError) -> ImportError {

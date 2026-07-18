@@ -32,7 +32,9 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use kiriko_model::canonical::{self, Value as CanonicalValue};
-use kiriko_model::model::{Bounds, FeatureType, ImdfManifest, ViewerLevel, ViewerWarning, VenueFeature, WarningCode};
+use kiriko_model::model::{
+    Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning, WarningCode,
+};
 
 use crate::codec::{BundleDocument, BundleMetadata, BundleStats};
 use crate::error::{BundleError, BundleErrorCode};
@@ -89,11 +91,16 @@ fn dto_to_value(dto: &JsonValueDto) -> Result<CanonicalValue, BundleError> {
 }
 
 fn object_to_dto(object: &canonical::Object) -> Result<JsonObjectDto, BundleError> {
-    object.iter().map(|(k, v)| Ok((k.clone(), value_to_dto(v)?))).collect()
+    object
+        .iter()
+        .map(|(k, v)| Ok((k.clone(), value_to_dto(v)?)))
+        .collect()
 }
 
 fn dto_to_object(dto: &JsonObjectDto) -> Result<canonical::Object, BundleError> {
-    dto.iter().map(|(k, v)| Ok((k.clone(), dto_to_value(v)?))).collect()
+    dto.iter()
+        .map(|(k, v)| Ok((k.clone(), dto_to_value(v)?)))
+        .collect()
 }
 
 /// Serializable mirror of `kiriko_model::model::FeatureType`.
@@ -271,17 +278,20 @@ pub(crate) fn split_features(features: &[VenueFeature]) -> (Vec<VenueFeature>, V
     (geometry, stores)
 }
 
-fn validate_canonical_type_order(features: &[VenueFeature], section_name: &str) -> Result<(), BundleError> {
+fn validate_canonical_type_order(
+    features: &[VenueFeature],
+    section_name: &str,
+) -> Result<(), BundleError> {
     let mut last_order: Option<usize> = None;
     for feature in features {
         let order = feature.feature_type.order();
-        if let Some(last) = last_order {
-            if order < last {
-                return Err(BundleError::new(
-                    BundleErrorCode::InvalidBundle,
-                    format!("{section_name} section is not in canonical feature-type order"),
-                ));
-            }
+        if let Some(last) = last_order
+            && order < last
+        {
+            return Err(BundleError::new(
+                BundleErrorCode::InvalidBundle,
+                format!("{section_name} section is not in canonical feature-type order"),
+            ));
         }
         last_order = Some(order);
     }
@@ -308,7 +318,10 @@ pub(crate) fn reassemble_features(
         if feature.feature_type == FeatureType::Occupant {
             return Err(BundleError::new(
                 BundleErrorCode::InvalidBundle,
-                format!("occupant feature {:?} found in the geometry section", feature.id),
+                format!(
+                    "occupant feature {:?} found in the geometry section",
+                    feature.id
+                ),
             ));
         }
     }
@@ -316,7 +329,10 @@ pub(crate) fn reassemble_features(
         if feature.feature_type != FeatureType::Occupant {
             return Err(BundleError::new(
                 BundleErrorCode::InvalidBundle,
-                format!("non-occupant feature {:?} found in the stores section", feature.id),
+                format!(
+                    "non-occupant feature {:?} found in the stores section",
+                    feature.id
+                ),
             ));
         }
     }
@@ -485,7 +501,11 @@ pub(crate) fn manifest_to_dto(document: &BundleDocument) -> Result<ManifestSecti
             rest: object_to_dto(&document.manifest.rest)?,
         },
         venue_id: document.venue_id.clone(),
-        levels: document.levels.iter().map(level_to_dto).collect::<Result<_, _>>()?,
+        levels: document
+            .levels
+            .iter()
+            .map(level_to_dto)
+            .collect::<Result<_, _>>()?,
         bounds_by_level: document
             .bounds_by_level
             .iter()
@@ -514,7 +534,11 @@ pub(crate) fn manifest_into_document(
             rest: dto_to_object(&dto.source_manifest.rest)?,
         },
         venue_id: dto.venue_id,
-        levels: dto.levels.into_iter().map(level_from_dto).collect::<Result<_, _>>()?,
+        levels: dto
+            .levels
+            .into_iter()
+            .map(level_from_dto)
+            .collect::<Result<_, _>>()?,
         bounds_by_level: dto
             .bounds_by_level
             .into_iter()
@@ -553,7 +577,8 @@ mod tests {
     fn reassemble_rejects_an_occupant_placed_in_the_geometry_section() {
         let geometry = vec![feature("f1", FeatureType::Occupant)];
         let stores = vec![feature("f2", FeatureType::Occupant)];
-        let err = reassemble_features(geometry, stores).expect_err("an occupant in geometry must be rejected");
+        let err = reassemble_features(geometry, stores)
+            .expect_err("an occupant in geometry must be rejected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 
@@ -561,17 +586,26 @@ mod tests {
     fn reassemble_rejects_a_non_occupant_placed_in_the_stores_section() {
         let geometry = vec![feature("f1", FeatureType::Address)];
         let stores = vec![feature("f2", FeatureType::Address)];
-        let err = reassemble_features(geometry, stores).expect_err("a non-occupant in stores must be rejected");
+        let err = reassemble_features(geometry, stores)
+            .expect_err("a non-occupant in stores must be rejected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 
     #[test]
     fn reassemble_accepts_correctly_split_canonically_ordered_features() {
-        let geometry = vec![feature("f1", FeatureType::Address), feature("f2", FeatureType::Venue)];
+        let geometry = vec![
+            feature("f1", FeatureType::Address),
+            feature("f2", FeatureType::Venue),
+        ];
         let stores = vec![feature("f3", FeatureType::Occupant)];
-        let out = reassemble_features(geometry, stores).expect("well-formed sections must reassemble");
+        let out =
+            reassemble_features(geometry, stores).expect("well-formed sections must reassemble");
         let ids: Vec<&str> = out.iter().map(|f| f.id.as_str()).collect();
-        assert_eq!(ids, vec!["f1", "f3", "f2"], "occupant (order 10) sorts between address (0) and venue (15)");
+        assert_eq!(
+            ids,
+            vec!["f1", "f3", "f2"],
+            "occupant (order 10) sorts between address (0) and venue (15)"
+        );
     }
 
     #[test]
@@ -614,37 +648,55 @@ mod tests {
             }],
             bounds_by_level: BTreeMap::new(),
             warnings: Vec::new(),
-            stats: BundleStatsDto { levels: 1, features: 0 },
+            stats: BundleStatsDto {
+                levels: 1,
+                features: 0,
+            },
         }
     }
 
     fn wrap_manifest_only_bundle(manifest_bytes: Vec<u8>) -> Vec<u8> {
-        let empty_features: Vec<u8> = postcard::to_allocvec(&Vec::<FeatureDto>::new()).expect("empty vec encodes");
+        let empty_features: Vec<u8> =
+            postcard::to_allocvec(&Vec::<FeatureDto>::new()).expect("empty vec encodes");
         let payload = crate::format::build_payload(&[
-            (crate::format::SECTION_MANIFEST, crate::format::SECTION_VERSION, manifest_bytes),
-            (crate::format::SECTION_GEOMETRY, crate::format::SECTION_VERSION, empty_features.clone()),
-            (crate::format::SECTION_STORES, crate::format::SECTION_VERSION, empty_features),
+            (
+                crate::format::SECTION_MANIFEST,
+                crate::format::SECTION_VERSION,
+                manifest_bytes,
+            ),
+            (
+                crate::format::SECTION_GEOMETRY,
+                crate::format::SECTION_VERSION,
+                empty_features.clone(),
+            ),
+            (
+                crate::format::SECTION_STORES,
+                crate::format::SECTION_VERSION,
+                empty_features,
+            ),
         ]);
         crate::format::encode_payload(&payload).expect("hand-built payload encodes")
     }
 
     #[test]
     fn decode_bundle_rejects_a_nan_smuggled_directly_into_a_section_payload() {
-        let manifest_bytes =
-            postcard::to_allocvec(&manifest_section_with_ordinal(f64::NAN)).expect("dto with NaN still postcard-encodes");
+        let manifest_bytes = postcard::to_allocvec(&manifest_section_with_ordinal(f64::NAN))
+            .expect("dto with NaN still postcard-encodes");
         let bytes = wrap_manifest_only_bundle(manifest_bytes);
 
-        let err = crate::decode_bundle(&bytes).expect_err("a smuggled NaN ordinal must be rejected");
+        let err =
+            crate::decode_bundle(&bytes).expect_err("a smuggled NaN ordinal must be rejected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 
     #[test]
     fn decode_bundle_normalizes_a_smuggled_negative_zero_ordinal() {
-        let manifest_bytes =
-            postcard::to_allocvec(&manifest_section_with_ordinal(-0.0)).expect("dto with -0.0 postcard-encodes");
+        let manifest_bytes = postcard::to_allocvec(&manifest_section_with_ordinal(-0.0))
+            .expect("dto with -0.0 postcard-encodes");
         let bytes = wrap_manifest_only_bundle(manifest_bytes);
 
-        let document = crate::decode_bundle(&bytes).expect("a smuggled -0.0 ordinal is finite and must decode");
+        let document = crate::decode_bundle(&bytes)
+            .expect("a smuggled -0.0 ordinal is finite and must decode");
         assert_eq!(
             document.levels[0].ordinal.to_bits(),
             0.0f64.to_bits(),
@@ -659,7 +711,8 @@ mod tests {
         manifest_bytes.push(0xFF); // garbage padding after a valid postcard value
         let bytes = wrap_manifest_only_bundle(manifest_bytes);
 
-        let err = crate::decode_bundle(&bytes).expect_err("trailing bytes after a section value must be rejected");
+        let err = crate::decode_bundle(&bytes)
+            .expect_err("trailing bytes after a section value must be rejected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 }

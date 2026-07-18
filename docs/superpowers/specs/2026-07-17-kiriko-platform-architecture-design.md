@@ -1,7 +1,7 @@
 # Kiriko Platform Architecture
 
 **Date:** 2026-07-17
-**Status:** Approved design, pre-implementation
+**Status:** Approved design; Phase Two implementation contract corrected 2026-07-18
 **Scope:** System architecture for the Kiriko platform — backend, shared client core, web app, embeds, and customer SDKs. This spec sets boundaries and contracts; each phase gets its own implementation plan.
 
 ## 1. Context
@@ -61,20 +61,21 @@ Principles:
 
 | Crate | Purpose | Ships in |
 |---|---|---|
-| `kiriko-model` | Venue/level/unit/store/beacon types, IMDF import, validation warnings (Rust twin of today's TS `src/imdf/` normalizer) | everything |
-| `kiriko-bundle` | Venue-bundle format: encode/decode, versioning, integrity | everything |
+| `kiriko-model` | Pure shared venue model, strict IMDF import, canonicalization, and validation warnings; no binding dependencies | shared core |
+| `kiriko-bundle` | Pure shared KVB1 encode/decode, versioning, integrity, and deterministic compilation; no binding dependencies | shared core |
+| `kiriko-node` | napi-rs adapter exposing asynchronous native bundle compilation to the TypeScript server | server |
+| `kiriko-wasm` | wasm-bindgen adapter exposing bundle decoding to the browser worker | web |
 | `kiriko-route` | Walkable-network extraction (openings, corridors, conveyances), A* with floor changes, accessibility profiles (e.g. avoid stairs) | server (build graph), clients (query routes) |
 | `kiriko-position` | Beacon/wifi fingerprint model + fusion filter → position estimate. **Stub crate until fingerprint data exists**; the boundary exists from day one | mobile SDKs |
-| `kiriko-wasm` | wasm-bindgen surface for web + the Node addon build | web, server |
 | `kiriko-ffi` | UniFFI definitions → generated Swift package + Kotlin/Android bindings | mobile |
 
 Key property: **graph building runs on the server at publish time; graph querying runs on the device.** Bundles carry the precomputed routing graph, so phones never parse raw IMDF — they load a compact binary and answer route queries locally, offline.
 
-Accepted duplication: the core's model/validation deliberately duplicates the existing TS `src/imdf/` loader. Long-term the web viewer migrates to the WASM core and the TS loader retires; until then the golden-fixture conformance tests (§7) keep them agreeing.
+Phase Two keeps one explicit temporary duplication boundary: published datasets always fetch `.kvb` and decode through `kiriko-wasm`, while direct local uploads, dropped files, and explicit `?src=` ZIP URLs continue through `src/imdf/imdf.worker.ts` and the TypeScript normalizer. Golden-fixture conformance tests keep the Rust and TypeScript projections aligned; the server never exposes retained source ZIPs as public read routes.
 
 ## 4. kiriko-server (TypeScript)
 
-One Node process (Fastify), one SQLite database, one content-addressed blob directory. Runs under systemd on the office server today; one container on any platform tomorrow.
+One Node process (Fastify, Node.js 24 deployment floor with Node.js 26 compatibility), one SQLite database, one content-addressed blob directory. Runs under systemd on the office server today; one container on any platform tomorrow.
 
 ### Data model (SQLite)
 
@@ -131,18 +132,23 @@ Single process; SQLite with Litestream-style continuous backup to a second disk/
 
 ## 5. The venue bundle (`.kvb`)
 
-zstd-compressed container, content-addressed, format-versioned (`kvb1`):
+KVB1 is a deterministic, content-addressed container. Its 52-byte envelope is:
 
-```
-manifest      venue id · seq · format version · section index · display metadata
-geometry      levels/units/openings/fixtures as compact binary + display points
-style         category → color/icon mapping (Kiriko map palette, themeable per tenant)
-stores        store/occupant records: names (ja/en) · categories · hours · unit refs
-graph         precomputed routing network: nodes/edges · floor transitions · access flags
-beacons       fingerprint map (empty section until positioning ships)
+```text
+0..4   magic = 4b 56 42 00 ("KVB\0")
+4..6   major = little-endian u16 = 1
+6..8   minor = little-endian u16 = 0
+8..12  flags = little-endian u32; bit 0 means zstd
+12..20 uncompressed payload length = little-endian u64
+20..52 SHA-256 of the uncompressed payload
+52..   exactly one zstd frame
 ```
 
-Decoded only by `kiriko-bundle` — the same decoder on web, Android, iOS, and server. Clients download one file per venue, cache by hash, revalidate by ETag, and operate fully offline afterward.
+The uncompressed payload starts with a little-endian `u16` section count followed by fixed 20-byte directory rows `(id: u16, version: u16, offset: u64, length: u64)`, sorted by strictly ascending ID. KVB1 assigns IDs `1 manifest`, `2 geometry`, `3 stores`, `4 style`, `5 graph`, and `6 beacons`. Phase Two requires and emits sections 1–3 only; IDs 4–6 are reserved and are not emitted. Section payload version is `1`. The decoder rejects missing, duplicate, overlapping, out-of-bounds, or unsupported required sections; rejects unknown envelope major versions before section interpretation; and caps declared uncompressed payloads at 512 MiB.
+
+The zstd frame is produced at level 9 with checksum and pledged content size enabled and no worker threads. The decoder verifies the declared length and SHA-256 before decoding section payloads. Changing serialization or compression dependencies/settings requires a bundle-version decision and a reviewed golden update.
+
+Published clients download one immutable `.kvb`, cache by hash, revalidate the latest URL by ETag, and decode it through `kiriko-bundle` via the platform adapter.
 
 ## 6. SDKs
 

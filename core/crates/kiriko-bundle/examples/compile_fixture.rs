@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 
-use kiriko_bundle::{compile_imdf, BundleMetadata};
+use kiriko_bundle::{BundleMetadata, compile_imdf};
 use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
@@ -72,7 +72,8 @@ fn main() {
     };
     let compiled = compile_imdf(&source, metadata).expect("minimal fixture must compile");
 
-    let out_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/minimal.kvb");
+    let out_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/minimal.kvb");
     fs::write(&out_path, &compiled.bytes).unwrap_or_else(|e| panic!("write {out_path:?}: {e}"));
 
     let mut digest = [0u8; 32];

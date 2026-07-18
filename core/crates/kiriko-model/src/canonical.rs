@@ -123,9 +123,7 @@ pub fn canonicalize(value: &Json) -> Result<Value, NonFiniteNumber> {
         Json::Bool(b) => Value::Bool(*b),
         Json::Number(n) => {
             // `as_f64` is `Some` for every JSON number serde_json parses.
-            let raw = n
-                .as_f64()
-                .ok_or(NonFiniteNumber)?;
+            let raw = n.as_f64().ok_or(NonFiniteNumber)?;
             if !raw.is_finite() {
                 return Err(NonFiniteNumber);
             }
@@ -154,9 +152,5 @@ pub fn canonicalize(value: &Json) -> Result<Value, NonFiniteNumber> {
 /// `0.0`.
 #[inline]
 pub(crate) fn normalize_zero(value: f64) -> f64 {
-    if value == 0.0 {
-        0.0
-    } else {
-        value
-    }
+    if value == 0.0 { 0.0 } else { value }
 }

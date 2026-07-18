@@ -98,7 +98,11 @@ fn invalid(message: impl Into<String>) -> BundleError {
 pub(crate) fn build_payload(sections: &[(u16, u16, Vec<u8>)]) -> Vec<u8> {
     let count = sections.len();
     let dir_len = DIRECTORY_COUNT_LEN + count * DIRECTORY_ROW_LEN;
-    let total_len: usize = dir_len + sections.iter().map(|(_, _, bytes)| bytes.len()).sum::<usize>();
+    let total_len: usize = dir_len
+        + sections
+            .iter()
+            .map(|(_, _, bytes)| bytes.len())
+            .sum::<usize>();
 
     let mut payload = Vec::with_capacity(total_len);
     payload.extend_from_slice(&(count as u16).to_le_bytes());
@@ -125,7 +129,9 @@ pub(crate) fn build_payload(sections: &[(u16, u16, Vec<u8>)]) -> Vec<u8> {
 /// version for a required section, or is missing a required section.
 pub(crate) fn parse_directory(payload: &[u8]) -> Result<Directory, BundleError> {
     if payload.len() < DIRECTORY_COUNT_LEN {
-        return Err(invalid("payload is too short to contain a section directory"));
+        return Err(invalid(
+            "payload is too short to contain a section directory",
+        ));
     }
     let count = u16::from_le_bytes([payload[0], payload[1]]) as usize;
     let dir_len = DIRECTORY_COUNT_LEN + count * DIRECTORY_ROW_LEN;
@@ -143,12 +149,12 @@ pub(crate) fn parse_directory(payload: &[u8]) -> Result<Directory, BundleError> 
         let offset = u64::from_le_bytes(payload[base + 4..base + 12].try_into().unwrap());
         let length = u64::from_le_bytes(payload[base + 12..base + 20].try_into().unwrap());
 
-        if let Some(last) = rows.last() {
-            if id <= last.id {
-                return Err(invalid(
-                    "section directory rows must be sorted by strictly ascending id",
-                ));
-            }
+        if let Some(last) = rows.last()
+            && id <= last.id
+        {
+            return Err(invalid(
+                "section directory rows must be sorted by strictly ascending id",
+            ));
         }
 
         let end = offset
@@ -161,7 +167,9 @@ pub(crate) fn parse_directory(payload: &[u8]) -> Result<Directory, BundleError> 
         if REQUIRED_SECTIONS.contains(&id) && version != SECTION_VERSION {
             return Err(BundleError::new(
                 BundleErrorCode::UnsupportedBundleVersion,
-                format!("required section {id} has version {version}, which this decoder does not understand"),
+                format!(
+                    "required section {id} has version {version}, which this decoder does not understand"
+                ),
             ));
         }
 
@@ -185,7 +193,9 @@ pub(crate) fn parse_directory(payload: &[u8]) -> Result<Directory, BundleError> 
 
     for required in REQUIRED_SECTIONS {
         if !rows.iter().any(|row| row.id == required) {
-            return Err(invalid(format!("bundle is missing required section {required}")));
+            return Err(invalid(format!(
+                "bundle is missing required section {required}"
+            )));
         }
     }
 
@@ -273,7 +283,8 @@ pub(crate) fn decode_payload(bytes: &[u8]) -> Result<Vec<u8>, BundleError> {
 fn zstd_compress(payload: &[u8]) -> Vec<u8> {
     use zstd::stream::raw::{CParameter, Encoder as RawEncoder};
 
-    let mut raw = RawEncoder::new(ZSTD_LEVEL).expect("zstd encoder init never fails for a valid compression level");
+    let mut raw = RawEncoder::new(ZSTD_LEVEL)
+        .expect("zstd encoder init never fails for a valid compression level");
     raw.set_parameter(CParameter::ChecksumFlag(true))
         .expect("checksum flag is always a supported compression parameter");
     raw.set_parameter(CParameter::ContentSizeFlag(true))
@@ -287,7 +298,9 @@ fn zstd_compress(payload: &[u8]) -> Vec<u8> {
     encoder
         .write_all(payload)
         .expect("writing to an in-memory Vec<u8> never fails");
-    encoder.finish().expect("finishing an in-memory zstd stream never fails")
+    encoder
+        .finish()
+        .expect("finishing an in-memory zstd stream never fails")
 }
 
 /// Decompress exactly one zstd frame, enforcing the declared uncompressed
@@ -302,7 +315,12 @@ fn zstd_compress(payload: &[u8]) -> Vec<u8> {
 /// already-large buffer.
 fn zstd_decompress(frame: &[u8], declared_len: u64) -> Result<Vec<u8>, BundleError> {
     let mut decoder = zstd::stream::read::Decoder::new(frame)
-        .map_err(|e| BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("open zstd frame: {e}")))?
+        .map_err(|e| {
+            BundleError::new(
+                BundleErrorCode::BundleIntegrityFailed,
+                format!("open zstd frame: {e}"),
+            )
+        })?
         .single_frame();
 
     let mut out = vec![0u8; declared_len as usize];
@@ -316,9 +334,12 @@ fn zstd_decompress(frame: &[u8], declared_len: u64) -> Result<Vec<u8>, BundleErr
     // Probe for one more byte, without ever growing `out`, to detect a
     // frame that decompresses to more than the declared length.
     let mut probe = [0u8; 1];
-    let extra = decoder
-        .read(&mut probe)
-        .map_err(|e| BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("probe zstd frame: {e}")))?;
+    let extra = decoder.read(&mut probe).map_err(|e| {
+        BundleError::new(
+            BundleErrorCode::BundleIntegrityFailed,
+            format!("probe zstd frame: {e}"),
+        )
+    })?;
     if extra != 0 {
         return Err(BundleError::new(
             BundleErrorCode::BundleIntegrityFailed,
@@ -332,7 +353,10 @@ fn zstd_decompress(frame: &[u8], declared_len: u64) -> Result<Vec<u8>, BundleErr
     // frame, or trailing garbage) are treated as a corrupted frame.
     let mut remainder = decoder.finish();
     let trailing = remainder.fill_buf().map_err(|e| {
-        BundleError::new(BundleErrorCode::BundleIntegrityFailed, format!("check for trailing frame bytes: {e}"))
+        BundleError::new(
+            BundleErrorCode::BundleIntegrityFailed,
+            format!("check for trailing frame bytes: {e}"),
+        )
     })?;
     if !trailing.is_empty() {
         return Err(BundleError::new(
@@ -376,8 +400,14 @@ mod tests {
         ];
         let payload = build_payload(sections);
         let directory = parse_directory(&payload).expect("well-formed directory must parse");
-        assert_eq!(directory.section(&payload, SECTION_MANIFEST), Some(&[1u8, 2, 3][..]));
-        assert_eq!(directory.section(&payload, SECTION_GEOMETRY), Some(&[4u8, 5][..]));
+        assert_eq!(
+            directory.section(&payload, SECTION_MANIFEST),
+            Some(&[1u8, 2, 3][..])
+        );
+        assert_eq!(
+            directory.section(&payload, SECTION_GEOMETRY),
+            Some(&[4u8, 5][..])
+        );
         assert_eq!(directory.section(&payload, SECTION_STORES), Some(&[][..]));
     }
 
@@ -422,7 +452,7 @@ mod tests {
             row_bytes(SECTION_GEOMETRY, SECTION_VERSION, dir_len + 2, 4),
             row_bytes(SECTION_STORES, SECTION_VERSION, dir_len + 6, 0),
         ];
-        let payload = payload_with_rows(&rows, &vec![0u8; 10]);
+        let payload = payload_with_rows(&rows, &[0u8; 10]);
         let err = parse_directory(&payload).expect_err("overlapping sections must be rejected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
@@ -435,7 +465,7 @@ mod tests {
             row_bytes(SECTION_GEOMETRY, SECTION_VERSION, dir_len + 4, 4),
             row_bytes(SECTION_STORES, SECTION_VERSION, dir_len + 8, 1_000),
         ];
-        let payload = payload_with_rows(&rows, &vec![0u8; 8]);
+        let payload = payload_with_rows(&rows, &[0u8; 8]);
         let err = parse_directory(&payload).expect_err("an out-of-bounds section must be rejected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
@@ -449,7 +479,8 @@ mod tests {
             row_bytes(SECTION_STORES, SECTION_VERSION, dir_len, 0),
         ];
         let payload = payload_with_rows(&rows, &[]);
-        let err = parse_directory(&payload).expect_err("an unsupported section version must be rejected");
+        let err =
+            parse_directory(&payload).expect_err("an unsupported section version must be rejected");
         assert_eq!(err.code, BundleErrorCode::UnsupportedBundleVersion);
     }
 
@@ -493,7 +524,8 @@ mod tests {
             .collect();
         let payload = payload_with_rows(&rows, &vec![0u8; (cursor - dir_len) as usize]);
 
-        let err = parse_directory(&payload).expect_err("an overlap among many sections must still be detected");
+        let err = parse_directory(&payload)
+            .expect_err("an overlap among many sections must still be detected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 }

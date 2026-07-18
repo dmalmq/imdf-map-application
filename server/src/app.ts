@@ -29,9 +29,9 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const blobs = new BlobStore(config.dataDir);
   app.decorate("blobs", blobs);
 
-  // Recompile Phase One rows still aliasing bundle_hash = source_blob_hash
-  // into real .kvb bundles before the queue or any route accepts traffic —
-  // a half-migrated row must never be served under the bundle MIME type.
+  // Recompile Phase One source aliases into real .kvb bundles before the
+  // queue or any route accepts traffic; a half-migrated row must never be
+  // served under the bundle MIME type.
   try {
     await recompileLegacyPublished(db, blobs, (message) => app.log.error(message));
   } catch (error) {

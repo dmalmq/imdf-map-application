@@ -22,11 +22,11 @@ use crate::archive::ParsedArchive;
 use crate::canonical::{Object, Value};
 use crate::error::{ImportError, ImportErrorCode};
 use crate::geometry::{
-    display_point_center, geometry_center, usable_geometry, visit_geometry, BoundsAccum,
+    BoundsAccum, display_point_center, geometry_center, usable_geometry, visit_geometry,
 };
 use crate::model::{
-    FeatureType, ImdfManifest, VenueFeature, VenueModel, ViewerLevel, ViewerWarning, WarningCode,
-    FEATURE_TYPE_ORDER,
+    FEATURE_TYPE_ORDER, FeatureType, ImdfManifest, VenueFeature, VenueModel, ViewerLevel,
+    ViewerWarning, WarningCode,
 };
 
 /// Feature types whose missing `display_point` raises a warning. Matches
@@ -201,37 +201,37 @@ fn resolve_level_id(
 ) -> Option<String> {
     let current = &entries[index];
     let mut level_id = current.own_level_id.clone();
-    if level_id.is_none() {
-        if let Some(unit_id) = current.unit_id.as_deref() {
-            match id_to_index.get(unit_id) {
-                None => push_unresolved(warnings, feature_id, "unit_id", unit_id),
-                Some(&idx) => {
-                    level_id = string_prop(&entries[idx].feature.source_properties, "level_id");
-                }
+    if level_id.is_none()
+        && let Some(unit_id) = current.unit_id.as_deref()
+    {
+        match id_to_index.get(unit_id) {
+            None => push_unresolved(warnings, feature_id, "unit_id", unit_id),
+            Some(&idx) => {
+                level_id = string_prop(&entries[idx].feature.source_properties, "level_id");
             }
         }
     }
-    if level_id.is_none() {
-        if let Some(anchor_id) = current.anchor_id.as_deref() {
-            match id_to_index.get(anchor_id) {
-                None => push_unresolved(warnings, feature_id, "anchor_id", anchor_id),
-                Some(&anchor_idx) => {
-                    let anchor_unit_id =
-                        string_prop(&entries[anchor_idx].feature.source_properties, "unit_id");
-                    match anchor_unit_id {
-                        None => {
-                            push_unresolved(warnings, feature_id, "anchor unit_id", anchor_id);
-                        }
-                        Some(auid) => match id_to_index.get(&auid) {
-                            None => push_unresolved(warnings, feature_id, "unit_id", &auid),
-                            Some(&unit_idx) => {
-                                level_id = string_prop(
-                                    &entries[unit_idx].feature.source_properties,
-                                    "level_id",
-                                );
-                            }
-                        },
+    if level_id.is_none()
+        && let Some(anchor_id) = current.anchor_id.as_deref()
+    {
+        match id_to_index.get(anchor_id) {
+            None => push_unresolved(warnings, feature_id, "anchor_id", anchor_id),
+            Some(&anchor_idx) => {
+                let anchor_unit_id =
+                    string_prop(&entries[anchor_idx].feature.source_properties, "unit_id");
+                match anchor_unit_id {
+                    None => {
+                        push_unresolved(warnings, feature_id, "anchor unit_id", anchor_id);
                     }
+                    Some(auid) => match id_to_index.get(&auid) {
+                        None => push_unresolved(warnings, feature_id, "unit_id", &auid),
+                        Some(&unit_idx) => {
+                            level_id = string_prop(
+                                &entries[unit_idx].feature.source_properties,
+                                "level_id",
+                            );
+                        }
+                    },
                 }
             }
         }
@@ -262,41 +262,36 @@ fn resolve_center(
     let current = &entries[index];
     let props = &current.feature.source_properties;
 
-    if let Some(value) = props.get("display_point") {
-        if let Some(center) = display_point_center(value) {
-            return Some(center);
-        }
+    if let Some(value) = props.get("display_point")
+        && let Some(center) = display_point_center(value)
+    {
+        return Some(center);
     }
-    if let Some(geom) = current.feature.geometry.as_ref() {
-        if let Some(center) = geometry_center(geom) {
-            return Some(center);
-        }
+    if let Some(geom) = current.feature.geometry.as_ref()
+        && let Some(center) = geometry_center(geom)
+    {
+        return Some(center);
     }
-    if let Some(anchor_id) = current.anchor_id.as_deref() {
-        if let Some(&idx) = id_to_index.get(anchor_id) {
-            if let Some(geom) = entries[idx].feature.geometry.as_ref() {
-                if let Some(center) = geometry_center(geom) {
-                    return Some(center);
-                }
-            }
-        }
+    if let Some(anchor_id) = current.anchor_id.as_deref()
+        && let Some(&idx) = id_to_index.get(anchor_id)
+        && let Some(geom) = entries[idx].feature.geometry.as_ref()
+        && let Some(center) = geometry_center(geom)
+    {
+        return Some(center);
     }
-    if let Some(unit_id) = current.unit_id.as_deref() {
-        if let Some(&idx) = id_to_index.get(unit_id) {
-            if let Some(geom) = entries[idx].feature.geometry.as_ref() {
-                if let Some(center) = geometry_center(geom) {
-                    return Some(center);
-                }
-            }
-        }
+    if let Some(unit_id) = current.unit_id.as_deref()
+        && let Some(&idx) = id_to_index.get(unit_id)
+        && let Some(geom) = entries[idx].feature.geometry.as_ref()
+        && let Some(center) = geometry_center(geom)
+    {
+        return Some(center);
     }
     for candidate in &current.unit_ids {
-        if let Some(&idx) = id_to_index.get(candidate) {
-            if let Some(geom) = entries[idx].feature.geometry.as_ref() {
-                if let Some(center) = geometry_center(geom) {
-                    return Some(center);
-                }
-            }
+        if let Some(&idx) = id_to_index.get(candidate)
+            && let Some(geom) = entries[idx].feature.geometry.as_ref()
+            && let Some(center) = geometry_center(geom)
+        {
+            return Some(center);
         }
     }
     None
@@ -308,7 +303,11 @@ fn emit_feature_warnings(entry: &Entry, warnings: &mut Vec<ViewerWarning>) {
     if !entry.feature.labels.is_empty() {
         for language in ["en", "ja"] {
             if !has_language_label(&entry.feature.labels, language) {
-                let label = if language == "en" { "English" } else { "Japanese" };
+                let label = if language == "en" {
+                    "English"
+                } else {
+                    "Japanese"
+                };
                 warnings.push(ViewerWarning {
                     code: WarningCode::MissingLocale,
                     message: format!("Feature {id} has no {label} label."),
@@ -404,10 +403,10 @@ fn localized_record(value: Option<&Value>) -> BTreeMap<String, String> {
         None => return out,
     };
     for (key, val) in obj {
-        if let Value::String(s) = val {
-            if !s.is_empty() {
-                out.insert(key.clone(), s.clone());
-            }
+        if let Value::String(s) = val
+            && !s.is_empty()
+        {
+            out.insert(key.clone(), s.clone());
         }
     }
     out
