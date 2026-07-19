@@ -1,8 +1,34 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupTestApps, loginCookie, makeTestApp, TEST_PASSWORD, TEST_USER } from "./helpers";
+import { configFromEnv, positiveInt } from "../src/config";
 import { verifyPassword } from "../src/auth/passwords";
 
-afterEach(cleanupTestApps);
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await cleanupTestApps();
+});
+
+describe("config", () => {
+  it("defaults issue SSE limits and accepts positive integer environment values", () => {
+    vi.stubEnv("KIRIKO_ISSUE_SSE_MAX_CONNECTIONS", "");
+    vi.stubEnv("KIRIKO_ISSUE_SSE_MAX_PER_VERSION", "");
+    expect(configFromEnv()).toMatchObject({
+      issueSseMaxConnections: 512,
+      issueSseMaxPerVersion: 128,
+    });
+
+    vi.stubEnv("KIRIKO_ISSUE_SSE_MAX_CONNECTIONS", "24");
+    vi.stubEnv("KIRIKO_ISSUE_SSE_MAX_PER_VERSION", "6");
+    expect(configFromEnv()).toMatchObject({
+      issueSseMaxConnections: 24,
+      issueSseMaxPerVersion: 6,
+    });
+  });
+
+  it.each(["0", "-1", "1.5", "many"])("falls back for invalid positive integer value %j", (value) => {
+    expect(positiveInt(value, 19)).toBe(19);
+  });
+});
 
 describe("auth", () => {
   it("rejects bad credentials and accepts the bootstrap user", async () => {
@@ -56,6 +82,8 @@ describe("auth", () => {
       dataDir: mkdtempSync(join(tmpdir(), "kiriko-secure-")),
       sessionTtlDays: 30,
       secureCookies: true,
+      issueSseMaxConnections: 512,
+      issueSseMaxPerVersion: 128,
       bootstrapUser: TEST_USER,
       bootstrapPassword: TEST_PASSWORD,
     });

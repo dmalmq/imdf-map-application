@@ -1,9 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IndoorMapProps } from "../map/IndoorMap";
 import type * as FetchImdfArchiveModule from "../imdf/fetchImdfArchive";
+import type * as GalleryApiModule from "../gallery/api";
+import type * as IssueApiModule from "../issues/api";
 import type {
   LoadedVenue,
   SearchEntry,
@@ -12,6 +14,16 @@ import type {
   ViewerWarning,
 } from "../imdf/types";
 import { VenueLoadError, venueLoadErrorCopy } from "../errors/VenueLoadError";
+import type { KirikoBundleLoadResult } from "../bundle/loadKirikoBundle";
+import type { ApiUser } from "../gallery/api";
+import { IssueApiError } from "../issues/api";
+import type {
+  CreateIssueInput,
+  IssueCollection,
+  ReviewIssue,
+  ReviewerSummary,
+} from "../issues/types";
+
 
 const LEVEL_2F: ViewerLevel = {
   id: "b1000003-0000-4000-8000-00000000002f",
@@ -136,6 +148,20 @@ function buildMinimalVenue(overrides?: Partial<LoadedVenue>): LoadedVenue {
   };
 }
 
+const PUBLIC_VERSION_ID = "a".repeat(64);
+
+function bundleLoadResult(
+  venue = buildMinimalVenue(),
+  publicVersionId: string | null = PUBLIC_VERSION_ID,
+): KirikoBundleLoadResult {
+  return {
+    venue,
+    metadata: { datasetId: "default/tokyo-station", version: 7 },
+    publicVersionId,
+  };
+}
+
+
 const loadImdfArchiveMock = vi.fn();
 
 vi.mock("../imdf/loadImdfArchive", () => ({
@@ -158,9 +184,135 @@ vi.mock("../imdf/fetchImdfArchive", async (importOriginal) => {
   };
 });
 
+const meMock = vi.fn<() => Promise<ApiUser | null>>();
+const loginMock = vi.fn<(username: string, password: string) => Promise<ApiUser>>();
+const getIssuesMock = vi.fn<(publicId: string, signal: AbortSignal) => Promise<IssueCollection>>();
+const listReviewersMock = vi.fn<() => Promise<ReviewerSummary[]>>();
+const createIssueMock = vi.fn<(publicId: string, input: CreateIssueInput) => Promise<{
+  revision: number;
+  resourceId: string;
+}>>();
+const createReplyMock = vi.fn();
+const patchIssueMock = vi.fn();
+const patchReplyMock = vi.fn();
+const deleteIssueMock = vi.fn();
+const deleteReplyMock = vi.fn();
+
+vi.mock("../gallery/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof GalleryApiModule>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      me: () => meMock(),
+      login: (username: string, password: string) => loginMock(username, password),
+    },
+  };
+});
+
+vi.mock("../issues/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof IssueApiModule>();
+  return {
+    ...actual,
+    issueApi: {
+      ...actual.issueApi,
+      getIssues: (publicId: string, signal: AbortSignal) => getIssuesMock(publicId, signal),
+      listReviewers: () => listReviewersMock(),
+      createIssue: (publicId: string, input: CreateIssueInput) =>
+        createIssueMock(publicId, input),
+      createReply: (...args: unknown[]) => createReplyMock(...args),
+      patchIssue: (...args: unknown[]) => patchIssueMock(...args),
+      patchReply: (...args: unknown[]) => patchReplyMock(...args),
+      deleteIssue: (...args: unknown[]) => deleteIssueMock(...args),
+      deleteReply: (...args: unknown[]) => deleteReplyMock(...args),
+    },
+  };
+});
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+
+  readonly listeners = new Map<string, EventListener[]>();
+  closed = false;
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  emit(type: "open" | "error" | "revision", revision?: number): void {
+    const event =
+      type === "revision"
+        ? new MessageEvent<string>("revision", { data: JSON.stringify({ revision }) })
+        : new Event(type);
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+}
+
+function resetIssueMocks(): void {
+  meMock.mockReset().mockResolvedValue(null);
+  loginMock.mockReset().mockResolvedValue({ id: 1, username: "daniel", role: "member" });
+  getIssuesMock.mockReset().mockResolvedValue({ revision: 0, issues: [] });
+  listReviewersMock.mockReset().mockResolvedValue([]);
+  createIssueMock.mockReset().mockResolvedValue({ revision: 1, resourceId: "created-issue" });
+  createReplyMock.mockReset().mockResolvedValue({ revision: 1, resourceId: "created-reply" });
+  patchIssueMock.mockReset().mockResolvedValue({ revision: 1, resourceId: "issue-1" });
+  patchReplyMock.mockReset().mockResolvedValue({ revision: 1, resourceId: "reply-1" });
+  deleteIssueMock.mockReset().mockResolvedValue({ revision: 1, resourceId: "issue-1" });
+  deleteReplyMock.mockReset().mockResolvedValue({ revision: 1, resourceId: "reply-1" });
+  FakeEventSource.instances.length = 0;
+  vi.stubGlobal("EventSource", FakeEventSource);
+}
+
+function makeIssue(overrides: Partial<ReviewIssue> = {}): ReviewIssue {
+  return {
+    id: "issue-1",
+    pinNumber: 1,
+    rowVersion: 1,
+    bodyMarkdown: "Check this location",
+    anchor: {
+      levelId: LEVEL_1F.id,
+      longitude: 139.7671,
+      latitude: 35.6811,
+      featureId: SHOP_FEATURE.id,
+    },
+    status: "open",
+    author: { id: 2, username: "reviewer" },
+    assignee: null,
+    dueDate: null,
+    createdAt: "2026-07-18T10:00:00Z",
+    updatedAt: "2026-07-18T10:00:00Z",
+    deletedAt: null,
+    replies: [],
+    ...overrides,
+  } as ReviewIssue;
+}
+
+function issueCollection(issues: ReviewIssue[], revision = 1): IssueCollection {
+  return { revision, issues };
+}
+
 vi.mock("../map/IndoorMap", () => ({
   IndoorMap: function IndoorMapStub(props: IndoorMapProps) {
     const identityRef = useRef({ n: 1 });
+    const firstPin = props.issueReview?.pins[0];
+    const placementAnchor = {
+      levelId: props.levelId,
+      longitude: 139.7671,
+      latitude: 35.6811,
+      featureId: SHOP_FEATURE.id,
+    };
     return (
       <div
         data-testid="indoor-map-stub"
@@ -169,6 +321,14 @@ vi.mock("../map/IndoorMap", () => ({
         data-locale={props.locale}
         data-theme-id={props.theme.id}
         data-identity={identityRef.current.n}
+        data-issue-pins={props.issueReview?.pins.map(({ id }) => id).join(",") ?? ""}
+        data-issue-selected={props.issueReview?.selectedIssueId ?? ""}
+        data-issue-feature={props.issueReview?.featureId ?? ""}
+        data-issue-placement={String(props.issueReview?.placementMode === true)}
+        data-camera-key={props.issueReview?.cameraRequest?.key ?? ""}
+        data-camera-level={props.issueReview?.cameraRequest?.levelId ?? ""}
+        data-camera-longitude={props.issueReview?.cameraRequest?.longitude ?? ""}
+        data-camera-latitude={props.issueReview?.cameraRequest?.latitude ?? ""}
       >
         <button
           type="button"
@@ -186,6 +346,50 @@ vi.mock("../map/IndoorMap", () => ({
         >
           Clear map selection
         </button>
+        {firstPin !== undefined && props.issueReview !== null ? (
+          <button
+            type="button"
+            onClick={() => {
+              props.issueReview?.onSelectIssue(firstPin.id);
+            }}
+          >
+            Select first issue pin
+          </button>
+        ) : null}
+        {props.issueReview?.placementMode === true ? (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                props.issueReview?.onPlaceIssue(placementAnchor);
+              }}
+            >
+              Place issue on feature
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                props.issueReview?.onPlaceIssue(placementAnchor);
+                props.issueReview?.onPlaceIssue(placementAnchor);
+              }}
+            >
+              Place issue twice
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                props.issueReview?.onPlaceIssue({
+                  ...placementAnchor,
+                  longitude: 139.765,
+                  latitude: 35.68,
+                  featureId: null,
+                });
+              }}
+            >
+              Place issue at map center
+            </button>
+          </>
+        ) : null}
       </div>
     );
   },
@@ -206,11 +410,25 @@ async function uploadViaHiddenInput(file: File): Promise<void> {
   await userEvent.upload(input!, file);
 }
 
+async function renderDataset(
+  publicVersionId: string | null = PUBLIC_VERSION_ID,
+  venue: LoadedVenue = buildMinimalVenue(),
+) {
+  loadKirikoBundleMock.mockResolvedValue(bundleLoadResult(venue, publicVersionId));
+  window.history.replaceState(null, "", "/?dataset=tokyo-station&lang=en");
+  const result = render(<App />);
+  await waitFor(() => {
+    expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+  });
+  return result;
+}
+
 describe("App", () => {
   beforeEach(() => {
     loadImdfArchiveMock.mockReset();
     loadKirikoBundleMock.mockReset();
     fetchImdfFileMock.mockReset();
+    resetIssueMocks();
   });
 
   afterEach(() => {
@@ -268,6 +486,11 @@ describe("App", () => {
     expect(loadImdfArchiveMock).toHaveBeenCalledWith(expect.any(File), expect.any(AbortSignal));
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
     expect(loadKirikoBundleMock).not.toHaveBeenCalled();
+    expect(getIssuesMock).not.toHaveBeenCalled();
+    expect(meMock).not.toHaveBeenCalled();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "課題" })).toBeNull();
   });
   it("routes dropped ZIP files only through the local archive loader", async () => {
     loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
@@ -284,6 +507,11 @@ describe("App", () => {
     });
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
     expect(loadKirikoBundleMock).not.toHaveBeenCalled();
+    expect(getIssuesMock).not.toHaveBeenCalled();
+    expect(meMock).not.toHaveBeenCalled();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "課題" })).toBeNull();
   });
 
   it("shows venueLoadErrorCopy in role=alert and keeps the previous venue when replacement fails", async () => {
@@ -436,15 +664,19 @@ describe("App deep links", () => {
     loadImdfArchiveMock.mockReset();
     fetchImdfFileMock.mockReset();
     loadKirikoBundleMock.mockReset();
+    resetIssueMocks();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
     window.history.replaceState(null, "", "/");
   });
 
-  it("routes dataset deep links only through the bundle loader and preserves viewer params", async () => {
-    loadKirikoBundleMock.mockResolvedValue(buildMinimalVenue());
+  it("admits a dataset envelope with permanent identity and preserves viewer params in embed mode", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    loadKirikoBundleMock.mockResolvedValue(bundleLoadResult());
     window.history.replaceState(
       null,
       "",
@@ -463,10 +695,28 @@ describe("App deep links", () => {
     expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
     expect(loadImdfArchiveMock).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-level-id")).toBe(LEVEL_2F.id);
     expect(screen.getByTestId("indoor-map-stub").getAttribute("data-locale")).toBe("en");
     expect(container.querySelector(".context-bar")).toBeNull();
     expect(container.querySelector(".icon-rail")).toBeNull();
+    expect(getIssuesMock).not.toHaveBeenCalled();
+    expect(meMock).not.toHaveBeenCalled();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it("admits a dataset venue when its permanent identity is missing", async () => {
+    loadKirikoBundleMock.mockResolvedValue(bundleLoadResult(buildMinimalVenue(), null));
+    window.history.replaceState(null, "", "/?dataset=tokyo-station");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("テスト駅")).toBeTruthy();
+    });
+    expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("retries a failed dataset through the same bundle provenance only", async () => {
@@ -478,7 +728,7 @@ describe("App deep links", () => {
     render(<App />);
 
     await screen.findByRole("alert");
-    loadKirikoBundleMock.mockResolvedValueOnce(buildMinimalVenue());
+    loadKirikoBundleMock.mockResolvedValueOnce(bundleLoadResult());
     await user.click(screen.getByRole("button", { name: "再試行" }));
 
     await waitFor(() => {
@@ -501,7 +751,7 @@ describe("App deep links", () => {
 
   it("retries a failed local replacement without switching back to dataset provenance", async () => {
     const user = userEvent.setup();
-    loadKirikoBundleMock.mockResolvedValueOnce(buildMinimalVenue());
+    loadKirikoBundleMock.mockResolvedValueOnce(bundleLoadResult());
     window.history.replaceState(null, "", "/?dataset=tokyo-station");
     render(<App />);
     await waitFor(() => {
@@ -532,12 +782,36 @@ describe("App deep links", () => {
     expect(fetchImdfFileMock).not.toHaveBeenCalled();
   });
 
-  it("aborts a dataset attempt and ignores its stale result when a local ZIP replaces it", async () => {
-    let resolveDataset: ((venue: LoadedVenue) => void) | undefined;
+  it("clears dataset provenance only after a successful local replacement", async () => {
+    loadKirikoBundleMock.mockResolvedValueOnce(bundleLoadResult());
+    window.history.replaceState(null, "", "/?dataset=tokyo-station");
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("テスト駅")).toBeTruthy();
+    });
+
+    const localVenue = buildMinimalVenue({
+      venue: {
+        ...VENUE_FEATURE,
+        labels: { ja: "ローカル会場", en: "Local Venue" },
+      },
+    });
+    loadImdfArchiveMock.mockResolvedValueOnce(localVenue);
+    await uploadViaHiddenInput(zipFile("local.zip"));
+
+    await waitFor(() => {
+      expect(screen.getByText("ローカル会場")).toBeTruthy();
+    });
+    expect(loadKirikoBundleMock).toHaveBeenCalledTimes(1);
+    expect(loadImdfArchiveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a dataset attempt and suppresses its stale venue and provenance", async () => {
+    let resolveDataset: ((result: KirikoBundleLoadResult) => void) | undefined;
     let datasetSignal: AbortSignal | undefined;
     loadKirikoBundleMock.mockImplementation(
       (_src: string, signal: AbortSignal) =>
-        new Promise<LoadedVenue>((resolve) => {
+        new Promise<KirikoBundleLoadResult>((resolve) => {
           datasetSignal = signal;
           resolveDataset = resolve;
         }),
@@ -561,14 +835,14 @@ describe("App deep links", () => {
       expect(screen.getByText("ローカル会場")).toBeTruthy();
     });
     expect(datasetSignal?.aborted).toBe(true);
-    resolveDataset?.(buildMinimalVenue());
+    resolveDataset?.(bundleLoadResult());
     await waitFor(() => {
       expect(screen.queryByText("テスト駅")).toBeNull();
       expect(screen.getByText("ローカル会場")).toBeTruthy();
     });
   });
 
-  it("embed deep link hides chrome, auto-loads src, and selects the requested level", async () => {
+  it("gives src precedence over dataset, clears provenance, and preserves embed viewer params", async () => {
     const venue = buildMinimalVenue();
     fetchImdfFileMock.mockResolvedValue(zipFile("minimal.zip"));
     loadImdfArchiveMock.mockResolvedValue(venue);
@@ -596,6 +870,10 @@ describe("App deep links", () => {
     expect(container.querySelector(".kiriko-badge")).toBeTruthy();
     expect(container.querySelector('input[type="file"]')).toBeTruthy();
     expect(screen.queryByRole("button", { name: "IMDF ZIP を開く" })).toBeNull();
+    expect(getIssuesMock).not.toHaveBeenCalled();
+    expect(meMock).not.toHaveBeenCalled();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
   });
 
   it("lang initializes locale and the legacy theme param is ignored", async () => {
@@ -617,6 +895,11 @@ describe("App deep links", () => {
     const stub = screen.getByTestId("indoor-map-stub");
     expect(stub.getAttribute("data-locale")).toBe("en");
     expect(stub.getAttribute("data-theme-id")).toBe("kiriko");
+    expect(getIssuesMock).not.toHaveBeenCalled();
+    expect(meMock).not.toHaveBeenCalled();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Issues" })).toBeNull();
   });
 
   it("fetch failure shows fetch_failed copy and retry re-fetches", async () => {
@@ -642,5 +925,498 @@ describe("App deep links", () => {
     expect(fetchImdfFileMock).toHaveBeenCalledTimes(2);
     expect(loadImdfArchiveMock).toHaveBeenCalledTimes(1);
     expect(loadKirikoBundleMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("App review issue integration", () => {
+  beforeEach(() => {
+    loadImdfArchiveMock.mockReset();
+    fetchImdfFileMock.mockReset();
+    loadKirikoBundleMock.mockReset();
+    resetIssueMocks();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("shows an issue-specific identity error without starting issue or auth requests", async () => {
+    await renderDataset(null);
+    const user = userEvent.setup();
+
+    const issuesToggle = screen.getByRole("button", { name: "Issues" });
+    expect(issuesToggle.getAttribute("aria-pressed")).toBe("false");
+    await user.click(issuesToggle);
+
+    expect(await screen.findByText("Issues aren't available for this dataset.")).toBeTruthy();
+    expect(getIssuesMock).not.toHaveBeenCalled();
+    expect(meMock).not.toHaveBeenCalled();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(document.querySelector(".map-stage__error")).toBeNull();
+  });
+
+  it("loads public issues, resolves identity once, and counts active roots across floors", async () => {
+    const currentUser: ApiUser = { id: 1, username: "daniel", role: "member" };
+    const issues = [
+      makeIssue(),
+      makeIssue({
+        id: "issue-2",
+        pinNumber: 2,
+        bodyMarkdown: "Second floor",
+        status: "in_review",
+        anchor: {
+          levelId: LEVEL_2F.id,
+          longitude: 139.768,
+          latitude: 35.682,
+        },
+      }),
+      makeIssue({ id: "issue-3", pinNumber: 3, bodyMarkdown: "Closed", status: "closed" }),
+    ];
+    getIssuesMock.mockResolvedValue(issueCollection(issues));
+    meMock.mockResolvedValue(currentUser);
+    listReviewersMock.mockResolvedValue([{ id: 1, username: "daniel" }]);
+
+    await renderDataset();
+
+    await waitFor(() => {
+      expect(getIssuesMock).toHaveBeenCalledWith(PUBLIC_VERSION_ID, expect.any(AbortSignal));
+      expect(meMock).toHaveBeenCalledTimes(1);
+      expect(listReviewersMock).toHaveBeenCalledTimes(1);
+    });
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0]?.url).toBe(
+      `/api/review/versions/${PUBLIC_VERSION_ID}/issues/events`,
+    );
+
+    const issuesToggle = screen.getByRole("button", { name: "Issues" });
+    expect(issuesToggle.textContent).toContain("2");
+    expect(screen.getByTestId("indoor-map-stub").getAttribute("data-issue-pins")).toBe(
+      "issue-1",
+    );
+
+    await userEvent.click(issuesToggle);
+    expect(await screen.findByRole("option", { name: /#1 Check this location/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New issue" })).toBeTruthy();
+  });
+
+  it("keeps a signed-out identity in public read-only mode without reviewer lookup", async () => {
+    getIssuesMock.mockResolvedValue(issueCollection([makeIssue()]));
+    meMock.mockResolvedValue(null);
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    expect(await screen.findByRole("option", { name: /#1 Check this location/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in to create issues" })).toBeTruthy();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/verify your account/)).toBeNull();
+  });
+
+  it("retains the signed-in actor and public queue when reviewer lookup fails", async () => {
+    getIssuesMock.mockResolvedValue(issueCollection([makeIssue()]));
+    meMock.mockResolvedValue({ id: 1, username: "daniel", role: "member" });
+    listReviewersMock.mockRejectedValueOnce(new Error("reviewers unavailable"));
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    expect(await screen.findByRole("option", { name: /#1 Check this location/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New issue" })).toBeTruthy();
+    const authLine = await screen.findByText(/We couldn't verify your account/);
+    const authAlert = authLine.closest('[role="alert"]');
+    expect(authAlert).toBeTruthy();
+
+    await user.click(within(authAlert as HTMLElement).getByRole("button", { name: "Retry" }));
+    await waitFor(() => {
+      expect(meMock).toHaveBeenCalledTimes(2);
+      expect(listReviewersMock).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText(/verify your account/)).toBeNull();
+    });
+    expect(screen.getByRole("option", { name: /#1 Check this location/ })).toBeTruthy();
+  });
+
+  it("keeps public issues usable when auth fails and retries identity explicitly", async () => {
+    getIssuesMock.mockResolvedValue(issueCollection([makeIssue()]));
+    meMock.mockRejectedValueOnce(new Error("auth unavailable"));
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    expect(await screen.findByRole("option", { name: /#1 Check this location/ })).toBeTruthy();
+    const authLine = await screen.findByText(/We couldn't verify your account/);
+    const authAlert = authLine.closest('[role="alert"]');
+    expect(authAlert).toBeTruthy();
+    const retry = within(authAlert as HTMLElement).getByRole("button", { name: "Retry" });
+
+    meMock.mockResolvedValueOnce({ id: 1, username: "daniel", role: "member" });
+    listReviewersMock.mockResolvedValueOnce([{ id: 1, username: "daniel" }]);
+    await user.click(retry);
+
+    await waitFor(() => {
+      expect(meMock).toHaveBeenCalledTimes(2);
+      expect(listReviewersMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "New issue" })).toBeTruthy();
+    });
+    expect(screen.getByRole("option", { name: /#1 Check this location/ })).toBeTruthy();
+    expect(document.querySelector(".map-stage__error")).toBeNull();
+  });
+
+  it("keeps venue alerts separate when the issue collection fails", async () => {
+    getIssuesMock.mockRejectedValue(new Error("issues offline"));
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    expect(await screen.findByText("Issues couldn't be loaded.")).toBeTruthy();
+    expect(screen.getByText("Test Station")).toBeTruthy();
+    expect(document.querySelector(".map-stage__error")).toBeNull();
+  });
+
+  it("closes the old issue session on successful local replacement and ignores late auth", async () => {
+    let resolveIdentity: ((user: ApiUser | null) => void) | undefined;
+    meMock.mockImplementation(
+      () =>
+        new Promise<ApiUser | null>((resolve) => {
+          resolveIdentity = resolve;
+        }),
+    );
+    getIssuesMock.mockResolvedValue(issueCollection([makeIssue()]));
+    await renderDataset();
+    await waitFor(() => {
+      expect(FakeEventSource.instances).toHaveLength(1);
+      expect(getIssuesMock).toHaveBeenCalledTimes(1);
+    });
+    const source = FakeEventSource.instances[0]!;
+
+    loadImdfArchiveMock.mockResolvedValue(
+      buildMinimalVenue({
+        venue: { ...VENUE_FEATURE, labels: { en: "Local Venue", ja: "ローカル会場" } },
+      }),
+    );
+    await uploadViaHiddenInput(zipFile("local.zip"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Local Venue")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Issues" })).toBeNull();
+      expect(source.closed).toBe(true);
+    });
+
+    resolveIdentity?.({ id: 1, username: "late-user", role: "admin" });
+    await Promise.resolve();
+    expect(listReviewersMock).not.toHaveBeenCalled();
+  });
+
+  it("retains the prior issue session when a local replacement fails", async () => {
+    getIssuesMock.mockResolvedValue(issueCollection([makeIssue()]));
+    await renderDataset();
+    await waitFor(() => {
+      expect(FakeEventSource.instances).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "Issues" }).textContent).toContain("1");
+    });
+    const source = FakeEventSource.instances[0]!;
+
+    loadImdfArchiveMock.mockRejectedValue(new VenueLoadError("invalid_archive", "bad local"));
+    await uploadViaHiddenInput(zipFile("broken.zip"));
+
+    expect(await screen.findByText(venueLoadErrorCopy.invalid_archive)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Issues" }).textContent).toContain("1");
+    expect(source.closed).toBe(false);
+    expect(getIssuesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps queue filters, pins, selection, floor, camera, and feature highlight synchronized", async () => {
+    const issues = [
+      makeIssue(),
+      makeIssue({
+        id: "issue-2",
+        pinNumber: 2,
+        bodyMarkdown: "Second floor",
+        status: "in_review",
+        anchor: {
+          levelId: LEVEL_2F.id,
+          longitude: 140.1,
+          latitude: 36.2,
+        },
+      }),
+      makeIssue({
+        id: "issue-3",
+        pinNumber: 3,
+        bodyMarkdown: "Closed first floor",
+        status: "closed",
+      }),
+    ];
+    getIssuesMock.mockResolvedValue(issueCollection(issues));
+    meMock.mockResolvedValue({ id: 1, username: "daniel", role: "member" });
+    await renderDataset();
+    const user = userEvent.setup();
+    const map = screen.getByTestId("indoor-map-stub");
+
+    await waitFor(() => {
+      expect(map.getAttribute("data-issue-pins")).toBe("issue-1");
+    });
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    await user.click(screen.getByRole("button", { name: "Closed" }));
+    expect(map.getAttribute("data-issue-pins")).toBe("issue-3");
+    await user.click(screen.getByRole("button", { name: "Active" }));
+    expect(map.getAttribute("data-issue-pins")).toBe("issue-1");
+
+    await user.click(screen.getByRole("option", { name: /#2 Second floor/ }));
+    await waitFor(() => {
+      expect(map.getAttribute("data-level-id")).toBe(LEVEL_2F.id);
+      expect(map.getAttribute("data-issue-selected")).toBe("issue-2");
+      expect(map.getAttribute("data-camera-key")).toBe("1");
+      expect(map.getAttribute("data-camera-level")).toBe(LEVEL_2F.id);
+      expect(map.getAttribute("data-camera-longitude")).toBe("140.1");
+      expect(map.getAttribute("data-camera-latitude")).toBe("36.2");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Back to issues" }));
+    await user.click(screen.getByRole("button", { name: "1F" }));
+    await waitFor(() => {
+      expect(map.getAttribute("data-issue-pins")).toBe("issue-1");
+    });
+    await user.click(screen.getByRole("button", { name: "Select first issue pin" }));
+    await waitFor(() => {
+      expect(map.getAttribute("data-issue-selected")).toBe("issue-1");
+      expect(map.getAttribute("data-issue-feature")).toBe(SHOP_FEATURE.id);
+      expect(screen.getByRole("button", { name: "Back to issues" })).toBeTruthy();
+    });
+  });
+
+  it("captures feature and map-center placement once and focuses the draft", async () => {
+    const uuid = "11111111-1111-4111-8111-111111111111";
+    const randomUuid = vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    meMock.mockResolvedValue({ id: 1, username: "daniel", role: "member" });
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    await user.click(await screen.findByRole("button", { name: "New issue" }));
+    expect(screen.getByTestId("indoor-map-stub").getAttribute("data-issue-placement")).toBe(
+      "true",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Place issue twice" }));
+    const body = await screen.findByLabelText("Issue body");
+    expect(document.activeElement).toBe(body);
+    expect(randomUuid).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Remove feature" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    const newIssue = await screen.findByRole("button", { name: "New issue" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(newIssue);
+    });
+
+    await user.click(newIssue);
+    await user.click(screen.getByRole("button", { name: "Place issue at map center" }));
+    expect(await screen.findByText("139.765, 35.68")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove feature" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByLabelText("Issue body"));
+    randomUuid.mockRestore();
+  });
+
+  it("clears only a server-rejected stale feature and reuses the draft request on explicit resubmit", async () => {
+    const currentUser: ApiUser = { id: 1, username: "daniel", role: "member" };
+    const reviewers = [
+      { id: 1, username: "daniel" },
+      { id: 3, username: "sakura" },
+    ];
+    meMock.mockResolvedValue(currentUser);
+    listReviewersMock.mockResolvedValue(reviewers);
+    getIssuesMock
+      .mockResolvedValueOnce(issueCollection([], 0))
+      .mockResolvedValueOnce(
+        issueCollection([makeIssue({ id: "created-issue", author: currentUser })], 1),
+      );
+    createIssueMock.mockRejectedValueOnce(
+      new IssueApiError(400, {
+        error: "invalid_anchor",
+        message: "feature missing",
+        details: [{ field: "anchor.featureId", reason: "unknown feature" }],
+      }),
+    );
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    await user.click(await screen.findByRole("button", { name: "New issue" }));
+    await user.click(screen.getByRole("button", { name: "Place issue on feature" }));
+    await user.type(await screen.findByLabelText("Issue body"), "Keep this complete draft");
+    await user.selectOptions(screen.getByLabelText("Assignee"), "3");
+    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-07-31" } });
+
+    await user.click(screen.getByRole("button", { name: "Post issue" }));
+    expect(
+      await screen.findByText(/That feature is no longer in this version/),
+    ).toBeTruthy();
+    const firstInput = createIssueMock.mock.calls[0]?.[1];
+    expect(firstInput).toBeDefined();
+    expect(screen.getByLabelText("Issue body").getAttribute("value")).toBeNull();
+    expect((screen.getByLabelText("Issue body") as HTMLTextAreaElement).value).toBe(
+      "Keep this complete draft",
+    );
+    expect((screen.getByLabelText("Assignee") as HTMLSelectElement).value).toBe("3");
+    expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe("2026-07-31");
+    expect(screen.queryByRole("button", { name: "Remove feature" })).toBeNull();
+    expect(document.querySelector(".map-stage__error")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Post issue" }));
+    await waitFor(() => {
+      expect(createIssueMock).toHaveBeenCalledTimes(2);
+    });
+    const secondInput = createIssueMock.mock.calls[1]?.[1];
+    expect(secondInput?.requestId).toBe(firstInput?.requestId);
+    expect(secondInput?.bodyMarkdown).toBe(firstInput?.bodyMarkdown);
+    expect(secondInput?.assigneeId).toBe(firstInput?.assigneeId);
+    expect(secondInput?.dueDate).toBe(firstInput?.dueDate);
+    expect(secondInput?.anchor.featureId).toBeNull();
+  });
+
+  it("nulls the actor before 401 sign-in, preserves the full draft, and waits for explicit resubmit", async () => {
+    const currentUser: ApiUser = { id: 1, username: "daniel", role: "member" };
+    const reviewers = [
+      { id: 1, username: "daniel" },
+      { id: 3, username: "sakura" },
+    ];
+    meMock.mockResolvedValue(currentUser);
+    loginMock.mockResolvedValue(currentUser);
+    listReviewersMock.mockResolvedValue(reviewers);
+    getIssuesMock
+      .mockResolvedValueOnce(issueCollection([], 0))
+      .mockResolvedValueOnce(
+        issueCollection([makeIssue({ id: "created-issue", author: currentUser })], 1),
+      );
+    createIssueMock.mockRejectedValueOnce(
+      new IssueApiError(401, { error: "unauthorized", message: "session expired" }),
+    );
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    await user.click(await screen.findByRole("button", { name: "New issue" }));
+    await user.click(screen.getByRole("button", { name: "Place issue on feature" }));
+    const body = await screen.findByLabelText("Issue body");
+    await user.type(body, "Draft survives authentication");
+    await user.selectOptions(screen.getByLabelText("Assignee"), "3");
+    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-08-01" } });
+    await user.click(screen.getByRole("button", { name: "Post issue" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Sign in to Kiriko" });
+    const firstInput = createIssueMock.mock.calls[0]?.[1];
+    expect(firstInput).toBeDefined();
+    expect(screen.queryByLabelText("Assignee")).toBeNull();
+    expect(screen.queryByLabelText("Due date")).toBeNull();
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+
+    await user.type(within(dialog).getByLabelText("Username"), "daniel");
+    await user.type(within(dialog).getByLabelText("Password"), "secret");
+    await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(screen.getByLabelText("Issue body"));
+      expect((screen.getByLabelText("Assignee") as HTMLSelectElement).value).toBe("3");
+      expect((screen.getByLabelText("Due date") as HTMLInputElement).value).toBe(
+        "2026-08-01",
+      );
+    });
+    expect((screen.getByLabelText("Issue body") as HTMLTextAreaElement).value).toBe(
+      "Draft survives authentication",
+    );
+    expect(screen.getByRole("button", { name: "Remove feature" })).toBeTruthy();
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Post issue" }));
+    await waitFor(() => {
+      expect(createIssueMock).toHaveBeenCalledTimes(2);
+    });
+    const secondInput = createIssueMock.mock.calls[1]?.[1];
+    expect(secondInput).toEqual(firstInput);
+    expect(listReviewersMock).toHaveBeenCalledTimes(2);
+    expect(document.querySelector(".map-stage__error")).toBeNull();
+  });
+
+  it("returns a remotely deleted selection to the queue with a tombstone notice", async () => {
+    const live = makeIssue();
+    const tombstone = makeIssue({
+      bodyMarkdown: null,
+      deletedAt: "2026-07-19T10:00:00Z",
+      status: "closed",
+      rowVersion: 2,
+    });
+    getIssuesMock
+      .mockResolvedValueOnce(issueCollection([live], 1))
+      .mockResolvedValueOnce(issueCollection([tombstone], 2));
+    await renderDataset();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Issues" }));
+    await user.click(await screen.findByRole("option", { name: /#1 Check this location/ }));
+    expect(screen.getByRole("button", { name: "Back to issues" })).toBeTruthy();
+
+    act(() => {
+      FakeEventSource.instances[0]?.emit("revision", 2);
+    });
+    expect(await screen.findByText("This issue was deleted.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Back to issues" })).toBeNull();
+    expect(screen.getByText("No active issues")).toBeTruthy();
+    expect(document.querySelector(".map-stage__error")).toBeNull();
+  });
+
+  it("uses one compact sheet, exposes ARIA state, and restores placement focus", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(max-width: 899px)",
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => true,
+      })),
+    );
+    meMock.mockResolvedValue({ id: 1, username: "daniel", role: "member" });
+    await renderDataset();
+    const user = userEvent.setup();
+
+    const rail = document.querySelector(".icon-rail");
+    expect(rail?.classList.contains("icon-rail--bar")).toBe(true);
+    const issuesToggle = screen.getByRole("button", { name: "Issues" });
+    expect(issuesToggle.getAttribute("aria-pressed")).toBe("false");
+    await user.click(issuesToggle);
+    expect(issuesToggle.getAttribute("aria-pressed")).toBe("true");
+
+    await user.click(screen.getByRole("button", { name: "Select shop from map" }));
+    expect(document.querySelectorAll(".floating-panel")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Issues" })).toBeTruthy();
+
+    await user.click(await screen.findByRole("button", { name: "New issue" }));
+    expect(issuesToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(document.querySelectorAll(".floating-panel")).toHaveLength(0);
+    expect(screen.getByTestId("indoor-map-stub").getAttribute("data-issue-placement")).toBe(
+      "true",
+    );
+
+    await user.click(issuesToggle);
+    await user.click(screen.getByRole("button", { name: "Cancel placement" }));
+    const newIssue = await screen.findByRole("button", { name: "New issue" });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(newIssue);
+    });
+
+    await user.click(newIssue);
+    await user.click(screen.getByRole("button", { name: "Place issue at map center" }));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByLabelText("Issue body"));
+      expect(screen.getByTestId("indoor-map-stub").getAttribute("data-issue-placement")).toBe(
+        "false",
+      );
+    });
   });
 });

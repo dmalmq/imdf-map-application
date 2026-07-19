@@ -1,4 +1,13 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  expect,
+  type APIRequestContext,
+  type APIResponse,
+  type Locator,
+  type Page,
+  type Request,
+  type TestInfo,
+} from "@playwright/test";
 import { buildMinimalImdfZip } from "../tests/fixtures/buildMinimalImdfZip";
 
 export const MINIMAL_ZIP_NAME = "minimal-imdf.zip";
@@ -20,6 +29,7 @@ export const LEVEL_B1_SHORT = "B1";
 export const LEVEL_2F_SHORT = "2F";
 
 export const OCCUPANT_ID = "a1000008-0000-4000-8000-0000000000c1";
+export const LEVEL_1F_ID = "b1000002-0000-4000-8000-00000000001f";
 export const KIOSK_ID = "f1000001-0000-4000-8000-0000000000f1";
 export const KIOSK_MARKER_JA = "案内キオスク";
 export const KIOSK_MARKER_EN = "Info Kiosk";
@@ -211,4 +221,235 @@ export async function clickBelowMarker(page: Page, label: string): Promise<void>
   const y = box.y + box.height + 8;
   await page.mouse.click(x, y);
   await waitForMapIdle(page);
+}
+
+interface PublishJob {
+  id: string;
+  status: string;
+  error: string | null;
+  result: unknown;
+}
+
+interface StreamState {
+  opened: boolean;
+  open: boolean;
+}
+
+const streamStates = new WeakMap<Page, Map<string, StreamState>>();
+const streamTrackingPages = new WeakSet<Page>();
+
+function issueStreamId(request: Request): string | null {
+  const pathname = new URL(request.url()).pathname;
+  const match = /^\/api\/review\/versions\/([^/]+)\/issues\/events$/.exec(pathname);
+  return match?.[1] === undefined ? null : decodeURIComponent(match[1]);
+}
+
+function ensureIssueStreamTracking(page: Page): Map<string, StreamState> {
+  let states = streamStates.get(page);
+  if (states === undefined) {
+    states = new Map();
+    streamStates.set(page, states);
+  }
+  if (streamTrackingPages.has(page)) {
+    return states;
+  }
+  streamTrackingPages.add(page);
+  page.on("request", (request) => {
+    const publicVersionId = issueStreamId(request);
+    if (publicVersionId !== null) {
+      states!.set(publicVersionId, { opened: true, open: true });
+    }
+  });
+  const markClosed = (request: Request): void => {
+    const publicVersionId = issueStreamId(request);
+    if (publicVersionId === null) {
+      return;
+    }
+    const state = states!.get(publicVersionId);
+    states!.set(publicVersionId, { opened: state?.opened ?? true, open: false });
+  };
+  page.on("requestfinished", markClosed);
+  page.on("requestfailed", markClosed);
+  return states;
+}
+
+async function responseJson<T>(response: APIResponse, label: string): Promise<T> {
+  const text = await response.text();
+  if (!response.ok()) {
+    throw new Error(`${label} failed (${response.status()}): ${text}`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${label} returned invalid JSON: ${text}`);
+  }
+}
+
+async function waitForPublishJob(request: APIRequestContext, jobId: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const response = await request.get(`/api/jobs/${encodeURIComponent(jobId)}`);
+    const job = await responseJson<PublishJob>(response, `publish job ${jobId}`);
+    if (job.status === "done") {
+      return;
+    }
+    if (job.status === "error") {
+      throw new Error(
+        `publish job ${jobId} failed: ${job.error ?? JSON.stringify(job.result)}`,
+      );
+    }
+    await delay(100);
+  }
+  throw new Error(`publish job ${jobId} did not finish within 30000ms`);
+}
+
+export function uniqueDatasetName(prefix: string, testInfo: TestInfo): string {
+  let hash = 2_166_136_261;
+  for (const character of testInfo.testId) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  const suffix = (hash >>> 0).toString(36);
+  return `${prefix}-${testInfo.project.name}-${testInfo.workerIndex}-${suffix}`.slice(0, 120);
+}
+
+export async function publishNextVersion(
+  request: APIRequestContext,
+  venueId: number,
+  bytes?: Buffer,
+): Promise<{ seq: number }> {
+  const buffer = bytes ?? (await minimalImdfZipBuffer());
+  const response = await request.post(`/api/venues/${venueId}/versions`, {
+    multipart: {
+      file: {
+        name: MINIMAL_ZIP_NAME,
+        mimeType: MINIMAL_ZIP_MIME,
+        buffer,
+      },
+    },
+  });
+  const body = await responseJson<{ jobId: string; seq: number }>(
+    response,
+    `publish venue ${venueId}`,
+  );
+  await waitForPublishJob(request, body.jobId);
+  return { seq: body.seq };
+}
+
+export async function publishVenue(
+  request: APIRequestContext,
+  name: string,
+  bytes?: Buffer,
+): Promise<{ venueId: number; slug: string; seq: number }> {
+  const response = await request.post("/api/venues", { data: { name } });
+  const body = await responseJson<{ venue: { id: number; slug: string } }>(
+    response,
+    `create venue "${name}"`,
+  );
+  try {
+    const published = await publishNextVersion(request, body.venue.id, bytes);
+    return { venueId: body.venue.id, slug: body.venue.slug, seq: published.seq };
+  } catch (error) {
+    await request.delete(`/api/venues/${body.venue.id}`);
+    throw error;
+  }
+}
+
+export async function openPublishedDataset(
+  page: Page,
+  slug: string,
+): Promise<{ publicVersionId: string }> {
+  ensureIssueStreamTracking(page);
+  const bundlePath = datasetBundlePath(slug);
+  const bundleResponse = page.waitForResponse(
+    (response) => {
+      const status = response.status();
+      return (
+        new URL(response.url()).pathname === bundlePath &&
+        (status === 200 || status === 304)
+      );
+    },
+  );
+  await page.goto(`/?dataset=${encodeURIComponent(slug)}&lang=en`);
+  const response = await bundleResponse;
+  const publicVersionId = response.headers()["kiriko-version-id"];
+  if (publicVersionId === undefined || !/^[0-9a-f]{64}$/.test(publicVersionId)) {
+    throw new Error(
+      `bundle ${bundlePath} returned invalid Kiriko-Version-Id: ${String(publicVersionId)}`,
+    );
+  }
+  await waitForReadyVenue(page, VENUE_NAME_EN);
+  return { publicVersionId };
+}
+
+export function collectIssueRequests(page: Page): {
+  requests: string[];
+  dispose(): void;
+} {
+  ensureIssueStreamTracking(page);
+  const requests: string[] = [];
+  const listener = (request: Request): void => {
+    const pathname = new URL(request.url()).pathname;
+    if (
+      pathname.startsWith("/api/review/") ||
+      pathname === "/api/reviewers" ||
+      pathname.startsWith("/api/issues/") ||
+      pathname.startsWith("/api/replies/")
+    ) {
+      requests.push(`${request.method()} ${pathname}`);
+    }
+  };
+  page.on("request", listener);
+  return {
+    requests,
+    dispose() {
+      page.off("request", listener);
+    },
+  };
+}
+
+export async function waitForIssueStream(
+  page: Page,
+  publicVersionId: string,
+): Promise<void> {
+  const states = ensureIssueStreamTracking(page);
+  await expect
+    .poll(() => states.get(publicVersionId)?.open ?? false, { timeout: 15_000 })
+    .toBe(true);
+}
+
+export async function waitForIssueStreamClose(
+  page: Page,
+  publicVersionId: string,
+): Promise<void> {
+  const states = ensureIssueStreamTracking(page);
+  await expect
+    .poll(() => {
+      const state = states.get(publicVersionId);
+      return state?.opened === true && state.open === false;
+    }, { timeout: 15_000 })
+    .toBe(true);
+}
+
+export async function dropZip(page: Page, bytes: Buffer): Promise<void> {
+  const target = (await page.locator(".imdf-dropzone").isVisible())
+    ? ".imdf-dropzone"
+    : ".map-stage";
+  await page.locator(target).evaluate(
+    (element, payload) => {
+      const binary = atob(payload);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(
+        new File([bytes], "dropped-minimal-imdf.zip", { type: "application/zip" }),
+      );
+      element.dispatchEvent(
+        new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer }),
+      );
+      element.dispatchEvent(
+        new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }),
+      );
+    },
+    bytes.toString("base64"),
+  );
 }

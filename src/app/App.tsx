@@ -21,13 +21,25 @@ import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { WarningsPanel } from "../components/WarningsPanel";
 import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
 import { ZoomCluster } from "../components/ZoomCluster";
+import { SignInModal } from "../gallery/SignInModal";
 import { VenueLoadError } from "../errors/VenueLoadError";
 import { fetchImdfFile, fileNameFromSrc } from "../imdf/fetchImdfArchive";
 import { loadImdfArchive } from "../imdf/loadImdfArchive";
 import { localizedLabel } from "../imdf/localize";
 import type { LoadedVenue, SearchResult } from "../imdf/types";
-import { IndoorMap, type IndoorMapControls } from "../map/IndoorMap";
+import { issueApi } from "../issues/api";
+import { IssuesPanel } from "../issues/IssuesPanel";
+import { countActiveIssues } from "../issues/IssueQueue";
+import type { ReviewerSummary } from "../issues/types";
+import { useIssueSync } from "../issues/useIssueSync";
+import {
+  IndoorMap,
+  type IndoorMapControls,
+  type IssuePlacementAnchor,
+  type IssueReviewMapProps,
+} from "../map/IndoorMap";
 import { defaultLayerVisibility, type MapLayerGroup } from "../map/layerGroups";
+import { projectPins } from "../map/useIssuePins";
 import { searchVenue } from "../search/searchVenue";
 import {
   initialViewerState,
@@ -36,7 +48,7 @@ import {
   type ViewerState,
 } from "../state/viewerReducer";
 import { kirikoTheme } from "../theme/presets";
-import { datasetBundleUrl } from "../gallery/api";
+import { api, datasetBundleUrl, type ApiUser } from "../gallery/api";
 import { parseViewerParams } from "./viewerParams";
 
 const ui = {
@@ -50,6 +62,7 @@ const ui = {
   searchPanel: { ja: "検索", en: "Search" },
   layersPanel: { ja: "レイヤー", en: "Layers" },
   warningsPanel: { ja: "警告", en: "Warnings" },
+  issuesPanel: { ja: "課題", en: "Issues" },
   closePanel: { ja: "パネルを閉じる", en: "Close panel" },
   closeInspector: { ja: "詳細を閉じる", en: "Close details" },
   attribution: { ja: "IMDF venue data © Company", en: "IMDF venue data © Company" },
@@ -136,9 +149,25 @@ function liveMessage(state: ViewerState): string {
       return ui.empty[locale];
   }
 }
+type BundleProvenance = {
+  datasetId: string;
+  version: number;
+  publicVersionId: string | null;
+};
+
+type IssueMode =
+  | { kind: "hidden" }
+  | { kind: "identity_error" }
+  | { kind: "ready"; publicVersionId: string };
+
+type ViewerLoadResult = {
+  venue: LoadedVenue;
+  provenance: BundleProvenance | null;
+};
+
 interface LoadAttempt {
   fileName: string;
-  loadVenue: (signal: AbortSignal) => Promise<LoadedVenue>;
+  loadVenue: (signal: AbortSignal) => Promise<ViewerLoadResult>;
   requestedLevel?: string;
 }
 
@@ -167,6 +196,87 @@ export function App() {
   const [mapControls, setMapControls] = useState<IndoorMapControls | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [bundleProvenance, setBundleProvenance] = useState<BundleProvenance | null>(null);
+  const issueMode: IssueMode = params.embed
+    ? { kind: "hidden" as const }
+    : bundleProvenance === null
+      ? { kind: "hidden" as const }
+      : bundleProvenance.publicVersionId === null
+        ? { kind: "identity_error" as const }
+        : { kind: "ready" as const, publicVersionId: bundleProvenance.publicVersionId };
+  const issuePublicVersionId =
+    issueMode.kind === "ready" ? issueMode.publicVersionId : null;
+  const issueController = useIssueSync(issuePublicVersionId);
+  const [authVersionId, setAuthVersionId] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
+  const [reviewers, setReviewers] = useState<ReviewerSummary[]>([]);
+  const [authError, setAuthError] = useState(false);
+  const [authAttempt, setAuthAttempt] = useState(0);
+  const [signInOpen, setSignInOpen] = useState(false);
+  const authGenerationRef = useRef(0);
+  const issuePublicVersionIdRef = useRef(issuePublicVersionId);
+  issuePublicVersionIdRef.current = issuePublicVersionId;
+
+  useEffect(() => {
+    const generation = authGenerationRef.current + 1;
+    authGenerationRef.current = generation;
+    setAuthVersionId(issuePublicVersionId);
+    setCurrentUser(null);
+    setReviewers([]);
+    setAuthError(false);
+    setSignInOpen(false);
+
+    if (issuePublicVersionId === null) {
+      return () => {
+        if (authGenerationRef.current === generation) {
+          authGenerationRef.current += 1;
+        }
+      };
+    }
+
+    const isCurrent = () =>
+      authGenerationRef.current === generation &&
+      issuePublicVersionIdRef.current === issuePublicVersionId;
+    void api.me().then(
+      (user) => {
+        if (!isCurrent()) {
+          return;
+        }
+        setCurrentUser(user);
+        if (user === null) {
+          return;
+        }
+        void issueApi.listReviewers().then(
+          (nextReviewers) => {
+            if (isCurrent()) {
+              setReviewers(nextReviewers);
+            }
+          },
+          () => {
+            if (isCurrent()) {
+              setAuthError(true);
+            }
+          },
+        );
+      },
+      () => {
+        if (isCurrent()) {
+          setAuthError(true);
+        }
+      },
+    );
+
+    return () => {
+      if (authGenerationRef.current === generation) {
+        authGenerationRef.current += 1;
+      }
+    };
+  }, [authAttempt, issuePublicVersionId]);
+
+  const issueCurrentUser =
+    authVersionId === issuePublicVersionId ? currentUser : null;
+  const issueReviewers =
+    authVersionId === issuePublicVersionId ? reviewers : [];
 
   const locale = state.locale;
   const venueState = activeVenue(state);
@@ -227,10 +337,228 @@ export function App() {
     );
   }, [venueState, selectedFeature, locale]);
 
+  const [issueCameraRequest, setIssueCameraRequest] =
+    useState<IssueReviewMapProps["cameraRequest"]>(null);
+  const issueCameraKeyRef = useRef(0);
+  const placementCapturedRef = useRef(false);
+  const restorePlacementFocusRef = useRef(false);
+
+  const canonicalIssues = issueController.state.collection?.issues ?? [];
+  const activeIssueCount = countActiveIssues(canonicalIssues);
+  const selectedIssue =
+    issueController.state.selectedIssueId === null
+      ? null
+      : canonicalIssues.find(({ id }) => id === issueController.state.selectedIssueId) ?? null;
+  const selectedIssueFeatureId =
+    venueState !== null &&
+    selectedIssue?.anchor.featureId !== undefined &&
+    venueState.loadedVenue.featuresById.has(selectedIssue.anchor.featureId)
+      ? selectedIssue.anchor.featureId
+      : null;
+  const issuePins = useMemo(
+    () =>
+      issuePublicVersionId === null || venueState === null
+        ? []
+        : projectPins(
+            canonicalIssues,
+            venueState.selectedLevelId,
+            issueController.state.filter,
+            issueCurrentUser?.id ?? null,
+            locale,
+          ),
+    [
+      canonicalIssues,
+      issueController.state.filter,
+      issueCurrentUser?.id,
+      issuePublicVersionId,
+      locale,
+      venueState,
+    ],
+  );
+
+  useEffect(() => {
+    setIssueCameraRequest(null);
+    placementCapturedRef.current = false;
+    restorePlacementFocusRef.current = false;
+  }, [issuePublicVersionId]);
+
+  useEffect(() => {
+    if (issueMode.kind === "hidden") {
+      setActivePanel((current) => (current === "issues" ? null : current));
+    }
+  }, [issueMode.kind]);
+
+  useEffect(() => {
+    if (
+      !restorePlacementFocusRef.current ||
+      activePanel !== "issues" ||
+      issueController.state.placementActive
+    ) {
+      return;
+    }
+    const target = document.querySelector<HTMLButtonElement>(
+      ".floating-panel--issues .issues-panel__footer .btn-primary",
+    );
+    if (target !== null) {
+      restorePlacementFocusRef.current = false;
+      target.focus();
+    }
+  }, [activePanel, issueController.state.placementActive]);
+
+  const retryIssueAuth = useCallback(() => {
+    setAuthAttempt((current) => current + 1);
+  }, []);
+
+  const requestIssueSignIn = useCallback(() => {
+    const publicVersionId = issuePublicVersionIdRef.current;
+    if (publicVersionId === null) {
+      return;
+    }
+    authGenerationRef.current += 1;
+    setCurrentUser(null);
+    setAuthVersionId(publicVersionId);
+    setReviewers([]);
+    setAuthError(false);
+    setSignInOpen(true);
+  }, []);
+
+  const handleIssueSignedIn = useCallback((user: ApiUser) => {
+    const publicVersionId = issuePublicVersionIdRef.current;
+    if (publicVersionId === null) {
+      setSignInOpen(false);
+      return;
+    }
+    const generation = authGenerationRef.current + 1;
+    authGenerationRef.current = generation;
+    setAuthVersionId(publicVersionId);
+    setCurrentUser(user);
+    setReviewers([]);
+    setAuthError(false);
+    setSignInOpen(false);
+
+    void issueApi.listReviewers().then(
+      (nextReviewers) => {
+        if (
+          authGenerationRef.current === generation &&
+          issuePublicVersionIdRef.current === publicVersionId
+        ) {
+          setReviewers(nextReviewers);
+        }
+      },
+      () => {
+        if (
+          authGenerationRef.current === generation &&
+          issuePublicVersionIdRef.current === publicVersionId
+        ) {
+          setAuthError(true);
+        }
+      },
+    );
+  }, []);
+
+  const selectIssueFromQueue = useCallback(
+    (issueId: string) => {
+      issueController.ui.selectIssue(issueId);
+      const issue = issueController.state.collection?.issues.find(({ id }) => id === issueId);
+      if (issue === undefined) {
+        return;
+      }
+      dispatch({ type: "select_level", levelId: issue.anchor.levelId });
+      issueCameraKeyRef.current += 1;
+      setIssueCameraRequest({
+        key: issueCameraKeyRef.current,
+        levelId: issue.anchor.levelId,
+        longitude: issue.anchor.longitude,
+        latitude: issue.anchor.latitude,
+      });
+    },
+    [issueController.state.collection, issueController.ui],
+  );
+
+  const issuesPanelController = useMemo(
+    () => ({
+      ...issueController,
+      ui: {
+        ...issueController.ui,
+        selectIssue: selectIssueFromQueue,
+      },
+    }),
+    [issueController, selectIssueFromQueue],
+  );
+
+  const selectIssueFromPin = useCallback(
+    (issueId: string) => {
+      issueController.ui.selectIssue(issueId);
+      setActivePanel("issues");
+    },
+    [issueController.ui],
+  );
+
+  const beginIssuePlacement = useCallback(() => {
+    placementCapturedRef.current = false;
+    restorePlacementFocusRef.current = false;
+    dispatch({ type: "select_feature", featureId: null });
+    issueController.ui.setPlacement(true);
+    if (compact) {
+      setActivePanel(null);
+    }
+  }, [compact, issueController.ui]);
+
+  const cancelIssuePlacement = useCallback(() => {
+    placementCapturedRef.current = false;
+    restorePlacementFocusRef.current = true;
+    issueController.ui.setPlacement(false);
+    setActivePanel("issues");
+  }, [issueController.ui]);
+
+  const placeIssue = useCallback(
+    (anchor: IssuePlacementAnchor) => {
+      if (!issueController.state.placementActive || placementCapturedRef.current) {
+        return;
+      }
+      placementCapturedRef.current = true;
+      issueController.ui.startDraft({
+        levelId: anchor.levelId,
+        longitude: anchor.longitude,
+        latitude: anchor.latitude,
+        ...(anchor.featureId === null ? {} : { featureId: anchor.featureId }),
+      });
+      issueController.ui.setPlacement(false);
+      setActivePanel("issues");
+    },
+    [issueController.state.placementActive, issueController.ui],
+  );
+
+  const issueReview = useMemo<IssueReviewMapProps | null>(
+    () =>
+      issuePublicVersionId === null || venueState === null
+        ? null
+        : {
+            placementMode: issueController.state.placementActive,
+            onPlaceIssue: placeIssue,
+            pins: issuePins,
+            selectedIssueId: issueController.state.selectedIssueId,
+            onSelectIssue: selectIssueFromPin,
+            featureId: selectedIssueFeatureId,
+            cameraRequest: issueCameraRequest,
+          },
+    [
+      issueCameraRequest,
+      issueController.state.placementActive,
+      issueController.state.selectedIssueId,
+      issuePins,
+      issuePublicVersionId,
+      placeIssue,
+      selectIssueFromPin,
+      selectedIssueFeatureId,
+      venueState,
+    ],
+  );
+
   const runLoad = useCallback(
     (
       fileName: string,
-      loadVenue: (signal: AbortSignal) => Promise<LoadedVenue>,
+      loadVenue: (signal: AbortSignal) => Promise<ViewerLoadResult>,
       requestedLevel?: string,
     ) => {
       retryAttemptRef.current = {
@@ -247,15 +575,16 @@ export function App() {
       dispatch({ type: "load_started", fileName });
 
       void loadVenue(controller.signal)
-        .then((venue) => {
+        .then((result) => {
           if (token !== attemptTokenRef.current) {
             return;
           }
           retryAttemptRef.current = null;
+          setBundleProvenance(result.provenance);
           dispatch({
             type: "load_succeeded",
             fileName,
-            venue,
+            venue: result.venue,
             ...(requestedLevel !== undefined ? { requestedLevel } : {}),
           });
         })
@@ -279,7 +608,10 @@ export function App() {
 
   const handleFile = useCallback(
     (file: File) => {
-      runLoad(file.name, (signal) => loadImdfArchive(file, signal));
+      runLoad(file.name, async (signal) => ({
+        venue: await loadImdfArchive(file, signal),
+        provenance: null,
+      }));
     },
     [runLoad],
   );
@@ -300,7 +632,10 @@ export function App() {
         fileNameFromSrc(src),
         async (signal) => {
           const file = await fetchImdfFile(src, signal);
-          return loadImdfArchive(file, signal);
+          return {
+            venue: await loadImdfArchive(file, signal),
+            provenance: null,
+          };
         },
         requestedLevel,
       );
@@ -309,7 +644,20 @@ export function App() {
     if (params.dataset !== null) {
       const dataset = params.dataset;
       const bundleUrl = datasetBundleUrl(dataset);
-      runLoad(dataset, (signal) => loadKirikoBundle(bundleUrl, signal), requestedLevel);
+      runLoad(
+        dataset,
+        async (signal) => {
+          const result = await loadKirikoBundle(bundleUrl, signal);
+          return {
+            venue: result.venue,
+            provenance: {
+              ...result.metadata,
+              publicVersionId: result.publicVersionId,
+            },
+          };
+        },
+        requestedLevel,
+      );
     }
   }, [runLoad, params]);
 
@@ -494,6 +842,7 @@ export function App() {
             theme={kirikoTheme}
             layerVisibility={layerVisibility}
             onSelectFeature={onMapSelectFeature}
+            issueReview={issueReview}
             onControls={onControls}
           />
         ) : null}
@@ -514,6 +863,8 @@ export function App() {
                 locale={locale}
                 activePanel={activePanel}
                 warningCount={warnings.length}
+                issuesVisible={issueMode.kind !== "hidden"}
+                issueCount={activeIssueCount}
                 onToggle={onToggleRail}
                 variant={compact ? "bar" : "rail"}
               />
@@ -555,6 +906,30 @@ export function App() {
                 className="floating-panel--left"
               >
                 <LayersPanel locale={locale} visibility={layerVisibility} onToggle={onToggleLayer} />
+              </FloatingPanel>
+            ) : null}
+
+            {showMap && activePanel === "issues" && issueMode.kind !== "hidden" ? (
+              <FloatingPanel
+                title={ui.issuesPanel[locale]}
+                closeLabel={ui.closePanel[locale]}
+                onClose={() => {
+                  setActivePanel(null);
+                }}
+                className="floating-panel--left floating-panel--issues"
+              >
+                <IssuesPanel
+                  locale={locale}
+                  controller={issuesPanelController}
+                  currentUser={issueCurrentUser}
+                  reviewers={issueReviewers}
+                  identityError={issueMode.kind === "identity_error"}
+                  authError={authError}
+                  onRetryAuth={retryIssueAuth}
+                  onRequestSignIn={requestIssueSignIn}
+                  onBeginPlacement={beginIssuePlacement}
+                  onCancelPlacement={cancelIssuePlacement}
+                />
               </FloatingPanel>
             ) : null}
 
@@ -684,6 +1059,15 @@ export function App() {
           </div>
         ) : null}
       </main>
+      {signInOpen ? (
+        <SignInModal
+          locale={locale}
+          onCancel={() => {
+            setSignInOpen(false);
+          }}
+          onSignedIn={handleIssueSignedIn}
+        />
+      ) : null}
     </div>
   );
 }

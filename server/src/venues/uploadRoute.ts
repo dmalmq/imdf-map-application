@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
@@ -7,6 +8,10 @@ const TENANT_ID = 1;
 /** The Rust importer is authoritative for every decompressed limit; this
  * only bounds the raw multipart upload before it reaches that pipeline. */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+export function newPublicVersionId(): string {
+  return randomBytes(32).toString("hex");
+}
 
 export function registerUploadRoute(app: FastifyInstance): void {
   app.post(
@@ -47,9 +52,9 @@ export function registerUploadRoute(app: FastifyInstance): void {
         }).m ?? 0) + 1;
       const info = db
         .prepare(
-          "INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, ?, ?, 'imdf')",
+          "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, ?, ?, ?, 'imdf')",
         )
-        .run(id, nextSeq, hash);
+        .run(id, nextSeq, newPublicVersionId(), hash);
       const versionId = Number(info.lastInsertRowid);
       const jobId = request.server.queue.enqueue("publish_imdf", { versionId });
       return reply.code(202).send({ jobId, versionId, seq: nextSeq });

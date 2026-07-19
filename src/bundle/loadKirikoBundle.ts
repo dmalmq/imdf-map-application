@@ -5,6 +5,17 @@ import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
 import type { BundleDecodeRequest, BundleWorkerFailureCode, BundleWorkerResponse } from "./types";
 import BundleWorker from "./bundle.worker?worker&inline";
 
+const PUBLIC_VERSION_ID = /^[0-9a-f]{64}$/;
+
+export interface KirikoBundleLoadResult {
+  venue: LoadedVenue;
+  metadata: {
+    datasetId: string;
+    version: number;
+  };
+  publicVersionId: string | null;
+}
+
 /**
  * The only codes a bundle-worker `{type:"failed"}` response may legitimately
  * carry: the four `kvb1` domain codes plus the shared runtime/protocol
@@ -85,7 +96,10 @@ function workerFailedError(): VenueLoadError {
  * with `DOMException("Aborted", "AbortError")`. Responses arriving after an
  * abort (or after any other terminal path) are ignored.
  */
-export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promise<LoadedVenue> {
+export async function loadKirikoBundle(
+  src: string,
+  signal?: AbortSignal,
+): Promise<KirikoBundleLoadResult> {
   if (signal?.aborted) {
     throw new DOMException("Aborted", "AbortError");
   }
@@ -107,6 +121,12 @@ export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promi
       "bundle",
     );
   }
+
+  const publicVersionIdHeader = response.headers.get("Kiriko-Version-Id");
+  const publicVersionId =
+    publicVersionIdHeader !== null && PUBLIC_VERSION_ID.test(publicVersionIdHeader)
+      ? publicVersionIdHeader
+      : null;
 
   let buffer: ArrayBuffer;
   try {
@@ -132,7 +152,7 @@ export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promi
     throw workerFailedError();
   }
 
-  return new Promise<LoadedVenue>((resolve, reject) => {
+  return new Promise<KirikoBundleLoadResult>((resolve, reject) => {
     let settled = false;
 
     const cleanup = (): void => {
@@ -186,7 +206,14 @@ export async function loadKirikoBundle(src: string, signal?: AbortSignal): Promi
       }
       settle(() => {
         worker.terminate();
-        resolve(venue);
+        resolve({
+          venue,
+          metadata: {
+            datasetId: data.venue.datasetId,
+            version: data.venue.version,
+          },
+          publicVersionId,
+        });
       });
     };
 

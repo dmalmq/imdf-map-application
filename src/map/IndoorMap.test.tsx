@@ -1,0 +1,531 @@
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { LoadedVenue, ViewerFeature } from "../imdf/types";
+import { kirikoTheme } from "../theme/presets";
+import { INDOOR_SOURCE_ID } from "./featureLayers";
+import { defaultLayerVisibility } from "./layerGroups";
+import { IndoorMap, type IndoorMapProps } from "./IndoorMap";
+import type { MapIssuePin } from "./useIssuePins";
+
+interface FakeMapEvent {
+  point?: { x: number; y: number };
+  lngLat?: { lng: number; lat: number };
+  sourceId?: string;
+  isSourceLoaded?: boolean;
+  dataType?: string;
+}
+
+const mapState = vi.hoisted(() => {
+  const instances: unknown[] = [];
+  class FakeMap {
+    readonly container: HTMLElement;
+    readonly handlers = new Map<string, Set<(event?: FakeMapEvent) => void>>();
+    readonly onceHandlers = new Map<string, Set<(event?: FakeMapEvent) => void>>();
+    readonly canvas = { style: { cursor: "" } };
+    readonly touchZoomRotate = { disableRotation(): void {} };
+    readonly featureStates: Array<{ id: string; state: Record<string, unknown> }> = [];
+    readonly removedStates: Array<{ id: string; key: string }> = [];
+    readonly easeToCalls: Array<{ center: [number, number]; duration?: number }> = [];
+    readonly jumpToCalls: Array<{ center: [number, number] }> = [];
+    readonly sourceData: unknown[] = [];
+    queryResult: Array<{ properties: Record<string, unknown> }> = [];
+    styleLoaded = true;
+    sourceLoaded = true;
+    center = { lng: 0, lat: 0 };
+    removed = false;
+
+    constructor(options: { container: HTMLElement }) {
+      this.container = options.container;
+      instances.push(this);
+    }
+
+    on(type: string, fn: (event?: FakeMapEvent) => void): this {
+      let set = this.handlers.get(type);
+      if (set == null) {
+        set = new Set();
+        this.handlers.set(type, set);
+      }
+      set.add(fn);
+      return this;
+    }
+
+    once(type: string, fn: (event?: FakeMapEvent) => void): this {
+      let set = this.onceHandlers.get(type);
+      if (set == null) {
+        set = new Set();
+        this.onceHandlers.set(type, set);
+      }
+      set.add(fn);
+      return this;
+    }
+
+    off(type: string, fn: (event?: FakeMapEvent) => void): this {
+      this.handlers.get(type)?.delete(fn);
+      this.onceHandlers.get(type)?.delete(fn);
+      return this;
+    }
+
+    emit(type: string, event?: FakeMapEvent): void {
+      for (const fn of [...(this.handlers.get(type) ?? [])]) {
+        fn(event);
+      }
+      const once = this.onceHandlers.get(type);
+      if (once != null) {
+        for (const fn of [...once]) {
+          fn(event);
+        }
+        once.clear();
+      }
+    }
+
+    getContainer(): HTMLElement {
+      return this.container;
+    }
+
+    getCanvas(): { style: { cursor: string } } {
+      return this.canvas;
+    }
+
+    queryRenderedFeatures(): Array<{ properties: Record<string, unknown> }> {
+      return this.queryResult;
+    }
+
+    getSource(): { type: string; setData: (data: unknown) => void } {
+      return { type: "geojson", setData: (data: unknown) => this.sourceData.push(data) };
+    }
+
+    isSourceLoaded(): boolean {
+      return this.sourceLoaded;
+    }
+
+    isStyleLoaded(): boolean {
+      return this.styleLoaded;
+    }
+
+    setFeatureState(target: { id: string }, state: Record<string, unknown>): void {
+      this.featureStates.push({ id: target.id, state });
+    }
+
+    removeFeatureState(target: { id: string }, key: string): void {
+      this.removedStates.push({ id: target.id, key });
+    }
+
+    getLayer(): Record<string, unknown> {
+      return {};
+    }
+
+    setLayoutProperty(): void {}
+    setPaintProperty(): void {}
+
+    project([lng, lat]: [number, number]): { x: number; y: number } {
+      return { x: lng, y: lat };
+    }
+
+    fitBounds(): void {}
+    easeTo(options: { center: [number, number]; duration?: number }): void {
+      this.easeToCalls.push(options);
+    }
+    jumpTo(options: { center: [number, number] }): void {
+      this.jumpToCalls.push(options);
+    }
+    zoomIn(): void {}
+    zoomOut(): void {}
+    getCenter(): { lng: number; lat: number } {
+      return this.center;
+    }
+    remove(): void {
+      this.removed = true;
+    }
+  }
+  return { instances, FakeMap };
+});
+
+type FakeMap = InstanceType<typeof mapState.FakeMap>;
+
+vi.mock("maplibre-gl", () => ({
+  default: { Map: mapState.FakeMap },
+}));
+
+function feature(id: string, overrides: Partial<ViewerFeature> = {}): ViewerFeature {
+  return {
+    id,
+    featureType: "unit",
+    levelId: "level-1",
+    geometry: null,
+    center: [139.7, 35.6],
+    labels: { en: id },
+    altLabels: {},
+    category: "elevator",
+    accessibility: [],
+    restriction: null,
+    sourceProperties: {},
+    ...overrides,
+  };
+}
+
+function baseVenue(features: ViewerFeature[] = []): LoadedVenue {
+  return {
+    manifest: { version: "1.0.0", language: "en" },
+    venue: feature("venue", { featureType: "venue", category: null }),
+    levels: [
+      { id: "level-1", ordinal: 0, label: { en: "L1" }, shortName: { en: "1" } },
+      { id: "level-2", ordinal: 1, label: { en: "L2" }, shortName: { en: "2" } },
+    ],
+    featuresById: new Map(features.map((f) => [f.id, f])),
+    renderFeaturesByLevel: new Map(),
+    searchEntries: [],
+    boundsByLevel: new Map(),
+    warnings: [],
+  };
+}
+
+const DEFAULT_VENUE = baseVenue();
+
+function review(overrides: Partial<NonNullable<IndoorMapProps["issueReview"]>> = {}) {
+  return {
+    placementMode: false,
+    onPlaceIssue: vi.fn(),
+    pins: [] as MapIssuePin[],
+    selectedIssueId: null,
+    onSelectIssue: vi.fn(),
+    featureId: null,
+    cameraRequest: null,
+    ...overrides,
+  } satisfies NonNullable<IndoorMapProps["issueReview"]>;
+}
+
+function baseProps(overrides: Partial<IndoorMapProps> = {}): IndoorMapProps {
+  return {
+    venue: DEFAULT_VENUE,
+    levelId: "level-1",
+    selectedFeatureId: null,
+    locale: "en",
+    theme: kirikoTheme,
+    layerVisibility: { ...defaultLayerVisibility, labels: false },
+    onSelectFeature: vi.fn(),
+    issueReview: null,
+    ...overrides,
+  };
+}
+
+function lastMap(): FakeMap {
+  return mapState.instances.at(-1) as FakeMap;
+}
+
+function renderMap(props: IndoorMapProps): { map: FakeMap; rerender: (next: IndoorMapProps) => void } {
+  const utils = render(<IndoorMap {...props} />);
+  const map = lastMap();
+  act(() => {
+    map.emit("load");
+  });
+  return {
+    map,
+    rerender: (next: IndoorMapProps) => {
+      act(() => {
+        utils.rerender(<IndoorMap {...next} />);
+      });
+    },
+  };
+}
+
+const READY_EVENT: FakeMapEvent = {
+  sourceId: INDOOR_SOURCE_ID,
+  isSourceLoaded: true,
+  dataType: "source",
+};
+
+const originalMatchMedia = window.matchMedia;
+
+beforeEach(() => {
+  mapState.instances.length = 0;
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+  window.matchMedia = originalMatchMedia;
+});
+
+describe("IndoorMap placement", () => {
+  it("captures the map point and queried feature on canvas click while placing", () => {
+    const onSelectFeature = vi.fn();
+    const placement = review({ placementMode: true });
+    const { map } = renderMap(baseProps({ onSelectFeature, issueReview: placement }));
+
+    map.queryResult = [{ properties: { __feature_id: "unit-9" } }];
+    act(() => {
+      map.emit("click", { point: { x: 3, y: 4 }, lngLat: { lng: 139.5, lat: 35.4 } });
+    });
+
+    expect(placement.onPlaceIssue).toHaveBeenCalledWith({
+      levelId: "level-1",
+      longitude: 139.5,
+      latitude: 35.4,
+      featureId: "unit-9",
+    });
+    expect(onSelectFeature).not.toHaveBeenCalled();
+  });
+
+  it("captures a bare map point when no feature is under the placement click", () => {
+    const placement = review({ placementMode: true });
+    const { map } = renderMap(baseProps({ issueReview: placement }));
+
+    map.queryResult = [];
+    act(() => {
+      map.emit("click", { point: { x: 1, y: 1 }, lngLat: { lng: 1, lat: 2 } });
+    });
+
+    expect(placement.onPlaceIssue).toHaveBeenCalledWith({
+      levelId: "level-1",
+      longitude: 1,
+      latitude: 2,
+      featureId: null,
+    });
+  });
+
+  it("runs ordinary feature selection on canvas click outside placement mode", () => {
+    const onSelectFeature = vi.fn();
+    const { map } = renderMap(baseProps({ onSelectFeature, issueReview: review({ placementMode: false }) }));
+
+    map.queryResult = [{ properties: { __feature_id: "unit-3" } }];
+    act(() => {
+      map.emit("click", { point: { x: 1, y: 1 }, lngLat: { lng: 0, lat: 0 } });
+    });
+
+    expect(onSelectFeature).toHaveBeenCalledWith("unit-3");
+  });
+
+  it("captures the marker center and id on a marker click while placing", async () => {
+    const onSelectFeature = vi.fn();
+    const placement = review({ placementMode: true });
+    const venue = baseVenue([feature("unit-ele", { labels: { en: "Elevator A" } })]);
+    renderMap(
+      baseProps({
+        venue,
+        layerVisibility: { ...defaultLayerVisibility, labels: true },
+        onSelectFeature,
+        issueReview: placement,
+      }),
+    );
+
+    const marker = await screen.findByRole("button", { name: "Elevator A" });
+    await userEvent.click(marker);
+
+    expect(placement.onPlaceIssue).toHaveBeenCalledWith({
+      levelId: "level-1",
+      longitude: 139.7,
+      latitude: 35.6,
+      featureId: "unit-ele",
+    });
+    expect(onSelectFeature).not.toHaveBeenCalled();
+  });
+
+  it("exposes a keyboard-operable Place at map center control while placing", async () => {
+    const placement = review({ placementMode: true });
+    const { map } = renderMap(baseProps({ issueReview: placement }));
+    map.center = { lng: 12, lat: 34 };
+    map.queryResult = [];
+
+    const button = screen.getByRole("button", { name: "Place at map center" });
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(placement.onPlaceIssue).toHaveBeenCalledWith({
+      levelId: "level-1",
+      longitude: 12,
+      latitude: 34,
+      featureId: null,
+    });
+  });
+
+  it("localizes the map-center placement control", () => {
+    renderMap(
+      baseProps({
+        locale: "ja",
+        issueReview: review({ placementMode: true }),
+      }),
+    );
+    expect(screen.getByRole("button", { name: "地図の中心に配置" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Place at map center" })).toBeNull();
+  });
+
+  it("hides the Place at map center control outside placement mode", () => {
+    renderMap(baseProps({ issueReview: review({ placementMode: false }) }));
+    expect(screen.queryByRole("button", { name: "Place at map center" })).toBeNull();
+  });
+});
+
+describe("IndoorMap anchor camera", () => {
+  it("centers on the requested coordinate after the source reports ready", () => {
+    const { map, rerender } = renderMap(baseProps({ issueReview: review({ cameraRequest: null }) }));
+    map.sourceLoaded = false;
+
+    rerender(
+      baseProps({
+        issueReview: review({ cameraRequest: { key: 1, levelId: "level-1", longitude: 5, latitude: 6 } }),
+      }),
+    );
+    expect(map.easeToCalls).toHaveLength(0);
+
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+    expect(map.easeToCalls).toEqual([{ center: [5, 6], duration: 450 }]);
+  });
+
+  it("defers cross-floor centering until the floor prop switches", () => {
+    const { map, rerender } = renderMap(baseProps({ levelId: "level-1", issueReview: review({ cameraRequest: null }) }));
+    map.sourceLoaded = false;
+
+    const request = { key: 1, levelId: "level-2", longitude: 5, latitude: 6 };
+    rerender(baseProps({ levelId: "level-1", issueReview: review({ cameraRequest: request }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+    expect(map.easeToCalls).toHaveLength(0);
+
+    rerender(baseProps({ levelId: "level-2", issueReview: review({ cameraRequest: request }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+    expect(map.easeToCalls).toEqual([{ center: [5, 6], duration: 450 }]);
+  });
+
+  it("applies a repeated camera key only once after it has centered", () => {
+    const { map, rerender } = renderMap(baseProps({ issueReview: review({ cameraRequest: null }) }));
+    map.sourceLoaded = false;
+
+    rerender(
+      baseProps({
+        issueReview: review({ cameraRequest: { key: 7, levelId: "level-1", longitude: 1, latitude: 2 } }),
+      }),
+    );
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    // A later render carrying the same key must not re-center, even with new coords.
+    rerender(
+      baseProps({
+        issueReview: review({ cameraRequest: { key: 7, levelId: "level-1", longitude: 9, latitude: 9 } }),
+      }),
+    );
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    expect(map.easeToCalls).toEqual([{ center: [1, 2], duration: 450 }]);
+  });
+
+  it("jumps instead of easing when reduced motion is preferred", () => {
+    window.matchMedia = ((query: string) =>
+      ({
+        matches: true,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+
+    const { map, rerender } = renderMap(baseProps({ issueReview: review({ cameraRequest: null }) }));
+    map.sourceLoaded = false;
+
+    rerender(
+      baseProps({
+        issueReview: review({ cameraRequest: { key: 1, levelId: "level-1", longitude: 5, latitude: 6 } }),
+      }),
+    );
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    expect(map.jumpToCalls).toEqual([{ center: [5, 6] }]);
+    expect(map.easeToCalls).toHaveLength(0);
+  });
+
+  it("survives floor2-wait -> floor1 -> stale ready -> floor2 without wrong-floor centering", () => {
+    const request = { key: 1, levelId: "level-2", longitude: 5, latitude: 6 };
+    const { map, rerender } = renderMap(
+      baseProps({ levelId: "level-2", issueReview: review({ cameraRequest: null }) }),
+    );
+    map.sourceLoaded = false;
+
+    // Request on floor 2 while its source is still loading.
+    rerender(baseProps({ levelId: "level-2", issueReview: review({ cameraRequest: request }) }));
+
+    // App switches to floor 1 before floor 2 became ready; a stale ready fires.
+    rerender(baseProps({ levelId: "level-1", issueReview: review({ cameraRequest: request }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+    expect(map.easeToCalls).toHaveLength(0);
+
+    // App returns to floor 2; the retry must still center once ready.
+    rerender(baseProps({ levelId: "level-2", issueReview: review({ cameraRequest: request }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+    expect(map.easeToCalls).toEqual([{ center: [5, 6], duration: 450 }]);
+  });
+});
+
+describe("IndoorMap issue highlight", () => {
+  it("highlights the issue feature without opening the inspector selection", () => {
+    const onSelectFeature = vi.fn();
+    const { map, rerender } = renderMap(
+      baseProps({ onSelectFeature, issueReview: review({ featureId: null }) }),
+    );
+    map.sourceLoaded = false;
+
+    rerender(baseProps({ onSelectFeature, issueReview: review({ featureId: "unit-7" }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    expect(map.featureStates).toContainEqual({ id: "unit-7", state: { issueHighlight: true } });
+    expect(onSelectFeature).not.toHaveBeenCalled();
+  });
+
+  it("clears the previous issue highlight when the feature changes", () => {
+    const { map, rerender } = renderMap(baseProps({ issueReview: review({ featureId: "unit-7" }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    rerender(baseProps({ issueReview: review({ featureId: null }) }));
+
+    expect(map.removedStates).toContainEqual({ id: "unit-7", key: "issueHighlight" });
+  });
+
+  it("does not apply an obsolete highlight after the feature is cleared before ready", () => {
+    const { map, rerender } = renderMap(baseProps({ issueReview: review({ featureId: null }) }));
+    map.sourceLoaded = false;
+
+    rerender(baseProps({ issueReview: review({ featureId: "unit-A" }) }));
+    rerender(baseProps({ issueReview: review({ featureId: null }) }));
+    act(() => {
+      map.emit("sourcedata", READY_EVENT);
+    });
+
+    expect(map.featureStates.some((s) => s.state.issueHighlight === true)).toBe(false);
+  });
+});
+
+describe("IndoorMap issue pins", () => {
+  it("renders current-floor pins from the issue-review projection", () => {
+    const pins: MapIssuePin[] = [
+      { id: "i1", pinNumber: 1, levelId: "level-1", longitude: 10, latitude: 20, summary: "Gate", status: "open" },
+      { id: "i2", pinNumber: 2, levelId: "level-2", longitude: 30, latitude: 40, summary: "Sign", status: "open" },
+    ];
+    const { map } = renderMap(baseProps({ issueReview: review({ pins }) }));
+    const overlay = map.container.querySelector(".issue-pin-overlay");
+    expect(overlay).toBeTruthy();
+    const buttons = [...map.container.querySelectorAll("button")].filter((b) =>
+      (b.getAttribute("aria-label") ?? "").startsWith("Issue #"),
+    );
+    expect(buttons.map((b) => b.textContent)).toEqual(["1"]);
+  });
+});

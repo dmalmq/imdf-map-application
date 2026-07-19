@@ -1,99 +1,46 @@
-# Task 7 — Dataset Viewer Cutover Report
+### Task 7 report: Issue REST routes and server integration
 
-## Status
+#### RED
 
-Complete. Published datasets now load `/v/default/${slug}/bundle` through `loadKirikoBundle`; explicit `?src=` and local input/drop remain on the TypeScript ZIP worker. Task 8 archive-route removal was intentionally not performed.
+- Added `server/test/issuesRoutes.test.ts` and expanded `server/test/venues.test.ts` before production changes.
+- Initial focused run failed all 11 REST route tests with missing-route `404`s, venue deletion returned only `boolean`, and production SSE lifecycle tests timed out because the shared graph was not registered.
+- Follow-up regressions reproduced malformed, empty, over-limit, unsupported-media, and content-length-mismatch request bodies incorrectly returning/logging `500`, plus missing SSE `400`/`500` response schemas and unscoped SSE validation output before their fixes.
 
-## TDD: RED / GREEN
+#### GREEN
 
-### RED
+- Registered exactly nine issue endpoints. Collection GET and SSE are public; reviewer directory and every mutation use `requireSession`.
+- Collection responses are direct `IssueCollection` projections. Reviewer responses contain only `{id,username}`. Mutations expose only `{revision,resourceId}`; internal repository fields never reach the wire.
+- Added strict TypeBox params/body/response schemas, disabled Ajv additional-property removal, registered `kiriko-rfc3339-utc` with Fastify Ajv, and registered the same format for response union serialization.
+- Encapsulated issue validation/error handling. Schema failures and every request-side Fastify content-parser category (`INVALID_JSON_BODY`, `EMPTY_JSON_BODY`, `BODY_TOO_LARGE`, `INVALID_MEDIA_TYPE`, and `INVALID_CONTENT_LENGTH`) map locally to exact sanitized `400 invalid_request`; only intentional JSON syntax failures include a stable body detail. Domain errors retain their code-gated fields; unexpected causes are logged and return sanitized `500 internal_error`.
+- JSON issue responses use `Cache-Control: no-store`; live SSE retains `text/event-stream`, `no-cache, no-transform`, capacity `503`, and `Retry-After: 15`.
+- Built one production `IssueRepository -> AnchorIndexCache -> IssueEventHub -> IssueService` graph shared by REST and SSE.
+- Venue deletion selects every permanent public version ID and deletes inside one synchronous SQLite transaction. Routes close only those exact hub keys after commit.
+- Added `preClose` hub shutdown so live streams end before socket wait. Ordered `onClose` cleanup clears the cache before closing SQLite.
+- Added the compatible 401 body `{error:"unauthorized",message:"Authentication is required."}`.
 
-1. Changed the gallery API test to require `datasetBundleUrl("tokyo-station") === "/v/default/tokyo-station/bundle"` and added App tests with both loaders mocked. The first run failed because `datasetBundleUrl` did not exist and dataset links still entered `fetchImdfFile`/`loadImdfArchive` instead of `loadKirikoBundle`.
-2. The initial drop regression targeted `.map-stage` while the empty state owns its drop handler on `.imdf-dropzone`; that test setup was corrected before production changes.
-3. Review found that retry on a dataset page could switch a failed local replacement back to dataset provenance. A new dataset → failed local replacement test failed as expected: the retry started `loadKirikoBundle` again instead of retrying the same local `File`.
+#### Acceptance coverage
 
-### GREEN
+- Exact `200`, all four domain `400` categories plus strict extras and every request-parser category, `401`, `403`, opaque `404`, all three `409` conflicts, sanitized `500`, and SSE `503` bodies/status schemas/headers.
+- Root creation and replay, reply creation, four issue patch operations, reply patch, both deletes, stale `current` discriminants, tombstones, and no leaked internal/deleted fields.
+- Published/public access, malformed IDs and extras, UUID-v4 validation, unpublished/unknown parity, reviewer projection, and exact OpenAPI response status schemas.
+- Shared production mutation-to-SSE publication, replay revision stability, capacity release, deletion rollback ordering, exact stream closure, recreated-version isolation, and live `app.close()` completion.
 
-- `datasetBundleUrl` is the sole exported dataset URL builder and returns the exact bundle path.
-- `App` routes dataset/src/local/drop attempts to the correct loader and retains the latest failed `LoadAttempt` for same-provenance retry.
-- Focused unit command: `pnpm exec vitest run src/app/App.test.tsx src/gallery/api.test.ts src/state/viewerReducer.test.ts src/bundle`
-  - Result: **8 files passed, 115 tests passed**.
-- `pnpm typecheck`
-  - Result: **passed**.
+#### Verification
 
-## Provenance State and Data Flow
+- `pnpm core:build:node` — PASS.
+- `TZ=Asia/Tokyo pnpm --filter kiriko-server exec vitest run test/issuesMigration.test.ts test/issuesRepository.test.ts test/issuesValidation.test.ts test/issuesService.test.ts test/issuesSse.test.ts test/issuesRoutes.test.ts test/venues.test.ts` — PASS, 7 files / 209 tests.
+- `pnpm --filter kiriko-server typecheck` — PASS.
+- Project-wide `pnpm test:server`, formatter, and linter were intentionally not run per the Task 7 harness constraint.
 
-| Provenance | Input | Load function | Disallowed calls |
-| --- | --- | --- | --- |
-| Published dataset | `?dataset=<slug>` | `datasetBundleUrl(slug)` → `loadKirikoBundle(url, signal)` | no `fetchImdfFile`; no `loadImdfArchive` |
-| Explicit source | `?src=<url>` | `fetchImdfFile(url, signal)` → `loadImdfArchive(file, signal)` | no `loadKirikoBundle` |
-| Hidden input | selected `File` | `loadImdfArchive(file, signal)` | no fetch; no `loadKirikoBundle` |
-| Drop/dropzone | dropped `.zip` `File` | `loadImdfArchive(file, signal)` | no fetch; no `loadKirikoBundle` |
+#### Files and commit
 
-`src` retains precedence when both `src` and `dataset` are present. No filename, extension, or MIME inference selects the dataset loader. Every path resolves to `LoadedVenue` and enters the existing `load_started`, `load_succeeded`, and `load_failed` reducer actions.
+- Added: `server/src/issues/routes.ts`, `server/test/issuesRoutes.test.ts`.
+- Modified: `server/src/issues/sseRoutes.ts`, `server/src/app.ts`, `server/src/auth/guard.ts`, `server/src/venues/routes.ts`, `server/src/venues/service.ts`, `server/test/venues.test.ts`.
+- Report: `.superpowers/sdd/task-7-report.md`.
+- Commit subject: `feat(server): expose version-pinned review issue API`.
 
-## Retry, Abort, and Stale Attempts
+#### Self-review and concerns
 
-- `runLoad` remains the common reducer/lifecycle path.
-- Starting any attempt aborts the previous `AbortController`, increments the attempt token, and retains the previous ready venue through the existing reducer.
-- Completion/failure dispatches only when its token is current; a late dataset result after a local replacement is ignored.
-- Abort failures do not dispatch an error.
-- Retry stores the latest attempt’s exact loader closure and provenance. Dataset retries the same bundle URL; src repeats fetch + ZIP decode; a failed local replacement retries the same `File` rather than reverting to URL provenance.
-- The retry closure is cleared after a current successful load so a large local `File` is not retained unnecessarily.
-
-Regression coverage also keeps requested level selection, embed chrome, locale initialization, source-over-dataset precedence, previous-venue retention, search/selection/details, and the existing viewer reducer suite green.
-
-## Caller Migration / Reference Evidence
-
-- Clean rename: `datasetArchiveUrl` → `datasetBundleUrl`; no alias or re-export remains.
-- Repository reference search under `src` and `e2e` found only `datasetBundleUrl` at:
-  - `src/gallery/api.ts`
-  - `src/gallery/api.test.ts`
-  - `src/app/App.tsx`
-- No `datasetArchiveUrl` reference remains.
-- Exact API assertion: `/v/default/tokyo-station/bundle`.
-
-## E2E and Network Assertion
-
-Command:
-
-`PATH="$HOME/.cargo/bin:$PATH" pnpm exec playwright test e2e/gallery.spec.ts e2e/viewer.spec.ts e2e/embed.spec.ts --project=chromium`
-
-Result: **8 passed**.
-
-- Gallery sign-in → upload → publish → viewer rendered the published venue through the real server, KVB response, inline worker, and WASM decoder.
-- The gallery request listener is installed before navigation and records dataset-resource paths through ready render. It asserted the exact array `[/v/default/<slug>/bundle]`: exactly one bundle request and no `/archive` request.
-- The local viewer journey remains separate and covers ZIP upload → map → levels → search → selection → inspector details/hours/IDs → warnings → compact layout → corrupt replacement recovery, with zero dataset HTTP requests after app load.
-- Embed `?src=` recorded exactly one source ZIP request and zero dataset bundle/archive requests; retry still re-fetches the source ZIP.
-
-The first gallery E2E run exposed an existing Task 6 inline-worker WASM URL issue: wasm-pack default initialization resolved against a `blob:` `import.meta.url` and returned `worker_failed` after the single bundle fetch. The Task 6 owner fixed the authoritative WASM boundary in separate commit `8578f3a`; the unchanged Task 7 E2E then passed through the real worker/WASM path.
-
-## Browser-Visible Smoke Evidence
-
-A production preview and real API were opened in Chromium at `/?dataset=tokyo-test`. Observed:
-
-- context bar venue: `東京駅テスト会場`;
-- `.indoor-map[data-map-idle="true"]`;
-- visible level, amenity, occupant, and kiosk controls;
-- Performance Resource Timing dataset resources: exactly `http://127.0.0.1:4173/v/default/tokyo-test/bundle` and no archive resource.
-
-## Files
-
-- `src/gallery/api.ts`
-- `src/gallery/api.test.ts`
-- `src/app/App.tsx`
-- `src/app/App.test.tsx`
-- `e2e/helpers.ts`
-- `e2e/gallery.spec.ts`
-- `e2e/viewer.spec.ts`
-- `e2e/embed.spec.ts`
-- `.superpowers/sdd/task-7-report.md`
-
-## Self-Review
-
-A reviewer found one Important issue in the first pass: retry could cross from failed local replacement back to dataset provenance. It was reproduced with a failing test and fixed by retaining the latest `LoadAttempt`. Follow-up review found no remaining Critical or Important issues. The review’s only Minor concern—retaining a successful local `File`—was removed by clearing the retry attempt on success.
-
-## Concerns
-
-- `wasm-pack` 0.13.1 was installed at `$HOME/.cargo/bin` but that directory was absent from the default command PATH, so the exact E2E command required the PATH prefix shown above.
-- The server `/archive` routes and local ZIP loader intentionally remain for Task 8 and later phases respectively.
+- Four reviewer passes were completed; all Critical/Important findings were addressed, including the post-commit request-parser edge cases.
+- The focused rollback and sanitized-500 tests intentionally produce server-side error logs, proving causes are logged while response bodies stay sanitized.
+- No unresolved Task 7 concerns.

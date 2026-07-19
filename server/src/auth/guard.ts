@@ -5,7 +5,7 @@ export async function requireSession(request: FastifyRequest, reply: FastifyRepl
   const token = request.cookies["kiriko_session"];
   const user = token ? sessionUser(request.server.db, token) : null;
   if (user === null) {
-    await reply.code(401).send({ error: "unauthorized" });
+    await reply.code(401).send({ error: "unauthorized", message: "Authentication is required." });
     return;
   }
   request.user = user;

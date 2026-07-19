@@ -1,4 +1,4 @@
-import { compileImdf } from "@kiriko/node";
+import { compileImdf, inspectBundle } from "@kiriko/node";
 
 /** Bundle statistics, API-compatible with the existing `stats_json` shape. */
 export interface ImdfStats {
@@ -231,5 +231,233 @@ export async function compileVenueBundle(
     }
     const message = error instanceof Error ? error.message : String(error);
     throw new CoreCompileError("bridge_error", `native compile bridge failed: ${message}`);
+  }
+}
+
+/**
+ * `@kiriko/node`'s raw inspection bridge contract. Mirrors the generated
+ * `NativeInspectResponse` napi-rs type; treated as untrusted input — see
+ * `validateNativeInspectResponse`.
+ */
+export interface NativeInspectResponse {
+  ok: boolean;
+  inspectionJson?: string;
+  errorJson?: string;
+}
+
+/**
+ * Untrusted: the native addon's resolved value is validated from scratch
+ * (see `validateNativeInspectResponse`), not assumed to match this shape.
+ */
+export type NativeInspectFn = (bundle: Buffer) => Promise<unknown>;
+
+/**
+ * Level/feature anchor projection of one immutable published bundle.
+ * `featureLevels` maps every feature id to its level id, a level feature to
+ * its own id, and a level-independent feature to `null`; both collections
+ * preserve the bundle's canonical decoded order.
+ */
+export interface BundleAnchorIndex {
+  bundleHash: string;
+  levelIds: ReadonlySet<string>;
+  featureLevels: ReadonlyMap<string, string | null>;
+}
+
+/**
+ * A bundle inspection failure. `code` is a stable `kiriko-bundle` codec
+ * code (`invalid_bundle`, `unsupported_bundle_version`,
+ * `bundle_integrity_failed`, `bundle_too_large`),
+ * `"bundle_hash_mismatch"` when the bytes do not hash to the expected
+ * stored value, or `"bridge_error"` when the native addon's response
+ * itself was malformed. These are internal core errors: callers translate
+ * them into their own client-facing codes (never `invalid_anchor` here).
+ */
+export class CoreInspectError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "CoreInspectError";
+  }
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function inspectBridgeError(message: string): CoreInspectError {
+  return new CoreInspectError("bridge_error", message);
+}
+
+/** A validated `NativeInspectResponse`: every field checked before use. */
+type ValidatedInspectResponse = { ok: true; inspectionJson: string } | { ok: false; errorJson: string };
+
+function validateNativeInspectResponse(raw: unknown): ValidatedInspectResponse {
+  if (!isRecord(raw)) {
+    throw inspectBridgeError("native inspect response is not an object");
+  }
+  if (typeof raw.ok !== "boolean") {
+    throw inspectBridgeError("native inspect response ok is not a boolean");
+  }
+  if (raw.ok) {
+    if (typeof raw.inspectionJson !== "string") {
+      throw inspectBridgeError("native inspect response inspectionJson is not a string");
+    }
+    return { ok: true, inspectionJson: raw.inspectionJson };
+  }
+  if (typeof raw.errorJson !== "string") {
+    throw inspectBridgeError("native inspect response errorJson is not a string");
+  }
+  return { ok: false, errorJson: raw.errorJson };
+}
+
+function parseInspectJson(json: string, field: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    throw inspectBridgeError(`native ${field} is not valid JSON`);
+  }
+}
+
+/**
+ * The only error codes the native inspect addon can legitimately emit: the
+ * four stable `kiriko-bundle` codec codes. Anything else in `errorJson`
+ * (client codes like `invalid_anchor`, importer codes, or the
+ * wrapper-generated `bundle_hash_mismatch`) is a bridge contract violation.
+ */
+const BUNDLE_CODEC_CODES: Record<string, true> = {
+  invalid_bundle: true,
+  unsupported_bundle_version: true,
+  bundle_integrity_failed: true,
+  bundle_too_large: true,
+};
+
+/**
+ * Validated inspection payload as plain scalars/arrays: hash form, level id
+ * uniqueness, tuple arity, feature id uniqueness, and level-reference
+ * closure are all checked here, but the final `Set`/`Map` are only
+ * constructed by the caller after the expected-hash equality check passes,
+ * so no index collection ever exists for a bundle that failed validation.
+ */
+function parseInspection(json: string): {
+  bundleHash: string;
+  levelIds: string[];
+  featureLevels: Array<[string, string | null]>;
+} {
+  const parsed = parseInspectJson(json, "inspectionJson");
+  if (!isRecord(parsed)) {
+    throw inspectBridgeError("native inspectionJson is not an object");
+  }
+  if (typeof parsed.bundleHash !== "string" || !SHA256_HEX.test(parsed.bundleHash)) {
+    throw inspectBridgeError("native inspectionJson bundleHash is not 64 lowercase hex chars");
+  }
+  if (!Array.isArray(parsed.levelIds)) {
+    throw inspectBridgeError("native inspectionJson levelIds is not an array");
+  }
+  const levelIds: string[] = [];
+  const seenLevels = new Set<string>();
+  for (const levelId of parsed.levelIds) {
+    if (typeof levelId !== "string") {
+      throw inspectBridgeError("native inspectionJson levelIds entry is not a string");
+    }
+    if (seenLevels.has(levelId)) {
+      throw inspectBridgeError(`native inspectionJson levelIds contains a duplicate: ${levelId}`);
+    }
+    seenLevels.add(levelId);
+    levelIds.push(levelId);
+  }
+  if (!Array.isArray(parsed.featureLevels)) {
+    throw inspectBridgeError("native inspectionJson featureLevels is not an array");
+  }
+  const featureLevels: Array<[string, string | null]> = [];
+  const seenFeatures = new Set<string>();
+  for (const entry of parsed.featureLevels) {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      throw inspectBridgeError("native inspectionJson featureLevels entry is not a 2-tuple");
+    }
+    const [featureId, levelId] = entry as [unknown, unknown];
+    if (typeof featureId !== "string") {
+      throw inspectBridgeError("native inspectionJson featureLevels entry has a non-string feature id");
+    }
+    if (levelId !== null && typeof levelId !== "string") {
+      throw inspectBridgeError("native inspectionJson featureLevels entry level is neither a string nor null");
+    }
+    if (levelId !== null && !seenLevels.has(levelId)) {
+      throw inspectBridgeError(`native inspectionJson featureLevels references an unknown level: ${levelId}`);
+    }
+    if (seenFeatures.has(featureId)) {
+      throw inspectBridgeError(`native inspectionJson featureLevels contains a duplicate feature id: ${featureId}`);
+    }
+    seenFeatures.add(featureId);
+    featureLevels.push([featureId, levelId]);
+  }
+  return { bundleHash: parsed.bundleHash, levelIds, featureLevels };
+}
+
+function parseInspectError(json: string): CoreInspectError {
+  const parsed = parseInspectJson(json, "errorJson");
+  if (!isRecord(parsed) || typeof parsed.code !== "string" || typeof parsed.message !== "string") {
+    throw inspectBridgeError("native errorJson has an unexpected shape");
+  }
+  let details: Record<string, unknown> | undefined;
+  if (parsed.details !== undefined) {
+    if (!isRecord(parsed.details)) {
+      throw inspectBridgeError("native errorJson details is not an object");
+    }
+    details = parsed.details;
+  }
+  // Own-key membership only: a plain index would accept inherited
+  // Object.prototype keys ("toString", "constructor", "__proto__") as
+  // truthy and let them masquerade as stable codec codes.
+  if (!Object.hasOwn(BUNDLE_CODEC_CODES, parsed.code)) {
+    throw inspectBridgeError(`native errorJson has an unknown code: ${parsed.code}`);
+  }
+  return new CoreInspectError(parsed.code, parsed.message, details);
+}
+
+/**
+ * Inspect immutable `kvb1` `bundle` bytes via the native `@kiriko/node`
+ * addon (off the Node.js event loop; see `InspectTask` on the Rust side)
+ * and return the level/feature anchor index. The native addon's resolved
+ * value is treated as untrusted FFI output and validated field by field
+ * before any of it is used, and the whole-file hash the native side
+ * computed must equal `expectedBundleHash` (the stored content address)
+ * exactly. Throws `CoreInspectError` for domain failures (corrupt stored
+ * bytes surface the stable bundle-codec codes; a hash disagreement is
+ * `"bundle_hash_mismatch"`); any malformed native output or unexpected
+ * throw is normalized to `CoreInspectError("bridge_error", ...)` — never a
+ * raw `TypeError`/`SyntaxError` escapes this function.
+ */
+export async function inspectVenueBundle(
+  bundle: Buffer,
+  expectedBundleHash: string,
+  nativeInspect: NativeInspectFn = inspectBundle,
+): Promise<BundleAnchorIndex> {
+  try {
+    const response = validateNativeInspectResponse(await nativeInspect(bundle));
+    if (!response.ok) {
+      throw parseInspectError(response.errorJson);
+    }
+    const parsed = parseInspection(response.inspectionJson);
+    const { bundleHash } = parsed;
+    if (!SHA256_HEX.test(expectedBundleHash) || bundleHash !== expectedBundleHash) {
+      throw new CoreInspectError(
+        "bundle_hash_mismatch",
+        `bundle bytes hash to ${bundleHash} but ${JSON.stringify(expectedBundleHash)} was expected`,
+      );
+    }
+    // The final Set/Map are only built once the bytes' hash equals the
+    // stored content address exactly.
+    return {
+      bundleHash,
+      levelIds: new Set(parsed.levelIds),
+      featureLevels: new Map(parsed.featureLevels),
+    };
+  } catch (error) {
+    if (error instanceof CoreInspectError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CoreInspectError("bridge_error", `native inspect bridge failed: ${message}`);
   }
 }

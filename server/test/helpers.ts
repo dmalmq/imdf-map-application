@@ -1,13 +1,33 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app";
+import { openDb } from "../src/db/db";
+import { migrate } from "../src/db/migrate";
 
 const cleanups: Array<() => Promise<void>> = [];
 
 export const TEST_USER = "test";
 export const TEST_PASSWORD = "test-password";
+
+export function newTestPublicVersionId(): string {
+  return randomBytes(32).toString("hex");
+}
+
+/** Opens a fresh migrated SQLite database without booting the Fastify app. */
+export function makeTestDb(): Database.Database {
+  const dataDir = mkdtempSync(join(tmpdir(), "kiriko-db-test-"));
+  const db = openDb(dataDir);
+  migrate(db);
+  cleanups.push(async () => {
+    db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  return db;
+}
 
 export async function makeTestApp(): Promise<{ app: FastifyInstance; dataDir: string }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kiriko-test-"));
@@ -15,6 +35,8 @@ export async function makeTestApp(): Promise<{ app: FastifyInstance; dataDir: st
     dataDir,
     sessionTtlDays: 30,
     secureCookies: false,
+    issueSseMaxConnections: 512,
+    issueSseMaxPerVersion: 128,
     bootstrapUser: TEST_USER,
     bootstrapPassword: TEST_PASSWORD,
   });

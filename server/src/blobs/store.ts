@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export class BlobStore {
@@ -19,6 +20,10 @@ export class BlobStore {
 
   read(hash: string): Buffer {
     return readFileSync(this.path(hash));
+  }
+
+  readAsync(hash: string): Promise<Buffer> {
+    return readFile(this.path(hash));
   }
 
   put(bytes: Uint8Array): { hash: string; size: number } {

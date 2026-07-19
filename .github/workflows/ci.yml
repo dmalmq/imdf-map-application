@@ -69,7 +69,7 @@ jobs:
           pnpm build
           pnpm exec playwright test --project=chromium
           pnpm exec playwright test --project=firefox
-          npx -y node@24 -e "const core=require('./core/crates/kiriko-node'); if(typeof core.compileImdf!=='function') process.exit(1)"
+          npx -y node@24 -e "const core=require('./core/crates/kiriko-node'); if(typeof core.compileImdf!=='function'||typeof core.inspectBundle!=='function') process.exit(1)"
 
   native-addon:
     name: Native addon (Node ${{ matrix.node }})
@@ -117,4 +117,4 @@ jobs:
       - name: Build and require native addon
         run: |
           pnpm core:build:node
-          node -e "const core=require('./core/crates/kiriko-node'); if(typeof core.compileImdf!=='function') process.exit(1)"
+          node -e "const core=require('./core/crates/kiriko-node'); if(typeof core.compileImdf!=='function'||typeof core.inspectBundle!=='function') process.exit(1)"

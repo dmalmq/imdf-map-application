@@ -80,9 +80,30 @@ export function listVenues(db: Database.Database, tenantId: number): VenueSummar
   });
 }
 
-export function deleteVenue(db: Database.Database, tenantId: number, venueId: number): boolean {
-  const info = db
-    .prepare("DELETE FROM venues WHERE id = ? AND tenant_id = ?")
-    .run(venueId, tenantId);
-  return info.changes > 0;
+export interface DeleteVenueResult {
+  deleted: boolean;
+  publicVersionIds: string[];
+}
+
+export function deleteVenue(
+  db: Database.Database,
+  tenantId: number,
+  venueId: number,
+): DeleteVenueResult {
+  const selectPublicIds = db.prepare(
+    `SELECT v.public_id AS publicVersionId
+     FROM versions v
+     JOIN venues venue ON venue.id = v.venue_id
+     WHERE venue.id = ? AND venue.tenant_id = ?
+     ORDER BY v.seq, v.id`,
+  );
+  const removeVenue = db.prepare("DELETE FROM venues WHERE id = ? AND tenant_id = ?");
+  return db.transaction(() => {
+    const rows = selectPublicIds.all(venueId, tenantId) as Array<{ publicVersionId: string }>;
+    const info = removeVenue.run(venueId, tenantId);
+    return {
+      deleted: info.changes > 0,
+      publicVersionIds: info.changes > 0 ? rows.map((row) => row.publicVersionId) : [],
+    };
+  })();
 }

@@ -20,7 +20,10 @@
 #[macro_use]
 extern crate napi_derive;
 
-use kiriko_bundle::{BundleMetadata, CompileError, CompiledBundle, compile_imdf as compile_bundle};
+use kiriko_bundle::{
+    BundleError, BundleMetadata, CompileError, CompiledBundle, compile_imdf as compile_bundle,
+    inspect_bundle as inspect_bundle_pure,
+};
 use kiriko_model::model::ViewerWarning;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
@@ -149,5 +152,83 @@ pub fn compile_imdf(source: Buffer, dataset_id: String, version: u32) -> AsyncTa
         source: source.to_vec(),
         dataset_id,
         version,
+    })
+}
+
+/// JS-facing discriminated inspection result. `ok` selects which of the
+/// remaining fields are populated: success carries `inspectionJson` (a
+/// serialized `kiriko_bundle::BundleInspection`); failure carries
+/// `errorJson` (`{ code, message }`).
+#[napi(object)]
+pub struct NativeInspectResponse {
+    pub ok: bool,
+    pub inspection_json: Option<String>,
+    pub error_json: Option<String>,
+}
+
+/// Outcome of the blocking inspection step, computed off the event loop.
+/// Both variants carry pre-serialized JSON so decode, hash, *and*
+/// serialization all run on the thread pool and `resolve` only wraps
+/// strings; a rejected bundle is domain data, not a bridge failure.
+pub enum InspectOutcome {
+    Success(String),
+    Failure(String),
+}
+
+pub struct InspectTask {
+    bundle: Vec<u8>,
+}
+
+#[napi]
+impl Task for InspectTask {
+    type Output = InspectOutcome;
+    type JsValue = NativeInspectResponse;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(match inspect_bundle_pure(&self.bundle) {
+            Ok(inspection) => {
+                let json = serde_json::to_string(&inspection).map_err(|e| {
+                    napi::Error::from_reason(format!("serialize bundle inspection: {e}"))
+                })?;
+                InspectOutcome::Success(json)
+            }
+            Err(err) => InspectOutcome::Failure(bundle_error_json(&err).to_string()),
+        })
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(match output {
+            InspectOutcome::Success(inspection_json) => NativeInspectResponse {
+                ok: true,
+                inspection_json: Some(inspection_json),
+                error_json: None,
+            },
+            InspectOutcome::Failure(error_json) => NativeInspectResponse {
+                ok: false,
+                inspection_json: None,
+                error_json: Some(error_json),
+            },
+        })
+    }
+}
+
+fn bundle_error_json(err: &BundleError) -> Value {
+    let mut obj = Map::new();
+    obj.insert("code".to_string(), json!(err.code.as_str()));
+    obj.insert("message".to_string(), json!(err.message));
+    Value::Object(obj)
+}
+
+/// Inspect immutable `kvb1` `bundle` bytes: decode once, validate
+/// level/feature relationships, and project the whole-file SHA-256 plus the
+/// level/feature anchor index. Runs entirely off the Node.js event loop via
+/// `AsyncTask` (the incoming `Buffer` is copied once into an owned
+/// `Vec<u8>` at this binding boundary, matching `CompileTask`); the
+/// returned promise always resolves to a [`NativeInspectResponse`], never
+/// rejecting for domain (bundle-codec or semantic) failures.
+#[napi]
+pub fn inspect_bundle(bundle: Buffer) -> AsyncTask<InspectTask> {
+    AsyncTask::new(InspectTask {
+        bundle: bundle.to_vec(),
     })
 }

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMinimalImdfZip } from "../../tests/fixtures/buildMinimalImdfZip";
 import { CoreCompileError, type CompileVenueMetadata, type ImdfStats, type ViewerWarning } from "../src/core/native";
 import { makePublishRunner } from "../src/jobs/publish";
-import { cleanupTestApps, loginCookie, makeTestApp } from "./helpers";
+import { cleanupTestApps, loginCookie, makeTestApp, newTestPublicVersionId } from "./helpers";
 
 afterEach(cleanupTestApps);
 
@@ -242,8 +242,10 @@ describe("publish identity race", () => {
     const { hash: sourceHashA } = app.blobs.put(sourceA);
     app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHashA, sourceA.byteLength);
     const insertA = app.db
-      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
-      .run(venue.id, sourceHashA);
+      .prepare(
+        "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, 1, ?, ?, 'imdf')",
+      )
+      .run(venue.id, newTestPublicVersionId(), sourceHashA);
     const versionId = Number(insertA.lastInsertRowid);
 
     // A deferred compile we control: resolves only once we say so, well
@@ -267,8 +269,10 @@ describe("publish identity race", () => {
     const { hash: sourceHashB } = app.blobs.put(sourceB);
     app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHashB, sourceB.byteLength);
     const insertB = app.db
-      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
-      .run(venue2.id, sourceHashB);
+      .prepare(
+        "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, 1, ?, ?, 'imdf')",
+      )
+      .run(venue2.id, newTestPublicVersionId(), sourceHashB);
     const replacementId = Number(insertB.lastInsertRowid);
     expect(replacementId).toBe(versionId); // confirms the rowid was actually reused
 
@@ -304,7 +308,7 @@ describe("publish identity race", () => {
     expect((replacementAfter as { sourceHash: string }).sourceHash).toBe(sourceHashB);
   });
 
-  it("treats a same-id/seq/source/status but different-venue-slug replacement as stale: dataset identity is the only mismatch", async () => {
+  it("treats a same-id/venue/seq/source/status replacement with a different public ID as stale", async () => {
     const { app } = await makeTestApp();
     const cookie = await loginCookie(app);
     const venue = await createVenue(app, cookie, "Original Venue");
@@ -312,9 +316,12 @@ describe("publish identity race", () => {
     const source = await buildMinimalImdfZip();
     const { hash: sourceHash } = app.blobs.put(source);
     app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHash, source.byteLength);
+    const originalPublicId = newTestPublicVersionId();
     const insert1 = app.db
-      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
-      .run(venue.id, sourceHash);
+      .prepare(
+        "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, 1, ?, ?, 'imdf')",
+      )
+      .run(venue.id, originalPublicId, sourceHash);
     const versionId = Number(insert1.lastInsertRowid);
 
     let resolveCompile!: (result: { bundle: Buffer; stats: ImdfStats; warnings: ViewerWarning[] }) => void;
@@ -325,27 +332,27 @@ describe("publish identity race", () => {
     const runner = makePublishRunner(app.db, app.blobs, compile);
     const publishPromise = runner(JSON.stringify({ versionId }));
 
-    // Delete the venue (cascades the version) and recreate a venue with a
-    // *different name/slug* that reuses the same emptied venue_id, then a
-    // version that reuses the same emptied version id with the *same*
-    // seq, *same* source hash, and *same* status as the row the pending
-    // compile was launched against. The venue slug is the only thing that
-    // differs — exactly the gap the old (id, venue_id, seq, source,
-    // status) predicate alone could not see, since venue_id itself can be
-    // reused too.
+    // Delete and recreate the same venue and version identity, including
+    // reused numeric ids, slug, seq, source hash, and status. The permanent
+    // public ID is the only mismatch between the stale compile snapshot and
+    // the replacement row.
     app.db.prepare("DELETE FROM venues WHERE id = ?").run(venue.id);
-    const venue2 = await createVenue(app, cookie, "Renamed Venue");
-    expect(venue2.id).toBe(venue.id); // venue_id was reused
-    expect(venue2.slug).not.toBe(venue.slug); // the only differing identity field
+    const venue2 = await createVenue(app, cookie, "Original Venue");
+    expect(venue2.id).toBe(venue.id);
+    expect(venue2.slug).toBe(venue.slug);
+    const replacementPublicId = newTestPublicVersionId();
     const insert2 = app.db
-      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
-      .run(venue2.id, sourceHash);
+      .prepare(
+        "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, 1, ?, ?, 'imdf')",
+      )
+      .run(venue2.id, replacementPublicId, sourceHash);
     const replacementId = Number(insert2.lastInsertRowid);
     expect(replacementId).toBe(versionId); // version id was reused too
 
     const replacementRow = app.db
-      .prepare("SELECT seq, source_blob_hash AS sourceHash, status FROM versions WHERE id = ?")
-      .get(replacementId) as { seq: number; sourceHash: string; status: string };
+      .prepare("SELECT public_id AS publicId, seq, source_blob_hash AS sourceHash, status FROM versions WHERE id = ?")
+      .get(replacementId) as { publicId: string; seq: number; sourceHash: string; status: string };
+    expect(replacementRow.publicId).toBe(replacementPublicId);
     expect(replacementRow.seq).toBe(1);
     expect(replacementRow.sourceHash).toBe(sourceHash);
     expect(replacementRow.status).toBe("draft");
@@ -384,9 +391,12 @@ describe("publish identity race", () => {
     const source = await buildMinimalImdfZip();
     const { hash: sourceHash } = app.blobs.put(source);
     app.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)").run(sourceHash, source.byteLength);
+    const originalPublicId = newTestPublicVersionId();
     const insert1 = app.db
-      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
-      .run(venue.id, sourceHash);
+      .prepare(
+        "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, 1, ?, ?, 'imdf')",
+      )
+      .run(venue.id, originalPublicId, sourceHash);
     const versionId = Number(insert1.lastInsertRowid);
 
     let rejectCompile!: (error: unknown) => void;
@@ -398,14 +408,23 @@ describe("publish identity race", () => {
     const publishPromise = runner(JSON.stringify({ versionId }));
 
     app.db.prepare("DELETE FROM venues WHERE id = ?").run(venue.id);
-    const venue2 = await createVenue(app, cookie, "Renamed Venue");
+    const venue2 = await createVenue(app, cookie, "Original Venue");
     expect(venue2.id).toBe(venue.id);
+    expect(venue2.slug).toBe(venue.slug);
+    const replacementPublicId = newTestPublicVersionId();
     const insert2 = app.db
-      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
-      .run(venue2.id, sourceHash);
+      .prepare(
+        "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, 1, ?, ?, 'imdf')",
+      )
+      .run(venue2.id, replacementPublicId, sourceHash);
     const replacementId = Number(insert2.lastInsertRowid);
     expect(replacementId).toBe(versionId);
 
+    const replacementRow = app.db
+      .prepare("SELECT public_id AS publicId, status FROM versions WHERE id = ?")
+      .get(replacementId) as { publicId: string; status: string };
+    expect(replacementRow.publicId).toBe(replacementPublicId);
+    expect(replacementRow.status).toBe("draft");
     const replacementBefore = app.db
       .prepare("SELECT status, bundle_hash AS bundleHash, source_blob_hash AS sourceHash, error FROM versions WHERE id = ?")
       .get(replacementId);
@@ -443,8 +462,10 @@ describe("publish failure paths", () => {
     // persisted via `blobs.put` — simulates a missing/corrupted blob.
     const missingHash = "0".repeat(64);
     const insert = app.db
-      .prepare("INSERT INTO versions (venue_id, seq, source_blob_hash, source_kind) VALUES (?, 1, ?, 'imdf')")
-      .run(venue.id, missingHash);
+      .prepare(
+        "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, 1, ?, ?, 'imdf')",
+      )
+      .run(venue.id, newTestPublicVersionId(), missingHash);
     const versionId = Number(insert.lastInsertRowid);
 
     const runner = makePublishRunner(app.db, app.blobs);

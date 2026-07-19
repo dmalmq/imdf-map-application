@@ -1,13 +1,14 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { KirikoMark } from "../components/icons";
 import type { LocaleCode } from "../imdf/types";
-import { api, ApiError } from "./api";
+import { api, ApiError, type ApiUser } from "./api";
 
 const ui = {
   title: { ja: "Kiriko にサインイン", en: "Sign in to Kiriko" },
   username: { ja: "ユーザー名", en: "Username" },
   password: { ja: "パスワード", en: "Password" },
   submit: { ja: "サインイン", en: "Sign in" },
+  cancel: { ja: "キャンセル", en: "Cancel" },
   wrong: {
     ja: "ユーザー名またはパスワードが違います",
     en: "Wrong username or password.",
@@ -17,41 +18,81 @@ const ui = {
 
 export interface SignInModalProps {
   locale: LocaleCode;
-  onSignedIn: () => void;
+  onSignedIn: (user: ApiUser) => void;
+  onCancel?: () => void;
 }
 
-export function SignInModal({ locale, onSignedIn }: SignInModalProps) {
+export function SignInModal({ locale, onSignedIn, onCancel }: SignInModalProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const activeRef = useRef(true);
 
+  useEffect(() => {
+    activeRef.current = true;
+    const returnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    usernameRef.current?.focus();
+    return () => {
+      activeRef.current = false;
+      returnFocus?.focus();
+    };
+  }, []);
+
+  const cancel = () => {
+    if (onCancel !== undefined) {
+      onCancel();
+    }
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (event.key === "Escape" && onCancel !== undefined) {
+      event.preventDefault();
+      cancel();
+    }
+  };
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
     api
       .login(username, password)
-      .then(() => {
-        onSignedIn();
+      .then((user) => {
+        if (activeRef.current) {
+          onSignedIn(user);
+        }
       })
       .catch((err: unknown) => {
-        setError(err instanceof ApiError && err.status === 401 ? ui.wrong[locale] : ui.failed[locale]);
+        if (activeRef.current) {
+          setError(err instanceof ApiError && err.status === 401 ? ui.wrong[locale] : ui.failed[locale]);
+        }
       })
       .finally(() => {
-        setBusy(false);
+        if (activeRef.current) {
+          setBusy(false);
+        }
       });
   };
 
   return (
     <div className="modal-overlay">
-      <form className="signin-card" onSubmit={onSubmit} aria-label={ui.title[locale]}>
+      <form
+        className="signin-card"
+        onSubmit={onSubmit}
+        onKeyDown={onKeyDown}
+        role="dialog"
+        aria-modal="true"
+        aria-label={ui.title[locale]}
+      >
         <div className="signin-card__brand">
           <KirikoMark size={32} className="signin-card__mark" />
           <h2 className="signin-card__title">{ui.title[locale]}</h2>
         </div>
         <div className="kiriko-input">
           <input
+            ref={usernameRef}
             aria-label={ui.username[locale]}
             placeholder={ui.username[locale]}
             autoComplete="username"
@@ -78,9 +119,16 @@ export function SignInModal({ locale, onSignedIn }: SignInModalProps) {
             {error}
           </p>
         ) : null}
-        <button type="submit" className="btn-primary signin-card__submit" disabled={busy}>
-          {ui.submit[locale]}
-        </button>
+        <div className="signin-card__actions">
+          {onCancel !== undefined ? (
+            <button type="button" className="btn-ghost" disabled={busy} onClick={cancel}>
+              {ui.cancel[locale]}
+            </button>
+          ) : null}
+          <button type="submit" className="btn-primary signin-card__submit" disabled={busy}>
+            {ui.submit[locale]}
+          </button>
+        </div>
       </form>
     </div>
   );

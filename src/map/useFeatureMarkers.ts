@@ -79,8 +79,8 @@ export interface UseFeatureMarkersArgs {
   selectedFeatureId: string | null;
   /** Labels layer-group toggle; false renders no markers. */
   enabled: boolean;
-  /** Stable callback; marker click selects the feature. */
-  onSelect: (featureId: string) => void;
+  /** Stable callback; marker click selects the feature (or places an issue). */
+  onSelect: (featureId: string, center: [number, number]) => void;
 }
 
 function hasOwnName(feature: ViewerFeature): boolean {
@@ -289,7 +289,7 @@ export function useFeatureMarkers({
         el.setAttribute("aria-label", label);
         el.addEventListener("click", (event) => {
           event.stopPropagation();
-          onSelect(feature.id);
+          onSelect(feature.id, center);
         });
 
         overlay.appendChild(el);
