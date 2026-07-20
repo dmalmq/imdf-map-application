@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoadedVenue, ViewerFeature } from "../imdf/types";
 import { kirikoTheme } from "../theme/presets";
-import { INDOOR_SOURCE_ID } from "./featureLayers";
+import { INDOOR_SOURCE_ID, ROUTE_SOURCE_ID } from "./featureLayers";
 import { defaultLayerVisibility } from "./layerGroups";
 import { IndoorMap, type IndoorMapProps } from "./IndoorMap";
 import type { MapIssuePin } from "./useIssuePins";
@@ -29,6 +29,7 @@ const mapState = vi.hoisted(() => {
     readonly easeToCalls: Array<{ center: [number, number]; duration?: number }> = [];
     readonly jumpToCalls: Array<{ center: [number, number] }> = [];
     readonly sourceData: unknown[] = [];
+    readonly routeSourceData: unknown[] = [];
     queryResult: Array<{ properties: Record<string, unknown> }> = [];
     styleLoaded = true;
     sourceLoaded = true;
@@ -91,8 +92,12 @@ const mapState = vi.hoisted(() => {
       return this.queryResult;
     }
 
-    getSource(): { type: string; setData: (data: unknown) => void } {
-      return { type: "geojson", setData: (data: unknown) => this.sourceData.push(data) };
+    getSource(id?: string): { type: string; setData: (data: unknown) => void } {
+      return {
+        type: "geojson",
+        setData: (data: unknown) =>
+          (id === ROUTE_SOURCE_ID ? this.routeSourceData : this.sourceData).push(data),
+      };
     }
 
     isSourceLoaded(): boolean {
@@ -511,6 +516,142 @@ describe("IndoorMap issue highlight", () => {
     });
 
     expect(map.featureStates.some((s) => s.state.issueHighlight === true)).toBe(false);
+  });
+});
+
+describe("IndoorMap directions", () => {
+  function directions(
+    overrides: Partial<NonNullable<IndoorMapProps["directions"]>> = {},
+  ): NonNullable<IndoorMapProps["directions"]> {
+    return {
+      active: true,
+      origin: null,
+      destination: null,
+      route: null,
+      onPickPoint: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  const CROSS_FLOOR_ROUTE = {
+    nodes: [
+      { lon: 139.0, lat: 35.0, ordinal: 0 },
+      { lon: 139.001, lat: 35.0, ordinal: 0 },
+      { lon: 139.001, lat: 35.001, ordinal: 1 },
+      { lon: 139.002, lat: 35.002, ordinal: 1 },
+    ],
+    totalWeight: 240,
+  };
+
+  function lastRouteData(map: FakeMap): GeoJSON.FeatureCollection {
+    expect(map.routeSourceData.length).toBeGreaterThan(0);
+    return map.routeSourceData.at(-1) as GeoJSON.FeatureCollection;
+  }
+
+  function segmentsOf(fc: GeoJSON.FeatureCollection): GeoJSON.Feature[] {
+    return fc.features.filter((f) => f.properties?.["kind"] === "segment");
+  }
+
+  it("reports the tapped point and suppresses feature selection while picking", () => {
+    const onSelectFeature = vi.fn();
+    const dirs = directions();
+    const { map } = renderMap(baseProps({ onSelectFeature, directions: dirs }));
+
+    map.queryResult = [{ properties: { __feature_id: "unit-9" } }];
+    act(() => {
+      map.emit("click", { point: { x: 3, y: 4 }, lngLat: { lng: 139.5, lat: 35.4 } });
+    });
+
+    expect(dirs.onPickPoint).toHaveBeenCalledWith({ longitude: 139.5, latitude: 35.4 });
+    expect(onSelectFeature).not.toHaveBeenCalled();
+  });
+
+  it("keeps ordinary feature selection when directions are inactive", () => {
+    const onSelectFeature = vi.fn();
+    const { map } = renderMap(
+      baseProps({ onSelectFeature, directions: directions({ active: false }) }),
+    );
+
+    map.queryResult = [{ properties: { __feature_id: "unit-3" } }];
+    act(() => {
+      map.emit("click", { point: { x: 1, y: 1 }, lngLat: { lng: 0, lat: 0 } });
+    });
+
+    expect(onSelectFeature).toHaveBeenCalledWith("unit-3");
+  });
+
+  it("populates the route source with only the active floor's segments and endpoint", () => {
+    const { map } = renderMap(
+      baseProps({
+        levelId: "level-1",
+        directions: directions({
+          origin: { longitude: 139.0, latitude: 35.0, ordinal: 0 },
+          destination: { longitude: 139.002, latitude: 35.002, ordinal: 1 },
+          route: CROSS_FLOOR_ROUTE,
+        }),
+      }),
+    );
+
+    const fc = lastRouteData(map);
+    const segments = segmentsOf(fc);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]!.geometry).toEqual({
+      type: "LineString",
+      coordinates: [
+        [139.0, 35.0],
+        [139.001, 35.0],
+      ],
+    });
+    const points = fc.features.filter((f) => f.properties?.["kind"] !== "segment");
+    expect(points).toHaveLength(1);
+    expect(points[0]!.properties?.["kind"]).toBe("origin");
+  });
+
+  it("re-segments the route source when the active floor changes", () => {
+    const { map, rerender } = renderMap(
+      baseProps({
+        levelId: "level-1",
+        directions: directions({ route: CROSS_FLOOR_ROUTE }),
+      }),
+    );
+    expect(segmentsOf(lastRouteData(map))[0]!.geometry).toEqual({
+      type: "LineString",
+      coordinates: [
+        [139.0, 35.0],
+        [139.001, 35.0],
+      ],
+    });
+
+    rerender(
+      baseProps({
+        levelId: "level-2",
+        directions: directions({ route: CROSS_FLOOR_ROUTE }),
+      }),
+    );
+
+    expect(segmentsOf(lastRouteData(map))[0]!.geometry).toEqual({
+      type: "LineString",
+      coordinates: [
+        [139.001, 35.001],
+        [139.002, 35.002],
+      ],
+    });
+  });
+
+  it("empties the route source when directions are cleared", () => {
+    const { map, rerender } = renderMap(
+      baseProps({
+        directions: directions({
+          origin: { longitude: 139.0, latitude: 35.0, ordinal: 0 },
+          route: CROSS_FLOOR_ROUTE,
+        }),
+      }),
+    );
+    expect(lastRouteData(map).features.length).toBeGreaterThan(0);
+
+    rerender(baseProps({ directions: null }));
+
+    expect(lastRouteData(map)).toEqual({ type: "FeatureCollection", features: [] });
   });
 });
 

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { CircleLayerSpecification, LineLayerSpecification } from "maplibre-gl";
 import { themes } from "../theme/presets";
+import { buildIndoorStyle } from "./buildIndoorStyle";
 import {
   applyThemePaintProperties,
   buildFeatureLayers,
+  buildRouteLayers,
   CLICKABLE_LAYER_IDS,
+  LAYER_ROUTE,
+  LAYER_ROUTE_ENDPOINT,
+  ROUTE_SOURCE_ID,
   LAYER_ISSUE_HIGHLIGHT_OUTLINE,
   LAYER_ISSUE_HIGHLIGHT_POINT,
   LAYER_SELECTED_OUTLINE,
@@ -111,6 +116,46 @@ describe("buildFeatureLayers category coloring", () => {
     expect(openingLayers.map((layer) => layer.type)).toEqual(["line"]);
     expect(openingLayers[0]!.id).toBe(LAYER_OPENING_LINE);
     expect(CLICKABLE_LAYER_IDS).toContain(LAYER_OPENING_LINE);
+  });
+});
+
+describe("route layers", () => {
+  it("draws the route as an accent line plus endpoint circles on the route source", () => {
+    const c = theme.colors;
+    const layers = buildRouteLayers(theme);
+
+    const line = layers.find((layer) => layer.id === LAYER_ROUTE);
+    expect(line).toBeDefined();
+    expect(line!.type).toBe("line");
+    expect(line!.source).toBe(ROUTE_SOURCE_ID);
+    expect((line as LineLayerSpecification).paint?.["line-color"]).toBe(c.accent);
+    expect(line!.filter).toEqual(["==", ["get", "kind"], "segment"]);
+
+    const endpoints = layers.find((layer) => layer.id === LAYER_ROUTE_ENDPOINT);
+    expect(endpoints).toBeDefined();
+    expect(endpoints!.type).toBe("circle");
+    expect(endpoints!.source).toBe(ROUTE_SOURCE_ID);
+    expect((endpoints as CircleLayerSpecification).paint?.["circle-color"]).toBe(c.accent);
+    expect(endpoints!.filter).toEqual([
+      "in",
+      ["get", "kind"],
+      ["literal", ["origin", "destination"]],
+    ]);
+  });
+
+  it("keeps route layers out of the clickable hit-test set", () => {
+    expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_ROUTE);
+    expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_ROUTE_ENDPOINT);
+  });
+
+  it("registers the route source and layers in the indoor style", () => {
+    const style = buildIndoorStyle(theme);
+    expect(style.sources[ROUTE_SOURCE_ID]).toMatchObject({ type: "geojson" });
+    const ids = style.layers.map((layer) => layer.id);
+    expect(ids).toContain(LAYER_ROUTE);
+    expect(ids).toContain(LAYER_ROUTE_ENDPOINT);
+    // Route renders above every feature layer.
+    expect(ids.indexOf(LAYER_ROUTE)).toBeGreaterThan(ids.indexOf(LAYER_ISSUE_HIGHLIGHT_POINT));
   });
 });
 

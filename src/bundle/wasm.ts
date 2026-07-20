@@ -7,7 +7,7 @@
  *
  * Phase Two Task 4: WASM decode adapter (browser side).
  */
-import init, { decodeBundle as decodeBundleWasm } from "@kiriko/wasm";
+import init, { decodeBundle as decodeBundleWasm, routeBundle as routeBundleWasm } from "@kiriko/wasm";
 // Vite emits a hashed, origin-relative asset path (e.g.
 // `/assets/kiriko_wasm_bg-[hash].wasm`) for this `?url` import. Resolving
 // it explicitly here — instead of letting `@kiriko/wasm`'s generated glue
@@ -76,6 +76,28 @@ export interface DecodeResponseDto {
   ok: boolean;
   venue: DecodedVenueDto | null;
   error: { code: BundleErrorCode; message: string } | null;
+  /** Whether the decoded bundle carries a §5 network graph (routing UI gate). */
+  hasGraph: boolean;
+}
+
+/** One routed node as serialized by the wasm `routeBundle` binding. */
+export interface RouteNodeDto {
+  lon: number;
+  lat: number;
+  ordinal: number;
+}
+
+/** A routing endpoint: lon/lat plus the level ordinal the point was picked on. */
+export interface RouteEndpoint {
+  longitude: number;
+  latitude: number;
+  ordinal: number;
+}
+
+/** Computed route payload: ordered nodes plus the total edge weight (metres). */
+export interface RouteResultDto {
+  nodes: RouteNodeDto[];
+  totalWeight: number;
 }
 
 let initPromise: Promise<void> | null = null;
@@ -136,4 +158,27 @@ export async function initKirikoWasm(): Promise<void> {
  */
 export function decodeBundle(bytes: Uint8Array): DecodeResponseDto {
   return decodeBundleWasm(bytes) as DecodeResponseDto;
+}
+
+/**
+ * Routes over a `kvb1` bundle's embedded §5 graph. Must only be called after
+ * `initKirikoWasm` has resolved. Returns `null` when the bundle carries no
+ * graph or no path connects the snapped endpoints. Unlike `decodeBundle`,
+ * bundle-format failures throw (the wasm binding's contract) — callers must
+ * treat a throw as a runtime failure, never surface the raw message.
+ */
+export function routeBundle(
+  bytes: Uint8Array,
+  origin: RouteEndpoint,
+  destination: RouteEndpoint,
+): RouteResultDto | null {
+  return routeBundleWasm(
+    bytes,
+    origin.longitude,
+    origin.latitude,
+    origin.ordinal,
+    destination.longitude,
+    destination.latitude,
+    destination.ordinal,
+  ) as RouteResultDto | null;
 }

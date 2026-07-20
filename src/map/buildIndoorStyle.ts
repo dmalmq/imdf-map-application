@@ -3,7 +3,9 @@ import type { ViewerTheme } from "../theme/types";
 import {
   BACKGROUND_LAYER_ID,
   buildFeatureLayers,
+  buildRouteLayers,
   INDOOR_SOURCE_ID,
+  ROUTE_SOURCE_ID,
 } from "./featureLayers";
 
 export { BACKGROUND_LAYER_ID, INDOOR_SOURCE_ID };
@@ -27,6 +29,10 @@ export function buildIndoorStyle(theme: ViewerTheme): StyleSpecification {
         data: EMPTY_COLLECTION,
         promoteId: "__feature_id",
       },
+      [ROUTE_SOURCE_ID]: {
+        type: "geojson",
+        data: EMPTY_COLLECTION,
+      },
     },
     layers: [
       {
@@ -37,6 +43,7 @@ export function buildIndoorStyle(theme: ViewerTheme): StyleSpecification {
         },
       },
       ...buildFeatureLayers(theme),
+      ...buildRouteLayers(theme),
     ],
   };
 }

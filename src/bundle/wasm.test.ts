@@ -39,6 +39,12 @@ describe("decodeBundle", () => {
     expect(response.error).toBeNull();
   });
 
+  it("reports §5 graph presence on the decode result", async () => {
+    const bytes = await readGoldenBundle();
+    // The golden fixture is compiled without a network: no graph section.
+    expect(decodeBundle(bytes).hasGraph).toBe(false);
+  });
+
   it("decodes complete source properties, including nulls and unknown keys", async () => {
     const bytes = await readGoldenBundle();
     const response = decodeBundle(bytes);

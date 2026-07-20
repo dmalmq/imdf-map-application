@@ -5,7 +5,7 @@
  * by the worker and its caller, `loadKirikoBundle.ts`.
  */
 import type { VenueLoadErrorCode } from "../errors/VenueLoadError";
-import type { DecodedVenueDto } from "./wasm";
+import type { DecodedVenueDto, RouteEndpoint, RouteResultDto } from "./wasm";
 
 /** `buffer` is always transferred (not cloned) to the worker. */
 export interface BundleDecodeRequest {
@@ -13,9 +13,31 @@ export interface BundleDecodeRequest {
   buffer: ArrayBuffer;
 }
 
+/**
+ * Route query over an already-published bundle. `buffer` is transferred (not
+ * cloned) to the worker, which re-decodes it statelessly inside wasm — the
+ * worker retains no bundle bytes between messages.
+ */
+export interface BundleRouteRequest {
+  type: "route";
+  buffer: ArrayBuffer;
+  origin: RouteEndpoint;
+  destination: RouteEndpoint;
+}
+
+export type BundleWorkerRequest = BundleDecodeRequest | BundleRouteRequest;
+
 export interface BundleDecodeSuccess {
   type: "loaded";
   venue: DecodedVenueDto;
+  /** Whether the decoded bundle carries a §5 network graph (routing UI gate). */
+  hasGraph: boolean;
+}
+
+/** `route` is `null` when the bundle has no graph or no path connects the endpoints. */
+export interface BundleRouteSuccess {
+  type: "routed";
+  route: RouteResultDto | null;
 }
 
 /**
@@ -43,7 +65,7 @@ export interface BundleDecodeFailure {
   };
 }
 
-export type BundleWorkerResponse = BundleDecodeSuccess | BundleDecodeFailure;
+export type BundleWorkerResponse = BundleDecodeSuccess | BundleRouteSuccess | BundleDecodeFailure;
 
 /**
  * Shared wire `message` for `worker_failed` bundle-worker failures (WASM

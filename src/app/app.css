@@ -308,6 +308,35 @@ button {
   background: var(--color-panel);
 }
 
+/* ── Directions bar ────────────────────────────────────── */
+
+.directions-bar {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-chrome);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.directions-bar .chip {
+  background: var(--color-panel);
+  box-shadow: var(--shadow-floating);
+}
+
+.directions-bar__status {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip, 999px);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-floating);
+  font-size: 12px;
+  line-height: 28px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
 .top-actions .chip--selected {
   background: var(--color-accent-soft);
 }

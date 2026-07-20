@@ -111,12 +111,13 @@ describe("loadKirikoBundle", () => {
     const dto = { venueId: "v1", datasetId: "default/minimal", version: 1 };
     const hydrated = { venue: { id: "v1" } };
     hydrateVenueMock.mockReturnValueOnce(hydrated);
-    worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: dto } }));
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "loaded", venue: dto, hasGraph: true } }));
 
     await expect(promise).resolves.toEqual({
       venue: hydrated,
       metadata: { datasetId: "default/minimal", version: 1 },
       publicVersionId,
+      hasGraph: true,
     });
     expect(hydrateVenueMock).toHaveBeenCalledWith(dto);
     expect(worker.terminate).toHaveBeenCalledTimes(1);
@@ -147,6 +148,7 @@ describe("loadKirikoBundle", () => {
       venue: hydrated,
       metadata: { datasetId: "default/minimal", version: 1 },
       publicVersionId: null,
+      hasGraph: false,
     });
     expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);
   });
@@ -506,6 +508,7 @@ describe("loadKirikoBundle", () => {
       venue: hydrated,
       metadata: { datasetId: "default/minimal", version: 1 },
       publicVersionId: null,
+      hasGraph: false,
     });
     expect(worker.terminate).toHaveBeenCalledTimes(1);
 
@@ -608,11 +611,13 @@ describe("loadKirikoBundle", () => {
       venue: { n: 1 },
       metadata: { datasetId: "default/one", version: 1 },
       publicVersionId: "1".repeat(64),
+      hasGraph: false,
     });
     expect(r2).toEqual({
       venue: { n: 2 },
       metadata: { datasetId: "default/two", version: 2 },
       publicVersionId: "2".repeat(64),
+      hasGraph: false,
     });
     expect(createdWorkers[0]).not.toBe(createdWorkers[1]);
     expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);

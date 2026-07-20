@@ -97,13 +97,16 @@ struct DecodeErrorDto {
     message: String,
 }
 
-/// Structured success/failure result of [`decode_bundle_js`].
+/// Structured success/failure result of [`decode_bundle_js`]. `has_graph`
+/// reports whether the decoded bundle carries a §5 network graph, so the
+/// viewer can gate routing UI without attempting a route query.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DecodeResponseDto {
     ok: bool,
     venue: Option<DecodedVenueDto>,
     error: Option<DecodeErrorDto>,
+    has_graph: bool,
 }
 
 fn canonical_to_json(value: &CanonicalValue) -> JsonValue {
@@ -221,6 +224,7 @@ fn to_js(response: &DecodeResponseDto) -> JsValue {
                 code: "invalid_bundle".to_string(),
                 message: format!("failed to serialize decoded venue: {e}"),
             }),
+            has_graph: false,
         };
         fallback
             .serialize(&serializer)
@@ -236,15 +240,20 @@ fn to_js(response: &DecodeResponseDto) -> JsValue {
 #[wasm_bindgen(js_name = "decodeBundle")]
 pub fn decode_bundle_js(bytes: &[u8]) -> JsValue {
     let response = match decode_bundle(bytes) {
-        Ok(document) => DecodeResponseDto {
-            ok: true,
-            venue: Some(document_dto(document)),
-            error: None,
-        },
+        Ok(document) => {
+            let has_graph = document.graph.is_some();
+            DecodeResponseDto {
+                ok: true,
+                venue: Some(document_dto(document)),
+                error: None,
+                has_graph,
+            }
+        }
         Err(err) => DecodeResponseDto {
             ok: false,
             venue: None,
             error: Some(error_dto(&err)),
+            has_graph: false,
         },
     };
     to_js(&response)
@@ -420,6 +429,18 @@ mod tests {
         .expect("node 1 to node 2 must route");
         assert_eq!(route.nodes.len(), 2);
         assert_eq!(route.total_weight, 100.0);
+    }
+
+    #[test]
+    fn decode_response_reports_graph_presence() {
+        let with_graph = compile_with_graph();
+        let document = decode_bundle(&with_graph).expect("bundle decodes");
+        assert!(document.graph.is_some());
+
+        let source = build_minimal_imdf_zip();
+        let without_graph = compile_imdf(&source, metadata()).expect("fixture compiles");
+        let document = decode_bundle(&without_graph.bytes).expect("bundle decodes");
+        assert!(document.graph.is_none());
     }
 
     #[test]
