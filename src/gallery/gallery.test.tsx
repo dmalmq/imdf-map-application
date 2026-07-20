@@ -5,11 +5,25 @@ import type { VenueSummary } from "./api";
 
 const me = vi.fn();
 const listVenues = vi.fn();
+const inspectGdb = vi.fn();
+const createVenue = vi.fn();
+const publishGdb = vi.fn();
+const waitForJob = vi.fn();
+const deleteVenue = vi.fn();
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
   return {
     ...actual,
-    api: { ...actual.api, me: () => me(), listVenues: () => listVenues() },
+    api: {
+      ...actual.api,
+      me: () => me(),
+      listVenues: () => listVenues(),
+      inspectGdb: (...args: unknown[]) => inspectGdb(...args),
+      createVenue: (...args: unknown[]) => createVenue(...args),
+      publishGdb: (...args: unknown[]) => publishGdb(...args),
+      waitForJob: (...args: unknown[]) => waitForJob(...args),
+      deleteVenue: (...args: unknown[]) => deleteVenue(...args),
+    },
   };
 });
 
@@ -70,5 +84,52 @@ describe("GalleryPage", () => {
     await waitFor(() => {
       expect(screen.getByText("データセットがありません")).toBeTruthy();
     });
+  });
+
+  const gdbInspection = {
+    sourceName: "Station.gdb",
+    databases: [{ id: "gdb-1", name: "Station.gdb" }],
+    layers: [{
+      key: { databaseId: "gdb-1", layerName: "Station_1_Floor" },
+      databaseName: "Station.gdb", featureCount: 3, geometryFamily: "polygon",
+      fields: [{ name: "id", type: "String" }],
+    }],
+    warnings: [],
+  };
+  const gdbPlan = {
+    venueName: "Station",
+    buildings: [{ id: "b1", name: "Station" }],
+    layers: [{
+      key: { databaseId: "gdb-1", layerName: "Station_1_Floor" },
+      included: true, targetType: "level", buildingId: "b1",
+      levelRule: { kind: "layer-name" }, idField: "id",
+      ordinalField: null, shortNameField: null, nameField: null, categoryField: null,
+    }],
+  };
+
+  it("imports a geodatabase: inspect, review, publish, reload", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([]);
+    inspectGdb.mockResolvedValue({ blobHash: "a".repeat(64), inspection: gdbInspection, suggestedPlan: gdbPlan });
+    createVenue.mockResolvedValue({ id: 9, slug: "station", name: "Station", createdAt: "" });
+    publishGdb.mockResolvedValue({ jobId: "j", versionId: 1, seq: 1 });
+    waitForJob.mockResolvedValue({ status: "done" });
+
+    const user = userEvent.setup();
+    const { container } = render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("データセットがありません")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], "Station.gdb.zip", { type: "application/zip" });
+    await user.upload(input, file);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import" })).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Import" }));
+
+    await waitFor(() => expect(publishGdb).toHaveBeenCalledTimes(1));
+    expect(createVenue).toHaveBeenCalledWith("Station");
+    expect(publishGdb).toHaveBeenCalledWith(9, "a".repeat(64), expect.objectContaining({ venueName: "Station" }));
+    await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
   });
 });

@@ -114,6 +114,7 @@ export interface GdbMappingPlan {
 export interface GdbInspectResponse {
   blobHash: string;
   inspection: GdbInspection;
+  suggestedPlan: GdbMappingPlan;
 }
 
 /** Payload for `POST /api/gdb/publish`. */

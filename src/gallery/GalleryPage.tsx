@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { KirikoMark } from "../components/icons";
+import type { GdbInspectResponse, GdbMappingPlan } from "../gdb/types";
 import type { LocaleCode } from "../imdf/types";
-import { api, type ApiUser, type VenueSummary } from "./api";
+import { api, gdbErrorMessage, type ApiUser, type GdbError, type VenueSummary } from "./api";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 import { DatasetCard } from "./DatasetCard";
+import { GdbImportDialog } from "./GdbImportDialog";
 import { SignInModal } from "./SignInModal";
 import { UploadModal } from "./UploadModal";
 
@@ -18,6 +20,8 @@ const ui = {
   },
   signOut: { ja: "サインアウト", en: "Sign out" },
   loadError: { ja: "読み込みに失敗しました", en: "Could not load datasets" },
+  importGdb: { ja: "Geodatabase を取り込む", en: "Import Geodatabase" },
+  inspecting: { ja: "検査中…", en: "Inspecting…" },
 } as const;
 
 type GalleryState =
@@ -26,12 +30,20 @@ type GalleryState =
   | { phase: "ready"; user: ApiUser; venues: VenueSummary[] }
   | { phase: "error" };
 
+type GdbFlow =
+  | { phase: "idle" }
+  | { phase: "inspecting" }
+  | { phase: "review"; data: GdbInspectResponse; busy: boolean; error: GdbError | null }
+  | { phase: "error"; message: string };
+
 export function GalleryPage() {
   const [locale, setLocale] = useState<LocaleCode>("ja");
   const [state, setState] = useState<GalleryState>({ phase: "loading" });
   const [filter, setFilter] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleting, setDeleting] = useState<VenueSummary | null>(null);
+  const [gdbFlow, setGdbFlow] = useState<GdbFlow>({ phase: "idle" });
+  const gdbInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -52,6 +64,67 @@ export function GalleryPage() {
 
   const openVenue = (slug: string) => {
     window.location.assign(`/?dataset=${encodeURIComponent(slug)}`);
+  };
+
+  const startGdbImport = () => gdbInputRef.current?.click();
+
+  const onGdbFile = (file: File | undefined) => {
+    if (!file) return;
+    setGdbFlow({ phase: "inspecting" });
+    void (async () => {
+      try {
+        const data = await api.inspectGdb(file);
+        setGdbFlow({ phase: "review", data, busy: false, error: null });
+      } catch (err) {
+        setGdbFlow({ phase: "error", message: gdbErrorMessage(err as GdbError, locale) });
+      }
+    })();
+  };
+
+  const publishGdbPlan = (plan: GdbMappingPlan) => {
+    if (gdbFlow.phase !== "review") return;
+    const data = gdbFlow.data;
+    setGdbFlow({ phase: "review", data, busy: true, error: null });
+    void (async () => {
+      let venueId: number | null = null;
+      try {
+        const venue = await api.createVenue(plan.venueName.trim());
+        venueId = venue.id;
+        const { jobId } = await api.publishGdb(venue.id, data.blobHash, plan);
+        const job = await api.waitForJob(jobId);
+        if (job.status === "done") {
+          setGdbFlow({ phase: "idle" });
+          if (gdbInputRef.current) gdbInputRef.current.value = "";
+          await reload();
+        } else {
+          setGdbFlow({
+            phase: "review",
+            data,
+            busy: false,
+            error: { code: "gdb_conversion_failed", message: job.error },
+          });
+        }
+      } catch (err) {
+        if (venueId !== null) {
+          try {
+            await api.deleteVenue(venueId);
+          } catch {
+            /* best effort orphan cleanup */
+          }
+        }
+        setGdbFlow({
+          phase: "review",
+          data,
+          busy: false,
+          error: err as GdbError,
+        });
+      }
+    })();
+  };
+
+  const cancelGdbImport = () => {
+    setGdbFlow({ phase: "idle" });
+    if (gdbInputRef.current) gdbInputRef.current.value = "";
   };
 
   const header = (
@@ -154,6 +227,18 @@ export function GalleryPage() {
           <button type="button" className="btn-primary gallery__upload-btn" onClick={() => { setUploadOpen(true); }}>
             {ui.openLocal[locale]}
           </button>
+          <button type="button" className="chip" onClick={startGdbImport}>
+            {ui.importGdb[locale]}
+          </button>
+          <input
+            ref={gdbInputRef}
+            type="file"
+            accept=".zip,.gdb.zip"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              onGdbFile(e.target.files?.[0]);
+            }}
+          />
         </div>
         {visible.length === 0 ? (
           <div className="gallery__empty">
@@ -207,6 +292,19 @@ export function GalleryPage() {
                 return reload();
               });
           }}
+        />
+      ) : null}
+      {gdbFlow.phase === "inspecting" ? <div className="gallery-toast">{ui.inspecting[locale]}</div> : null}
+      {gdbFlow.phase === "error" ? <div className="gallery-toast gallery-toast--error">{gdbFlow.message}</div> : null}
+      {gdbFlow.phase === "review" ? (
+        <GdbImportDialog
+          inspection={gdbFlow.data.inspection}
+          initialPlan={gdbFlow.data.suggestedPlan}
+          locale={locale}
+          busy={gdbFlow.busy}
+          error={gdbFlow.error}
+          onImport={publishGdbPlan}
+          onCancel={cancelGdbImport}
         />
       ) : null}
     </div>

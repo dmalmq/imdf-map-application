@@ -6,7 +6,6 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { suggestGdbMapping } from "../src/gdb/mapping";
 import type { GdbInspectResponse } from "../src/gdb/types";
 import { cleanupTestApps, loginCookie, makeTestApp } from "./helpers";
 
@@ -56,9 +55,10 @@ describe.skipIf(SKIP)("GDB endpoint smoke", () => {
     expect(inspect.statusCode).toBe(200);
     const inspected = inspect.json() as GdbInspectResponse;
     expect(inspected.inspection.layers.length).toBe(318);
+    expect(inspected.suggestedPlan.layers.length).toBe(318);
     expect(inspected.blobHash).toMatch(/^[0-9a-f]{64}$/);
 
-    const suggested = suggestGdbMapping(inspected.inspection);
+    const suggested = inspected.suggestedPlan;
     const selectedNames = new Set(["G空間_0_Floor", "G空間_0_Space"]);
     const selectedRows = suggested.layers.filter((row) => selectedNames.has(row.key.layerName));
     expect(selectedRows).toHaveLength(2);

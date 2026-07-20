@@ -18,7 +18,7 @@ import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
 import { inspectGdbArchive, convertGdbLayers } from "./convert";
-import { buildGdbImdf, GdbConversionError } from "./mapping";
+import { buildGdbImdf, GdbConversionError, suggestGdbMapping } from "./mapping";
 import { writeImdfZip } from "./imdfZip";
 import { GdbSourceError, validateGdbArchive } from "./sourceValidation";
 import { removeStagedGdb, stageGdbBlobForGdal } from "./staging";
@@ -115,7 +115,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       preHandler: requireSession,
       schema: {
         response: {
-          200: Type.Object({ blobHash: Type.String(), inspection: Type.Unknown() }),
+          200: Type.Object({
+            blobHash: Type.String(),
+            inspection: Type.Unknown(),
+            suggestedPlan: Type.Unknown(),
+          }),
           400: ErrorSchema,
           500: ErrorSchema,
         },
@@ -159,7 +163,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       } finally {
         removeStagedGdb(stagedPath);
       }
-      const body: GdbInspectResponse = { blobHash: hash, inspection };
+      const body: GdbInspectResponse = {
+        blobHash: hash,
+        inspection,
+        suggestedPlan: suggestGdbMapping(inspection),
+      };
       return reply.send(body);
     },
   );
