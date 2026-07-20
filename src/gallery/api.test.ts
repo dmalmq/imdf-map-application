@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, datasetBundleUrl, publishErrorMessage } from "./api";
+import { api, ApiError, datasetBundleUrl, gdbErrorMessage, publishErrorMessage } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -95,5 +95,29 @@ describe("publishErrorMessage", () => {
     expect(publishErrorMessage("not a ZIP archive")).toBe("not a ZIP archive");
     expect(publishErrorMessage("timed out")).toBe("timed out");
     expect(publishErrorMessage("unknown error")).toBe("unknown error");
+  });
+});
+
+describe("gdb api", () => {
+  it("publishGdb posts the plan and returns the job envelope", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ jobId: "j1", versionId: 7, seq: 1 }), { status: 202 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await api.publishGdb(7, "a".repeat(64), {
+      venueName: "V", buildings: [], layers: [],
+    });
+    expect(result).toEqual({ jobId: "j1", versionId: 7, seq: 1 });
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ venueId: 7, blobHash: "a".repeat(64) });
+  });
+
+  it("gdbErrorMessage maps known codes and names the blamed layer", () => {
+    expect(gdbErrorMessage({ code: "invalid_geodatabase", message: "x" }, "en")).toContain("File Geodatabase");
+    const conv = gdbErrorMessage(
+      { code: "gdb_conversion_failed", message: "x", details: { layer: "Station_1_Space", reason: "empty or geometry-less layer" } },
+      "en",
+    );
+    expect(conv).toContain("Station_1_Space");
   });
 });

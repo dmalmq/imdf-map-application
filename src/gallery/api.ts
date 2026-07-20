@@ -1,3 +1,6 @@
+import type { GdbInspectResponse, GdbMappingPlan } from "../gdb/types";
+import type { LocaleCode } from "../imdf/types";
+
 export type ApiUserRole = "viewer" | "member" | "admin";
 
 export interface ApiUser {
@@ -77,6 +80,41 @@ export function publishErrorMessage(raw: string): string {
     }
   }
   return publishFailedFallback;
+}
+
+export interface GdbError {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+const gdbErrorCopy: Record<string, { ja: string; en: string } | undefined> = {
+  invalid_geodatabase: {
+    ja: "読み取り可能な Esri File Geodatabase が見つかりませんでした。",
+    en: "The upload does not contain a readable Esri File Geodatabase.",
+  },
+  gdb_too_large: {
+    ja: "GDB データが処理上限（アーカイブ 200 MiB 等）を超えています。",
+    en: "The geodatabase exceeds the processing limits (e.g. 200 MiB archive).",
+  },
+  gdb_inspection_failed: {
+    ja: "geodatabase を検査できませんでした。ファイルを確認してください。",
+    en: "The geodatabase could not be inspected. Check the file and try again.",
+  },
+  gdb_conversion_failed: {
+    ja: "選択したレイヤーを変換できませんでした。割り当てを見直してください。",
+    en: "The selected layers could not be converted. Review the mapping and try again.",
+  },
+};
+
+export function gdbErrorMessage(err: GdbError, locale: LocaleCode): string {
+  const copy = gdbErrorCopy[err.code];
+  const base = copy ? copy[locale] : (locale === "ja" ? "取り込みに失敗しました。" : "Import failed.");
+  const layer = typeof err.details?.layer === "string" ? err.details.layer : null;
+  if (layer !== null) {
+    return locale === "ja" ? `${base}（レイヤー: ${layer}）` : `${base} (layer: ${layer})`;
+  }
+  return base;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -184,5 +222,50 @@ export const api = {
       }
       await new Promise((r) => setTimeout(r, 500));
     }
+  },
+
+  inspectGdb(
+    file: File,
+    onProgress?: (fraction: number) => void,
+  ): Promise<GdbInspectResponse> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/gdb/inspect");
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
+      });
+      xhr.addEventListener("load", () => {
+        if (xhr.status === 200) {
+          resolve(JSON.parse(xhr.responseText) as GdbInspectResponse);
+        } else {
+          let parsed: GdbError = { code: "gdb_inspection_failed", message: xhr.responseText };
+          try { parsed = JSON.parse(xhr.responseText) as GdbError; } catch { /* non-JSON */ }
+          reject(parsed);
+        }
+      });
+      xhr.addEventListener("error", () => reject({ code: "gdb_inspection_failed", message: "network error" } as GdbError));
+      const form = new FormData();
+      form.append("file", file);
+      xhr.send(form);
+    });
+  },
+
+  async publishGdb(
+    venueId: number,
+    blobHash: string,
+    plan: GdbMappingPlan,
+  ): Promise<{ jobId: string; versionId: number; seq: number }> {
+    const res = await fetch("/api/gdb/publish", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ venueId, blobHash, plan }),
+    });
+    if (!res.ok) {
+      let parsed: GdbError = { code: "gdb_conversion_failed", message: `${res.status}` };
+      try { parsed = (await res.json()) as GdbError; } catch { /* non-JSON */ }
+      throw parsed;
+    }
+    return (await res.json()) as { jobId: string; versionId: number; seq: number };
   },
 };
