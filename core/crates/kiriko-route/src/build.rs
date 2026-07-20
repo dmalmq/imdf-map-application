@@ -14,7 +14,7 @@ pub struct RouteBuildWarning {
 }
 
 /// Fatal error: the input GeoJSON could not be parsed at all.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RouteBuildError {
     pub message: String,
 }

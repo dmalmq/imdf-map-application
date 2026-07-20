@@ -6,7 +6,7 @@ use std::fmt::Write;
 
 use kiriko_model::import_imdf;
 use kiriko_model::model::{
-    Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning,
+    Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning, WarningCode,
 };
 use kiriko_route::RouteGraph;
 use serde::Deserialize;
@@ -60,17 +60,38 @@ pub struct CompiledBundle {
 }
 
 /// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, then encode the
-/// canonical venue model as a `kvb1` bundle.
+/// canonical venue model as a `kvb1` bundle. Equivalent to
+/// [`compile_imdf_with_network`] without network GeoJSON.
 pub fn compile_imdf(
     source: &[u8],
     metadata: BundleMetadata,
+) -> Result<CompiledBundle, CompileError> {
+    compile_imdf_with_network(source, metadata, None, None)
+}
+
+/// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, optionally build
+/// a route graph from network junction/path GeoJSON, then encode the
+/// canonical venue model as a `kvb1` bundle.
+///
+/// When both `junctions_geojson` and `paths_geojson` are `Some`,
+/// [`kiriko_route::build_route_graph`] builds the graph against the venue's
+/// level ordinals; a non-empty graph is embedded as section 5 and the build
+/// warnings fold into the compile warning channel (code `route_build`). A
+/// malformed network is fatal ([`CompileError::Route`]). When either input
+/// is `None`, no graph is embedded and the result is identical to
+/// [`compile_imdf`].
+pub fn compile_imdf_with_network(
+    source: &[u8],
+    metadata: BundleMetadata,
+    junctions_geojson: Option<&str>,
+    paths_geojson: Option<&str>,
 ) -> Result<CompiledBundle, CompileError> {
     let venue = import_imdf(source)?;
     let stats = BundleStats {
         levels: venue.levels.len() as u32,
         features: venue.features.len() as u32,
     };
-    let document = BundleDocument {
+    let mut document = BundleDocument {
         metadata,
         manifest: venue.manifest,
         venue_id: venue.venue_id,
@@ -79,8 +100,24 @@ pub fn compile_imdf(
         bounds_by_level: venue.bounds_by_level,
         warnings: venue.warnings,
         stats,
-        graph: None, // network wiring is Task 3
+        graph: None,
     };
+
+    if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
+        let ordinals: Vec<f64> = document.levels.iter().map(|l| l.ordinal).collect();
+        let (graph, build_warnings) = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
+        if !graph.is_empty() {
+            document.graph = Some(graph);
+        }
+        document
+            .warnings
+            .extend(build_warnings.into_iter().map(|w| ViewerWarning {
+                code: WarningCode::RouteBuild,
+                message: format!("{}: {}", w.code, w.detail),
+                feature_id: None,
+                archive_entry: None,
+            }));
+    }
 
     let bytes = encode_bundle(&document)?;
     Ok(CompiledBundle {

@@ -158,6 +158,11 @@ pub enum WarningCode {
     MissingLevelGeometry,
     MissingDisplayPoint,
     UnknownArchiveEntry,
+    /// Non-fatal problem building the optional routing graph from network
+    /// GeoJSON (e.g. an unmappable floor label or a dangling edge). The
+    /// specific route code (`unmapped_floor`, `dangling_edge`,
+    /// `unmatched_level`) is embedded in the warning message.
+    RouteBuild,
 }
 
 impl WarningCode {
@@ -169,6 +174,7 @@ impl WarningCode {
             Self::MissingLevelGeometry => "missing_level_geometry",
             Self::MissingDisplayPoint => "missing_display_point",
             Self::UnknownArchiveEntry => "unknown_archive_entry",
+            Self::RouteBuild => "route_build",
         }
     }
 }
