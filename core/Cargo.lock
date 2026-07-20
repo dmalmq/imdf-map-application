@@ -603,6 +603,7 @@ name = "kiriko-bundle"
 version = "0.1.0"
 dependencies = [
  "kiriko-model",
+ "kiriko-route",
  "postcard",
  "serde",
  "serde_json",

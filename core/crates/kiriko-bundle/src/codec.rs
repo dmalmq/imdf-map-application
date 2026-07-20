@@ -8,6 +8,7 @@ use kiriko_model::import_imdf;
 use kiriko_model::model::{
     Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning,
 };
+use kiriko_route::RouteGraph;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -45,6 +46,9 @@ pub struct BundleDocument {
     pub bounds_by_level: BTreeMap<String, Bounds>,
     pub warnings: Vec<ViewerWarning>,
     pub stats: BundleStats,
+    /// Optional routing graph (section 5). `None` when the bundle carries
+    /// no graph; an empty graph is never emitted.
+    pub graph: Option<RouteGraph>,
 }
 
 /// The result of compiling raw IMDF source bytes into a bundle.
@@ -75,6 +79,7 @@ pub fn compile_imdf(
         bounds_by_level: venue.bounds_by_level,
         warnings: venue.warnings,
         stats,
+        graph: None, // network wiring is Task 3
     };
 
     let bytes = encode_bundle(&document)?;
@@ -93,7 +98,7 @@ fn postcard_encode_err(context: &str) -> impl Fn(postcard::Error) -> BundleError
 /// bytes are left over. Plain `postcard::from_bytes` silently ignores a
 /// trailing remainder, which would let a corrupted bundle pad a section with
 /// garbage after a validly-encoded prefix and still decode "successfully".
-fn postcard_take_exact<'a, T: Deserialize<'a>>(
+pub(crate) fn postcard_take_exact<'a, T: Deserialize<'a>>(
     bytes: &'a [u8],
     context: &str,
 ) -> Result<T, BundleError> {
@@ -114,8 +119,10 @@ fn postcard_take_exact<'a, T: Deserialize<'a>>(
 /// Encode a [`BundleDocument`] as `kvb1` bundle bytes. `document.features`
 /// is split into the geometry (non-occupant) and stores (occupant) sections;
 /// no section is duplicated and no empty style/graph/beacon section is
-/// emitted. Every `f64` reachable from `document` is validated as finite and
-/// `-0.0` is normalized to `0.0` (see `sections::canonical_f64`).
+/// emitted. The optional graph section (id 5) is emitted only when
+/// `document.graph` is `Some` and non-empty. Every `f64` reachable from
+/// `document` is validated as finite and `-0.0` is normalized to `0.0`
+/// (see `sections::canonical_f64`).
 pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> {
     let manifest_dto = sections::manifest_to_dto(document)?;
     let (geometry, stores) = sections::split_features(&document.features);
@@ -127,7 +134,7 @@ pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> 
     let stores_bytes = postcard::to_allocvec(&sections::feature_dtos(&stores)?)
         .map_err(postcard_encode_err("encode stores section"))?;
 
-    let payload = format::build_payload(&[
+    let mut section_list = vec![
         (
             format::SECTION_MANIFEST,
             format::SECTION_VERSION,
@@ -143,7 +150,20 @@ pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> 
             format::SECTION_VERSION,
             stores_bytes,
         ),
-    ]);
+    ];
+    // Section id 5 sorts after 1-3, so appending keeps the directory
+    // id-ascending as `build_payload` requires.
+    if let Some(graph) = &document.graph
+        && !graph.is_empty()
+    {
+        section_list.push((
+            format::SECTION_GRAPH,
+            format::SECTION_VERSION,
+            sections::encode_graph(graph)?,
+        ));
+    }
+
+    let payload = format::build_payload(&section_list);
 
     format::encode_payload(&payload)
 }
@@ -180,7 +200,13 @@ pub fn decode_bundle(bytes: &[u8]) -> Result<BundleDocument, BundleError> {
         sections::features_from_dtos(&stores_dtos)?,
     )?;
 
-    sections::manifest_into_document(manifest_dto, features)
+    let mut document = sections::manifest_into_document(manifest_dto, features)?;
+    // The graph section is optional: absent means `None`, so bundles
+    // written before section 5 existed still decode.
+    if let Some(graph_bytes) = directory.section(&payload, format::SECTION_GRAPH) {
+        document.graph = Some(sections::decode_graph(graph_bytes)?);
+    }
+    Ok(document)
 }
 
 /// A pure anchor-level projection of a decoded bundle: the whole-file
@@ -310,6 +336,7 @@ mod tests {
                     levels: 1,
                     features: 0,
                 },
+                graph: None,
             };
 
         // Level ordinal.

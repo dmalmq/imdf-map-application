@@ -16,8 +16,9 @@
 //! `(id: u16, version: u16, offset: u64, length: u64)`, sorted by strictly
 //! ascending `id`. Section bytes follow immediately after the directory,
 //! packed back-to-back in directory order. Section IDs are `1 manifest`,
-//! `2 geometry`, `3 stores`, `4 style`, `5 graph`, `6 beacons`; Phase Two
-//! requires 1-3 and never emits 4-6.
+//! `2 geometry`, `3 stores`, `4 style`, `5 graph`, `6 beacons`; sections
+//! 1-3 are required, section 5 is emitted when the document carries a
+//! non-empty graph, and 4 and 6 are never emitted in Phase Two.
 //!
 //! This module is an internal implementation detail of [`crate::codec`]; the
 //! public codec surface is `compile_imdf`, `encode_bundle`, and
@@ -47,7 +48,6 @@ pub(crate) const SECTION_GEOMETRY: u16 = 2;
 pub(crate) const SECTION_STORES: u16 = 3;
 #[allow(dead_code)] // reserved id; documented, never emitted in Phase Two
 pub(crate) const SECTION_STYLE: u16 = 4;
-#[allow(dead_code)] // reserved id; documented, never emitted in Phase Two
 pub(crate) const SECTION_GRAPH: u16 = 5;
 #[allow(dead_code)] // reserved id; documented, never emitted in Phase Two
 pub(crate) const SECTION_BEACONS: u16 = 6;
