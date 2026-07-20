@@ -5,10 +5,12 @@ import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
 const initKirikoWasmMock = vi.fn();
 const decodeBundleMock = vi.fn();
 const routeBundleMock = vi.fn();
+const facilitiesMock = vi.fn(() => []);
 vi.mock("./wasm", () => ({
   initKirikoWasm: (...args: unknown[]) => initKirikoWasmMock(...args),
   decodeBundle: (...args: unknown[]) => decodeBundleMock(...args),
   routeBundle: (...args: unknown[]) => routeBundleMock(...args),
+  facilities: (...args: unknown[]) => facilitiesMock(...args),
 }));
 
 import { decodeBundleMessage, routeBundleMessage } from "./bundle.worker";
@@ -54,7 +56,7 @@ describe("decodeBundleMessage", () => {
     resolveInit();
     const response = await promise;
     expect(decodeBundleMock).toHaveBeenCalledTimes(1);
-    expect(response).toEqual({ type: "loaded", venue: { id: "v" }, hasGraph: false });
+    expect(response).toEqual({ type: "loaded", venue: { id: "v" }, hasGraph: false, hasFacilities: false, facilities: [] });
   });
 
   it("maps a successful decode to a loaded response carrying the decoded venue", async () => {
@@ -63,7 +65,7 @@ describe("decodeBundleMessage", () => {
     decodeBundleMock.mockReturnValue({ ok: true, venue, error: null, hasGraph: false });
 
     const response = await decodeBundleMessage(request());
-    expect(response).toEqual({ type: "loaded", venue, hasGraph: false });
+    expect(response).toEqual({ type: "loaded", venue, hasGraph: false, hasFacilities: false, facilities: [] });
   });
 
   it("carries the bundle's §5 graph presence flag on the loaded response", async () => {
@@ -71,7 +73,7 @@ describe("decodeBundleMessage", () => {
     decodeBundleMock.mockReturnValue({ ok: true, venue: { id: "v" }, error: null, hasGraph: true });
 
     const response = await decodeBundleMessage(request());
-    expect(response).toEqual({ type: "loaded", venue: { id: "v" }, hasGraph: true });
+    expect(response).toEqual({ type: "loaded", venue: { id: "v" }, hasGraph: true, hasFacilities: false, facilities: [] });
   });
 
   it.each([

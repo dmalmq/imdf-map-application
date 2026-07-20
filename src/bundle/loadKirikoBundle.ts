@@ -3,6 +3,7 @@ import type { LoadedVenue } from "../imdf/types";
 import { hydrateVenue } from "./hydrateVenue";
 import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
 import type { BundleDecodeRequest, BundleWorkerFailureCode, BundleWorkerResponse } from "./types";
+import type { FacilityDto } from "./wasm";
 import BundleWorker from "./bundle.worker?worker&inline";
 
 const PUBLIC_VERSION_ID = /^[0-9a-f]{64}$/;
@@ -16,6 +17,10 @@ export interface KirikoBundleLoadResult {
   publicVersionId: string | null;
   /** Whether the bundle carries a §5 network graph (Directions mode gate). */
   hasGraph: boolean;
+  /** Whether the bundle carries a §7 facilities section (marker UI gate). */
+  hasFacilities: boolean;
+  /** Point facilities from §7; empty when absent. */
+  facilities: FacilityDto[];
 }
 
 /**
@@ -229,6 +234,8 @@ export async function loadKirikoBundle(
           },
           publicVersionId,
           hasGraph: data.hasGraph === true,
+          hasFacilities: data.hasFacilities === true,
+          facilities: Array.isArray(data.facilities) ? data.facilities : [],
         });
       });
     };
