@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use kiriko_bundle::{BundleDocument, BundleError, decode_bundle};
 use kiriko_model::canonical::{Object as CanonicalObject, Value as CanonicalValue};
 use kiriko_model::model::{Bounds, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning};
+use kiriko_route::{Point3, Route};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use wasm_bindgen::prelude::*;
@@ -247,4 +248,201 @@ pub fn decode_bundle_js(bytes: &[u8]) -> JsValue {
         },
     };
     to_js(&response)
+}
+
+// -- Route query (kiriko-route-slice Task 4) --------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeDto {
+    lon: f64,
+    lat: f64,
+    ordinal: f64,
+}
+
+/// Computed route payload: ordered `{lon, lat, ordinal}` nodes plus the
+/// total edge weight, serialized as `{ nodes, totalWeight }`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RouteDto {
+    nodes: Vec<NodeDto>,
+    total_weight: f32,
+}
+
+impl From<Route> for RouteDto {
+    fn from(route: Route) -> Self {
+        RouteDto {
+            nodes: route
+                .nodes
+                .iter()
+                .map(|n| NodeDto {
+                    lon: n.lon,
+                    lat: n.lat,
+                    ordinal: n.ordinal,
+                })
+                .collect(),
+            total_weight: route.total_weight,
+        }
+    }
+}
+
+/// Non-wasm core of [`route_bundle`]: route over the document's embedded
+/// graph section. `None` when the bundle has no graph (no network was
+/// compiled in) or when the snapped endpoints are disconnected.
+fn route_in_document(document: &BundleDocument, origin: Point3, dest: Point3) -> Option<RouteDto> {
+    let graph = document.graph.as_ref()?;
+    kiriko_route::route(graph, origin, dest).map(RouteDto::from)
+}
+
+/// Route over a `kvb1` bundle's embedded network graph. `o_*`/`d_*` are the
+/// origin/destination as lon/lat plus level ordinal. Returns `null` when the
+/// bundle carries no graph section or no path connects the snapped
+/// endpoints; otherwise `{ nodes: [{lon, lat, ordinal}], totalWeight }`,
+/// serialized with the same json-compatible `serde-wasm-bindgen` serializer
+/// as [`to_js`]. Bundle-format failures throw (unlike [`decode_bundle_js`],
+/// which reports them structurally).
+#[wasm_bindgen]
+pub fn route_bundle(
+    bundle: &[u8],
+    o_lon: f64,
+    o_lat: f64,
+    o_ord: f64,
+    d_lon: f64,
+    d_lat: f64,
+    d_ord: f64,
+) -> Result<JsValue, JsError> {
+    let document = decode_bundle(bundle).map_err(|e| JsError::new(&e.message))?;
+    let origin = Point3 {
+        lon: o_lon,
+        lat: o_lat,
+        ordinal: o_ord,
+    };
+    let dest = Point3 {
+        lon: d_lon,
+        lat: d_lat,
+        ordinal: d_ord,
+    };
+    let Some(route) = route_in_document(&document, origin, dest) else {
+        return Ok(JsValue::NULL);
+    };
+    route
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::io::{Cursor, Write};
+    use std::path::PathBuf;
+
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    use kiriko_bundle::{BundleMetadata, compile_imdf, compile_imdf_with_network};
+
+    use super::*;
+
+    // Task 1 (kiriko-route) GeoJSON constants, mirrored from kiriko-bundle's
+    // graph-embedding test: three junctions (two on F1/ordinal 0, one on
+    // F2/ordinal 1) and three paths, one dangling to the missing NODEID 99.
+    const NETWORK_JUNCTIONS: &str = r#"{"type":"FeatureCollection","features":[
+      {"type":"Feature","properties":{"NODEID":1,"FLOOR":"F1"},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+      {"type":"Feature","properties":{"NODEID":2,"FLOOR":"F1"},"geometry":{"type":"Point","coordinates":[139.001,35.0]}},
+      {"type":"Feature","properties":{"NODEID":3,"FLOOR":"F2"},"geometry":{"type":"Point","coordinates":[139.001,35.0]}}]}"#;
+    const NETWORK_PATHS: &str = r#"{"type":"FeatureCollection","features":[
+      {"type":"Feature","properties":{"FNODEID":1,"TNODEID":2,"cost":100},"geometry":{"type":"MultiLineString","coordinates":[[[139.0,35.0],[139.001,35.0]]]}},
+      {"type":"Feature","properties":{"FNODEID":2,"TNODEID":3,"cost":5000},"geometry":{"type":"MultiLineString","coordinates":[[[139.001,35.0],[139.001,35.0]]]}},
+      {"type":"Feature","properties":{"FNODEID":2,"TNODEID":99,"cost":10},"geometry":{"type":"MultiLineString","coordinates":[[[139.001,35.0],[139.002,35.0]]]}}]}"#;
+
+    fn build_minimal_imdf_zip() -> Vec<u8> {
+        let dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/minimal-imdf");
+        let mut names: Vec<String> = fs::read_dir(&dir)
+            .expect("read fixtures dir")
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                (!name.starts_with('.')).then_some(name)
+            })
+            .collect();
+        names.sort();
+        let mut cursor = Cursor::new(Vec::new());
+        let mut writer = ZipWriter::new(&mut cursor);
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(Some(6));
+        for name in names {
+            let data = fs::read(dir.join(&name)).expect("read fixture");
+            writer.start_file(name, options).expect("start zip entry");
+            writer.write_all(&data).expect("write zip entry");
+        }
+        writer.finish().expect("finish zip");
+        cursor.into_inner()
+    }
+
+    fn metadata() -> BundleMetadata {
+        BundleMetadata {
+            dataset_id: "test-bundle".to_string(),
+            version: 1,
+        }
+    }
+
+    fn compile_with_graph() -> Vec<u8> {
+        let source = build_minimal_imdf_zip();
+        compile_imdf_with_network(
+            &source,
+            metadata(),
+            Some(NETWORK_JUNCTIONS),
+            Some(NETWORK_PATHS),
+        )
+        .expect("fixture + network compiles")
+        .bytes
+    }
+
+    #[test]
+    fn route_between_two_node_points_returns_some() {
+        let bundle = compile_with_graph();
+        let document = decode_bundle(&bundle).expect("bundle decodes");
+        let route = route_in_document(
+            &document,
+            Point3 {
+                lon: 139.0,
+                lat: 35.0,
+                ordinal: 0.0,
+            },
+            Point3 {
+                lon: 139.001,
+                lat: 35.0,
+                ordinal: 0.0,
+            },
+        )
+        .expect("node 1 to node 2 must route");
+        assert_eq!(route.nodes.len(), 2);
+        assert_eq!(route.total_weight, 100.0);
+    }
+
+    #[test]
+    fn bundle_without_graph_returns_none() {
+        let source = build_minimal_imdf_zip();
+        let compiled = compile_imdf(&source, metadata()).expect("fixture compiles");
+        let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+        assert!(
+            route_in_document(
+                &document,
+                Point3 {
+                    lon: 139.0,
+                    lat: 35.0,
+                    ordinal: 0.0,
+                },
+                Point3 {
+                    lon: 139.001,
+                    lat: 35.0,
+                    ordinal: 0.0,
+                },
+            )
+            .is_none(),
+            "a bundle with no graph section must not route"
+        );
+    }
 }

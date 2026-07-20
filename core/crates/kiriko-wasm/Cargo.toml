@@ -18,7 +18,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 kiriko-model = { path = "../kiriko-model" }
 kiriko-bundle = { path = "../kiriko-bundle" }
+kiriko-route = { path = "../kiriko-route" }
 wasm-bindgen = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+zip = { workspace = true }
