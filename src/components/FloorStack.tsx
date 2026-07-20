@@ -1,5 +1,6 @@
 import { localizedLabel } from "../imdf/localize";
 import type { LocaleCode, ViewerLevel } from "../imdf/types";
+import { groupLevelsByOrdinal, ordinalOfLevel, type FloorGroup } from "../state/floorGroups";
 
 const ui = {
   group: { ja: "フロア", en: "Levels" },
@@ -13,17 +14,17 @@ export interface FloorStackProps {
   onSelect: (levelId: string) => void;
 }
 
-/** Short floor label ("1F", "B1"); falls back to the full label. */
-function shortLabelFor(
-  level: ViewerLevel,
+/** Short floor label ("1F", "B1") for a group; falls back to the full label. */
+function shortLabelForGroup(
+  group: FloorGroup,
   locale: LocaleCode,
   manifestLanguage: string,
 ): string {
-  const short = localizedLabel(level.shortName, locale, "", manifestLanguage);
+  const short = localizedLabel(group.shortName, locale, "", manifestLanguage);
   if (short !== "") {
     return short;
   }
-  return localizedLabel(level.label, locale, level.id, manifestLanguage);
+  return localizedLabel(group.label, locale, group.representativeLevelId, manifestLanguage);
 }
 
 /**
@@ -37,22 +38,24 @@ export function FloorStack({
   manifestLanguage,
   onSelect,
 }: FloorStackProps) {
+  const groups = groupLevelsByOrdinal(levels);
+  const selectedOrdinal = ordinalOfLevel(levels, selectedLevelId);
   return (
     <div className="floor-stack" role="group" aria-label={ui.group[locale]}>
-      {levels.map((level) => {
-        const selected = level.id === selectedLevelId;
-        const label = shortLabelFor(level, locale, manifestLanguage);
-        const full = localizedLabel(level.label, locale, level.id, manifestLanguage);
+      {groups.map((group) => {
+        const selected = group.ordinal === selectedOrdinal;
+        const label = shortLabelForGroup(group, locale, manifestLanguage);
+        const full = localizedLabel(group.label, locale, group.representativeLevelId, manifestLanguage);
         return (
           <button
-            key={level.id}
+            key={group.representativeLevelId}
             type="button"
             className={selected ? "floor-stack__btn floor-stack__btn--active" : "floor-stack__btn"}
             aria-pressed={selected}
             aria-label={full}
             title={full}
             onClick={() => {
-              onSelect(level.id);
+              onSelect(group.representativeLevelId);
             }}
           >
             {label}

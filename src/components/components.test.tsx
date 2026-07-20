@@ -95,6 +95,47 @@ describe("FloorStack", () => {
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenCalledWith(LEVEL_B1.id);
   });
+
+  it("shows one button per ordinal for a multi-building venue", () => {
+    const levels = [
+      { id: "a1", ordinal: 0, label: { en: "1F" }, shortName: { en: "1F" } },
+      { id: "b1", ordinal: 0, label: { en: "1F" }, shortName: { en: "1F" } },
+      { id: "c1", ordinal: 0, label: { en: "地上1階" }, shortName: { en: "地上1階" } },
+      { id: "aB1", ordinal: -1, label: { en: "B1" }, shortName: { en: "B1" } },
+    ];
+    render(
+      <FloorStack
+        levels={levels}
+        selectedLevelId="b1"
+        locale="en"
+        manifestLanguage="ja-JP"
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getAllByRole("button", { name: "1F" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "1F" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "B1" })).toBeTruthy();
+  });
+
+  it("selects the representative level id for a tapped floor", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const levels = [
+      { id: "a1", ordinal: 0, label: { en: "1F" }, shortName: { en: "1F" } },
+      { id: "b1", ordinal: 0, label: { en: "1F" }, shortName: { en: "1F" } },
+    ];
+    render(
+      <FloorStack
+        levels={levels}
+        selectedLevelId="a1"
+        locale="en"
+        manifestLanguage="ja-JP"
+        onSelect={onSelect}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "1F" }));
+    expect(onSelect).toHaveBeenCalledWith("a1");
+  });
 });
 
 function renderSearchPanel(
