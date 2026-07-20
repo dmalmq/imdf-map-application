@@ -1917,6 +1917,26 @@ button {
   color: var(--color-error);
 }
 
+.gallery-toast {
+  position: fixed;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-overlay);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-floating);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.gallery-toast--error {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
 /* ── Modals (gallery) ──────────────────────────────────── */
 
 .modal-overlay {
