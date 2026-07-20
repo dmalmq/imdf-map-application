@@ -11,7 +11,8 @@ export type ViewerWarningCode =
   | "unresolved_reference"
   | "missing_level_geometry"
   | "missing_display_point"
-  | "unknown_archive_entry";
+  | "unknown_archive_entry"
+  | "route_build";
 
 export interface ViewerWarning {
   code: ViewerWarningCode;
@@ -67,6 +68,7 @@ const WARNING_CODES: Record<ViewerWarningCode, true> = {
   missing_level_geometry: true,
   missing_display_point: true,
   unknown_archive_entry: true,
+  route_build: true,
 };
 
 const U32_MAX = 0xffff_ffff;
