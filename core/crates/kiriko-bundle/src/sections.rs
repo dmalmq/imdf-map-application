@@ -179,6 +179,7 @@ pub(crate) enum WarningCodeDto {
     MissingDisplayPoint,
     UnknownArchiveEntry,
     RouteBuild,
+    FacilityBuild,
 }
 
 impl From<WarningCode> for WarningCodeDto {
@@ -190,6 +191,7 @@ impl From<WarningCode> for WarningCodeDto {
             WarningCode::MissingDisplayPoint => Self::MissingDisplayPoint,
             WarningCode::UnknownArchiveEntry => Self::UnknownArchiveEntry,
             WarningCode::RouteBuild => Self::RouteBuild,
+            WarningCode::FacilityBuild => Self::FacilityBuild,
         }
     }
 }
@@ -203,6 +205,7 @@ impl From<WarningCodeDto> for WarningCode {
             WarningCodeDto::MissingDisplayPoint => Self::MissingDisplayPoint,
             WarningCodeDto::UnknownArchiveEntry => Self::UnknownArchiveEntry,
             WarningCodeDto::RouteBuild => Self::RouteBuild,
+            WarningCodeDto::FacilityBuild => Self::FacilityBuild,
         }
     }
 }

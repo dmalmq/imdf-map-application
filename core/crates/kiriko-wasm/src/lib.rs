@@ -404,6 +404,7 @@ mod tests {
             metadata(),
             Some(NETWORK_JUNCTIONS),
             Some(NETWORK_PATHS),
+            None,
         )
         .expect("fixture + network compiles")
         .bytes

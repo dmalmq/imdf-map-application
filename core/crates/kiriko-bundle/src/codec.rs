@@ -65,12 +65,12 @@ pub struct CompiledBundle {
 
 /// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, then encode the
 /// canonical venue model as a `kvb1` bundle. Equivalent to
-/// [`compile_imdf_with_network`] without network GeoJSON.
+/// [`compile_imdf_with_network`] without network or facilities GeoJSON.
 pub fn compile_imdf(
     source: &[u8],
     metadata: BundleMetadata,
 ) -> Result<CompiledBundle, CompileError> {
-    compile_imdf_with_network(source, metadata, None, None)
+    compile_imdf_with_network(source, metadata, None, None, None)
 }
 
 /// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, optionally build
@@ -82,13 +82,21 @@ pub fn compile_imdf(
 /// level ordinals; a non-empty graph is embedded as section 5 and the build
 /// warnings fold into the compile warning channel (code `route_build`). A
 /// malformed network is fatal ([`CompileError::Route`]). When either input
-/// is `None`, no graph is embedded and the result is identical to
-/// [`compile_imdf`].
+/// is `None`, no graph is embedded.
+///
+/// When `facilities_geojson` is `Some`,
+/// [`kiriko_facilities::build_facilities`] builds the point-facility list
+/// against the route graph (or an empty graph when no network was supplied,
+/// which leaves every anchor unset and warns once); non-empty facilities are
+/// embedded as section 7 and the build warnings fold into the compile
+/// warning channel (code `facility_build`). Malformed facilities GeoJSON is
+/// fatal ([`CompileError::Facility`]).
 pub fn compile_imdf_with_network(
     source: &[u8],
     metadata: BundleMetadata,
     junctions_geojson: Option<&str>,
     paths_geojson: Option<&str>,
+    facilities_geojson: Option<&str>,
 ) -> Result<CompiledBundle, CompileError> {
     let venue = import_imdf(source)?;
     let stats = BundleStats {
@@ -108,9 +116,11 @@ pub fn compile_imdf_with_network(
         facilities: None,
     };
 
+    let mut route_node_ids: Option<Vec<u64>> = None;
     if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
         let ordinals: Vec<f64> = document.levels.iter().map(|l| l.ordinal).collect();
         let build = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
+        route_node_ids = Some(build.node_ids);
         if !build.graph.is_empty() {
             document.graph = Some(build.graph);
         }
@@ -118,6 +128,45 @@ pub fn compile_imdf_with_network(
             .warnings
             .extend(build.warnings.into_iter().map(|w| ViewerWarning {
                 code: WarningCode::RouteBuild,
+                message: format!("{}: {}", w.code, w.detail),
+                feature_id: None,
+                archive_entry: None,
+            }));
+    }
+
+    if let Some(facilities_geojson) = facilities_geojson {
+        let has_graph = document.graph.is_some() && route_node_ids.is_some();
+        if !has_graph {
+            document.warnings.push(ViewerWarning {
+                code: WarningCode::FacilityBuild,
+                message: "facilities GeoJSON built with no route graph: all \
+                          facility anchors are unset"
+                    .to_string(),
+                feature_id: None,
+                archive_entry: None,
+            });
+        }
+        let empty_graph = RouteGraph {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+        let (graph, node_ids): (&RouteGraph, &[u64]) = if has_graph {
+            (
+                document.graph.as_ref().expect("checked above"),
+                route_node_ids.as_deref().expect("checked above"),
+            )
+        } else {
+            (&empty_graph, &[])
+        };
+        let (facilities, build_warnings) =
+            kiriko_facilities::build_facilities(facilities_geojson, graph, node_ids)?;
+        if !facilities.items.is_empty() {
+            document.facilities = Some(facilities);
+        }
+        document
+            .warnings
+            .extend(build_warnings.into_iter().map(|w| ViewerWarning {
+                code: WarningCode::FacilityBuild,
                 message: format!("{}: {}", w.code, w.detail),
                 feature_id: None,
                 archive_entry: None,
