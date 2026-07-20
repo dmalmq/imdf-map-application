@@ -6,6 +6,7 @@ import {
   gdbTargetTypesForGeometry,
   isGdbTargetGeometryCompatible,
   layerNameFloorOrdinal,
+  normalizeGdbPlan,
   normalizeGdbUuid,
   structuredFloorOrdinal,
   suggestGdbMapping,
@@ -230,5 +231,45 @@ describe("buildGdbImdf", () => {
     );
     expect(failures.map((f) => f.layer)).toEqual(["Station_1_Space"]);
     expect(failures[0]?.reason).toBe("empty or geometry-less layer");
+  });
+});
+
+describe("normalizeGdbPlan", () => {
+  it("coerces empty-string buildingId to null and leaves real ids", () => {
+    const plan = {
+      venueName: "V",
+      buildings: [{ id: "building-1", name: "A" }],
+      layers: [
+        {
+          key: { databaseId: "gdb-1", layerName: "A_1_Floor" },
+          included: true,
+          targetType: "level" as const,
+          buildingId: "",
+          levelRule: { kind: "layer-name" as const },
+          idField: "id",
+          ordinalField: null,
+          shortNameField: null,
+          nameField: null,
+          categoryField: null,
+        },
+        {
+          key: { databaseId: "gdb-1", layerName: "A_1_Space" },
+          included: true,
+          targetType: "unit" as const,
+          buildingId: "building-1",
+          levelRule: { kind: "layer-name" as const },
+          idField: "id",
+          ordinalField: null,
+          shortNameField: null,
+          nameField: null,
+          categoryField: null,
+        },
+      ],
+    };
+    const out = normalizeGdbPlan(plan);
+    expect(out.layers[0]!.buildingId).toBeNull();
+    expect(out.layers[1]!.buildingId).toBe("building-1");
+    // Does not mutate input
+    expect(plan.layers[0]!.buildingId).toBe("");
   });
 });

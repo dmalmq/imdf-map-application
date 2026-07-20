@@ -418,6 +418,17 @@ export function suggestGdbMapping(inspection: GdbInspection): GdbMappingPlan {
   };
 }
 
+/** Coerce wire-footgun empty strings so conversion treats them as unset. */
+export function normalizeGdbPlan(plan: GdbMappingPlan): GdbMappingPlan {
+  return {
+    ...plan,
+    layers: plan.layers.map((row) => ({
+      ...row,
+      buildingId: row.buildingId === "" ? null : row.buildingId,
+    })),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // buildGdbImdf: reviewed GeoJSON -> ParsedImdfArchive
 // ---------------------------------------------------------------------------
