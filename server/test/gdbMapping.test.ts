@@ -3,11 +3,13 @@ import {
   buildGdbImdf,
   collectGdbConversionFailures,
   extractGdbFloorOrdinal,
+  GdbConversionError,
   gdbTargetTypesForGeometry,
   isGdbTargetGeometryCompatible,
   layerNameFloorOrdinal,
   normalizeGdbPlan,
   normalizeGdbUuid,
+  resolveGdbImdfWithExclusions,
   structuredFloorOrdinal,
   suggestGdbMapping,
 } from "../src/gdb/mapping";
@@ -295,5 +297,50 @@ describe("normalizeGdbPlan", () => {
     expect(out.layers[1]!.buildingId).toBe("building-1");
     // Does not mutate input
     expect(plan.layers[0]!.buildingId).toBe("");
+  });
+});
+
+describe("resolveGdbImdfWithExclusions", () => {
+  it("returns empty excludedLayers when the plan already converts", () => {
+    const ok = layer("Station_1_Floor", "polygon", 1, ["id"]);
+    const plan = suggestGdbMapping(inspect([ok]));
+    // ensure included
+    const resolved = resolveGdbImdfWithExclusions(
+      { layers: [convert([ok], "id1")], warnings: [] },
+      plan,
+    );
+    expect(resolved.excludedLayers).toEqual([]);
+    expect(resolved.archive.collections.level?.features.length).toBeGreaterThan(0);
+  });
+
+  it("prunes blamed layers and returns exclusions", () => {
+    const ok = layer("Station_1_Floor", "polygon", 1, ["id"]);
+    const bad = layer("Station_1_Space", "polygon", 1, ["id"]);
+    const plan = suggestGdbMapping(inspect([ok, bad]));
+    const convertedOk = convert([ok], "id1");
+    const emptyBad = {
+      key: bad.key,
+      featureCollection: { type: "FeatureCollection" as const, features: [] },
+      skippedGeometryCount: 0,
+    };
+    const resolved = resolveGdbImdfWithExclusions(
+      { layers: [convertedOk, emptyBad], warnings: [] },
+      plan,
+    );
+    expect(resolved.excludedLayers.map((f) => f.layer)).toEqual(["Station_1_Space"]);
+    expect(resolved.archive.collections.level?.features.length).toBeGreaterThan(0);
+  });
+
+  it("throws when every included layer is blamed", () => {
+    const bad = layer("Station_1_Floor", "polygon", 1, ["id"]);
+    const plan = suggestGdbMapping(inspect([bad]));
+    const emptyBad = {
+      key: bad.key,
+      featureCollection: { type: "FeatureCollection" as const, features: [] },
+      skippedGeometryCount: 0,
+    };
+    expect(() =>
+      resolveGdbImdfWithExclusions({ layers: [emptyBad], warnings: [] }, plan),
+    ).toThrow(GdbConversionError);
   });
 });
