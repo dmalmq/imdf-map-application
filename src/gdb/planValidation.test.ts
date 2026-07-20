@@ -62,4 +62,67 @@ describe("collectBlockingIssues", () => {
     const plan = { ...basePlan, layers: [{ ...basePlan.layers[0]!, targetType: "amenity" as const }] };
     expect(collectBlockingIssues(plan, map, "en")[0]).toContain("incompatible");
   });
+
+  it("treats empty-string buildingId as missing on levels", () => {
+    const plan = {
+      ...basePlan,
+      layers: [{ ...basePlan.layers[0]!, buildingId: "" }],
+    };
+    expect(collectBlockingIssues(plan, map, "en").some((m) => m.includes("building"))).toBe(true);
+  });
+
+  it("allows source-reference non-level with null buildingId", () => {
+    const amenity = descriptor("POI", "point", ["id", "floor_id"]);
+    const amenityMap = new Map([[gdbLayerKeyString(amenity.key), amenity]]);
+    const plan: GdbMappingPlan = {
+      venueName: "Station",
+      buildings: [{ id: "b1", name: "Station" }],
+      layers: [
+        basePlan.layers[0]!,
+        {
+          key: amenity.key,
+          included: true,
+          targetType: "amenity",
+          buildingId: null,
+          levelRule: { kind: "source-reference", field: "floor_id" },
+          idField: "id",
+          ordinalField: null,
+          shortNameField: null,
+          nameField: null,
+          categoryField: null,
+        },
+      ],
+    };
+    const issues = collectBlockingIssues(plan, amenityMap, "en");
+    expect(issues.some((m) => m.includes("POI") && m.includes("building"))).toBe(false);
+  });
+
+  it("flags non-source-reference non-level with empty buildingId", () => {
+    const unit = descriptor("Station_1_Space", "polygon", ["id"]);
+    const unitMap = new Map([
+      [gdbLayerKeyString(basePlan.layers[0]!.key), descriptor("Station_1_Floor", "polygon", ["id"])],
+      [gdbLayerKeyString(unit.key), unit],
+    ]);
+    const plan: GdbMappingPlan = {
+      venueName: "Station",
+      buildings: [{ id: "b1", name: "Station" }],
+      layers: [
+        basePlan.layers[0]!,
+        {
+          key: unit.key,
+          included: true,
+          targetType: "unit",
+          buildingId: "",
+          levelRule: { kind: "layer-name" },
+          idField: "id",
+          ordinalField: null,
+          shortNameField: null,
+          nameField: null,
+          categoryField: null,
+        },
+      ],
+    };
+    const issues = collectBlockingIssues(plan, unitMap, "en");
+    expect(issues.some((m) => m.includes("Space"))).toBe(true);
+  });
 });
