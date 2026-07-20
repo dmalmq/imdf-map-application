@@ -27,6 +27,14 @@ impl fmt::Display for RouteBuildError {
 
 impl std::error::Error for RouteBuildError {}
 
+/// Result of [`build_route_graph`]: the graph, non-fatal warnings, and the
+/// NODEID→index mapping (`node_ids[i]` is the source NODEID of `graph.nodes[i]`).
+pub struct RouteGraphBuild {
+    pub graph: RouteGraph,
+    pub warnings: Vec<RouteBuildWarning>,
+    pub node_ids: Vec<u64>,
+}
+
 /// Build a deterministic route graph from network junction and path GeoJSON.
 ///
 /// Junctions carry `NODEID`/`FLOOR` properties and a Point geometry; paths carry
@@ -38,7 +46,7 @@ pub fn build_route_graph(
     junctions_geojson: &str,
     paths_geojson: &str,
     level_ordinals: &[f64],
-) -> Result<(RouteGraph, Vec<RouteBuildWarning>), RouteBuildError> {
+) -> Result<RouteGraphBuild, RouteBuildError> {
     let junctions = parse_collection(junctions_geojson, "junctions")?;
     let paths = parse_collection(paths_geojson, "paths")?;
     let mut warnings = Vec::new();
@@ -98,6 +106,8 @@ pub fn build_route_graph(
         (a.from, a.to, a.weight.to_bits()).cmp(&(b.from, b.to, b.weight.to_bits()))
     });
 
+    // NODEID order matches `by_id.into_values()` (BTreeMap) → parallel to `nodes`.
+    let node_ids: Vec<u64> = by_id.keys().copied().collect();
     let nodes: Vec<RouteNode> = by_id.into_values().collect();
     for node in &nodes {
         if !level_ordinals.contains(&node.ordinal) {
@@ -108,7 +118,11 @@ pub fn build_route_graph(
         }
     }
 
-    Ok((RouteGraph { nodes, edges }, warnings))
+    Ok(RouteGraphBuild {
+        graph: RouteGraph { nodes, edges },
+        warnings,
+        node_ids,
+    })
 }
 
 fn parse_collection(src: &str, what: &str) -> Result<FeatureCollection, RouteBuildError> {
@@ -142,24 +156,33 @@ mod tests {
 
     #[test]
     fn builds_graph_dropping_dangling_edges() {
-        let (g, warns) = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap();
-        assert_eq!(g.nodes.len(), 3);
-        assert_eq!(g.edges.len(), 2); // edge to NODEID 99 dropped
-        assert!(warns.iter().any(|w| w.code == "dangling_edge"));
+        let b = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap();
+        assert_eq!(b.graph.nodes.len(), 3);
+        assert_eq!(b.graph.edges.len(), 2); // edge to NODEID 99 dropped
+        assert!(b.warnings.iter().any(|w| w.code == "dangling_edge"));
     }
 
     #[test]
     fn drops_unmappable_floor_nodes() {
         let j = JUNCTIONS.replace("\"F2\"", "\"garbage\"");
-        let (g, warns) = build_route_graph(&j, PATHS, &[0.0, 1.0]).unwrap();
-        assert_eq!(g.nodes.len(), 2);
-        assert!(warns.iter().any(|w| w.code == "unmapped_floor"));
+        let b = build_route_graph(&j, PATHS, &[0.0, 1.0]).unwrap();
+        assert_eq!(b.graph.nodes.len(), 2);
+        assert!(b.warnings.iter().any(|w| w.code == "unmapped_floor"));
     }
 
     #[test]
     fn deterministic_output() {
-        let a = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap().0;
-        let b = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap().0;
+        let a = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap().graph;
+        let b = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap().graph;
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn returns_node_ids_parallel_to_nodes() {
+        let b = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap();
+        assert_eq!(b.node_ids.len(), b.graph.nodes.len());
+        // NODEID 1 maps to the node at its index
+        let idx = b.node_ids.iter().position(|&id| id == 1).unwrap();
+        assert!((b.graph.nodes[idx].lon - 139.0).abs() < 1e-9);
     }
 }

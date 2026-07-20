@@ -105,13 +105,13 @@ pub fn compile_imdf_with_network(
 
     if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
         let ordinals: Vec<f64> = document.levels.iter().map(|l| l.ordinal).collect();
-        let (graph, build_warnings) = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
-        if !graph.is_empty() {
-            document.graph = Some(graph);
+        let build = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
+        if !build.graph.is_empty() {
+            document.graph = Some(build.graph);
         }
         document
             .warnings
-            .extend(build_warnings.into_iter().map(|w| ViewerWarning {
+            .extend(build.warnings.into_iter().map(|w| ViewerWarning {
                 code: WarningCode::RouteBuild,
                 message: format!("{}: {}", w.code, w.detail),
                 feature_id: None,
