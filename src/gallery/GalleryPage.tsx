@@ -7,7 +7,7 @@ import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 import { DatasetCard } from "./DatasetCard";
 import { GdbImportDialog } from "./GdbImportDialog";
 import { SignInModal } from "./SignInModal";
-import { UploadModal } from "./UploadModal";
+import { UploadModal, type UploadModalTarget } from "./UploadModal";
 
 const ui = {
   datasets: { ja: "データセット", en: "Datasets" },
@@ -57,6 +57,7 @@ export function GalleryPage() {
   const [state, setState] = useState<GalleryState>({ phase: "loading" });
   const [filter, setFilter] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<UploadModalTarget | null>(null);
   const [deleting, setDeleting] = useState<VenueSummary | null>(null);
   const [gdbFlow, setGdbFlow] = useState<GdbFlow>({ phase: "idle" });
   const [gdbNotice, setGdbNotice] = useState<string | null>(null);
@@ -82,6 +83,25 @@ export function GalleryPage() {
 
   const openVenue = (slug: string) => {
     window.location.assign(`/?dataset=${encodeURIComponent(slug)}`);
+  };
+
+  const openCreateUpload = () => {
+    setUploadTarget(null);
+    setUploadOpen(true);
+  };
+
+  const openVersionUpload = (venue: VenueSummary) => {
+    setUploadTarget({
+      venueId: venue.id,
+      venueName: venue.name,
+      slug: venue.slug,
+    });
+    setUploadOpen(true);
+  };
+
+  const closeUpload = () => {
+    setUploadOpen(false);
+    setUploadTarget(null);
   };
 
   const startGdbImport = (target: GdbTarget = { mode: "create" }) => {
@@ -281,7 +301,7 @@ export function GalleryPage() {
               }}
             />
           </div>
-          <button type="button" className="btn-primary gallery__upload-btn" onClick={() => { setUploadOpen(true); }}>
+          <button type="button" className="btn-primary gallery__upload-btn" onClick={openCreateUpload}>
             {ui.openLocal[locale]}
           </button>
           <button type="button" className="chip" onClick={() => startGdbImport({ mode: "create" })}>
@@ -315,6 +335,9 @@ export function GalleryPage() {
                 onDelete={() => {
                   setDeleting(venue);
                 }}
+                onUploadImdf={() => {
+                  openVersionUpload(venue);
+                }}
                 onImportGdb={() => {
                   startGdbImport({
                     mode: "version",
@@ -330,9 +353,8 @@ export function GalleryPage() {
       {uploadOpen ? (
         <UploadModal
           locale={locale}
-          onClose={() => {
-            setUploadOpen(false);
-          }}
+          {...(uploadTarget !== null ? { target: uploadTarget } : {})}
+          onClose={closeUpload}
           onPublished={() => {
             void reload();
           }}
