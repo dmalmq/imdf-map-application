@@ -99,6 +99,12 @@ Network and facility `FLOOR`/`floor` labels map to venue level ordinals (`kiriko
 - Network/facility floor labels must line up with the venue's converted levels; mismatches drop nodes/facilities with warnings surfaced in the review dialog.
 - New Rust warning codes (e.g. `route_build`, `facility_build`) MUST be added to the TS bridge allowlist (`server/src/core/native.ts`) **and** the client type (`src/imdf/types.ts`) or publish fails with `bridge_error`.
 
+## Known follow-ups
+
+- **Floor merge (viewer):** GDB import synthesizes one IMDF level per `(building, ordinal)` (`resolveOrCreateLevel` in `server/src/gdb/mapping.ts`, keyed by `buildingUuid\0ordinal`). This is correct IMDF modeling (a level belongs to one building), but a multi-building venue like Tokyo Station (~15 buildings) yields ~15 separate `1F` entries. The **viewer floor selector should group levels by ordinal** and show one floor per ordinal, rendering every building's geometry at that ordinal together. Fix belongs in the viewer/level model, not the importer. (Next phase after point-facility POIs.)
+- **Route total units:** viewer labels the A\* total `m` though it is `net_path.cost` units.
+- Deferred routing semantics: `passage_type`, `direction`/one-way, `barrier`/`gate`, time windows, accessibility profiles.
+
 ## Specs & plans
 
 - `docs/superpowers/specs/2026-07-17-kiriko-platform-architecture-design.md` — platform architecture, phasing, KVB format.
