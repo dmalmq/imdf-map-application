@@ -636,6 +636,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiriko-route"
+version = "0.1.0"
+dependencies = [
+ "geojson",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kiriko-wasm"
 version = "0.1.0"
 dependencies = [
