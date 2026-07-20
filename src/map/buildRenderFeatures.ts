@@ -1,5 +1,6 @@
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
+import { levelIdsForOrdinal, ordinalOfLevel } from "../state/floorGroups";
 
 /** Renderer-owned property keys flattened onto derived GeoJSON features. */
 export interface RenderFeatureProperties {
@@ -76,8 +77,16 @@ export function buildRenderFeatures(
     }
   }
 
-  const levelCollection = venue.renderFeaturesByLevel.get(levelId);
-  if (levelCollection != null) {
+  // Render every level sharing the selected level's ordinal, so a multi-building
+  // floor shows all buildings at once. Falls back to the single level when the
+  // ordinal can't be resolved.
+  const ordinal = ordinalOfLevel(venue.levels, levelId);
+  const groupLevelIds = ordinal === null ? [levelId] : levelIdsForOrdinal(venue.levels, ordinal);
+  for (const groupLevelId of groupLevelIds) {
+    const levelCollection = venue.renderFeaturesByLevel.get(groupLevelId);
+    if (levelCollection == null) {
+      continue;
+    }
     for (const feature of levelCollection.features) {
       const id = feature.id;
       const featureId =
