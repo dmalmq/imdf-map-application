@@ -661,6 +661,7 @@ name = "kiriko-wasm"
 version = "0.1.0"
 dependencies = [
  "kiriko-bundle",
+ "kiriko-facilities",
  "kiriko-model",
  "kiriko-route",
  "serde",
