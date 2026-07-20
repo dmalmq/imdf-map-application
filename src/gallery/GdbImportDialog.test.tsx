@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { GdbImportDialog } from "./GdbImportDialog";
-import type { GdbInspection, GdbMappingPlan } from "../gdb/types";
+import type { GdbInspection, GdbMappingPlan, NetworkInspectResponse } from "../gdb/types";
 
 const inspection: GdbInspection = {
   sourceName: "Station.gdb",
@@ -20,6 +20,13 @@ const plan: GdbMappingPlan = {
   ],
 };
 
+const network: NetworkInspectResponse = {
+  networkBlobHash: "n".repeat(64),
+  nodeCount: 120,
+  edgeCount: 340,
+  floors: ["1F", "2F"],
+};
+
 describe("GdbImportDialog", () => {
   it("imports the plan when there are no blocking issues", () => {
     const onImport = vi.fn();
@@ -33,6 +40,29 @@ describe("GdbImportDialog", () => {
     const brokenPlan = { ...plan, layers: [{ ...plan.layers[0]!, buildingId: null }] };
     render(<GdbImportDialog inspection={inspection} initialPlan={brokenPlan} locale="en" busy={false} error={null} onImport={vi.fn()} onCancel={() => {}} />);
     expect((screen.getByRole("button", { name: /import/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows the routing network summary when a network is attached", () => {
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="en" busy={false} error={null} network={network} onImport={vi.fn()} onCancel={() => {}} />);
+    expect(screen.getByText("Routing network: 120 nodes, 340 paths, 2 floors")).toBeTruthy();
+  });
+
+  it("localizes the routing network summary", () => {
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="ja" busy={false} error={null} network={network} onImport={vi.fn()} onCancel={() => {}} />);
+    expect(screen.getByText(/ルーティングネットワーク: 120/)).toBeTruthy();
+  });
+
+  it("renders no routing summary without a network", () => {
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="en" busy={false} error={null} onImport={vi.fn()} onCancel={() => {}} />);
+    expect(screen.queryByText(/routing network/i)).toBeNull();
+  });
+
+  it("notifies when a routing network file is chosen", () => {
+    const onAddNetwork = vi.fn();
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="en" busy={false} error={null} onAddNetwork={onAddNetwork} onImport={vi.fn()} onCancel={() => {}} />);
+    const input = screen.getByLabelText(/add routing network/i);
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array([1])], "net.gdb.zip")] } });
+    expect(onAddNetwork).toHaveBeenCalledTimes(1);
   });
 
   it("locks the venue name field when venueNameLocked is true", () => {

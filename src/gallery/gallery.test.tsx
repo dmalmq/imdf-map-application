@@ -6,6 +6,7 @@ import type { VenueSummary } from "./api";
 const me = vi.fn();
 const listVenues = vi.fn();
 const inspectGdb = vi.fn();
+const inspectGdbNetwork = vi.fn();
 const createVenue = vi.fn();
 const publishGdb = vi.fn();
 const waitForJob = vi.fn();
@@ -19,6 +20,7 @@ vi.mock("./api", async (importOriginal) => {
       me: () => me(),
       listVenues: () => listVenues(),
       inspectGdb: (...args: unknown[]) => inspectGdb(...args),
+      inspectGdbNetwork: (...args: unknown[]) => inspectGdbNetwork(...args),
       createVenue: (...args: unknown[]) => createVenue(...args),
       publishGdb: (...args: unknown[]) => publishGdb(...args),
       waitForJob: (...args: unknown[]) => waitForJob(...args),
@@ -159,7 +161,7 @@ describe("GalleryPage", () => {
 
     await waitFor(() => expect(publishGdb).toHaveBeenCalledTimes(1));
     expect(createVenue).toHaveBeenCalledWith("Station");
-    expect(publishGdb).toHaveBeenCalledWith(9, "a".repeat(64), expect.objectContaining({ venueName: "Station" }));
+    expect(publishGdb).toHaveBeenCalledWith(9, "a".repeat(64), expect.objectContaining({ venueName: "Station" }), null);
     await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toMatch(/skipped|スキップ/),
@@ -221,8 +223,52 @@ describe("GalleryPage", () => {
       42,
       "b".repeat(64),
       expect.objectContaining({ venueName: "Existing Station" }),
+      null,
     );
     expect(deleteVenue).not.toHaveBeenCalled();
+    await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
+  });
+
+  it("attaches an optional routing network before publishing", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([]);
+    inspectGdb.mockResolvedValue({ blobHash: "a".repeat(64), inspection: gdbInspection, suggestedPlan: gdbPlan });
+    inspectGdbNetwork.mockResolvedValue({
+      networkBlobHash: "n".repeat(64),
+      nodeCount: 120,
+      edgeCount: 340,
+      floors: ["1F", "2F"],
+    });
+    createVenue.mockResolvedValue({ id: 9, slug: "station", name: "Station", createdAt: "" });
+    publishGdb.mockResolvedValue({ jobId: "j", versionId: 1, seq: 1, excludedLayers: [] });
+    waitForJob.mockResolvedValue({ status: "done" });
+
+    const user = userEvent.setup();
+    const { container } = render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("データセットがありません")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File([new Uint8Array([1, 2, 3])], "Station.gdb.zip", { type: "application/zip" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import" })).toBeTruthy());
+    // No network attached yet: no summary, publish would pass null.
+    expect(screen.queryByText(/routing network: \d+ nodes/i)).toBeNull();
+
+    const networkInput = screen.getByLabelText(/add routing network/i);
+    await user.upload(networkInput, new File([new Uint8Array([4, 5])], "net.gdb.zip", { type: "application/zip" }));
+    await waitFor(() =>
+      expect(screen.getByText("Routing network: 120 nodes, 340 paths, 2 floors")).toBeTruthy(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(publishGdb).toHaveBeenCalledTimes(1));
+    expect(inspectGdbNetwork).toHaveBeenCalledTimes(1);
+    expect(publishGdb).toHaveBeenCalledWith(
+      9,
+      "a".repeat(64),
+      expect.objectContaining({ venueName: "Station" }),
+      "n".repeat(64),
+    );
     await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
   });
 

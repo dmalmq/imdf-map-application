@@ -13,6 +13,7 @@ import {
   type GdbLevelRule,
   type GdbMappingPlan,
   type GdbTargetType,
+  type NetworkInspectResponse,
 } from "../gdb/types";
 
 /** Client-side page size for the layer review table. */
@@ -54,6 +55,7 @@ const ui = {
   blocking: { ja: "解決が必要な項目", en: "Blocking issues" },
   cancel: { ja: "キャンセル", en: "Cancel" },
   import: { ja: "取り込む", en: "Import" },
+  addNetwork: { ja: "ルーティングネットワークを追加", en: "Add routing network" },
 } as const;
 
 const summaryText = {
@@ -64,6 +66,13 @@ const summaryText = {
 const pageText = {
   ja: (page: number, total: number) => `${page} / ${total} ページ`,
   en: (page: number, total: number) => `Page ${page} of ${total}`,
+};
+
+const routingSummaryText = {
+  ja: (nodes: number, paths: number, floors: number) =>
+    `ルーティングネットワーク: ${nodes} ノード、${paths} パス、${floors} フロア`,
+  en: (nodes: number, paths: number, floors: number) =>
+    `Routing network: ${nodes} nodes, ${paths} paths, ${floors} floors`,
 };
 
 
@@ -211,6 +220,10 @@ export interface GdbImportDialogProps {
   error: GdbError | null;
   /** When true, venue name is shown but not editable (existing-venue version import). */
   venueNameLocked?: boolean;
+  /** Optional routing network attached to this import; summarized when present. */
+  network?: NetworkInspectResponse | null;
+  /** When provided, an "Add routing network" file picker is shown. */
+  onAddNetwork?: (file: File) => void;
   onImport: (plan: GdbMappingPlan) => void;
   onCancel: () => void;
 }
@@ -244,6 +257,8 @@ export function GdbImportDialog({
   busy,
   error,
   venueNameLocked = false,
+  network = null,
+  onAddNetwork,
   onImport,
   onCancel,
 }: GdbImportDialogProps) {
@@ -680,6 +695,27 @@ export function GdbImportDialog({
           <p className="gdb-dialog__summary">
             {summaryText[locale](includedRows.length, includedFeatureCount)}
           </p>
+          {onAddNetwork ? (
+            <label className="gdb-dialog__btn gdb-dialog__network-add">
+              {ui.addNetwork[locale]}
+              <input
+                type="file"
+                accept=".zip,.gdb.zip"
+                style={{ display: "none" }}
+                aria-label={ui.addNetwork[locale]}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) onAddNetwork(file);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+          ) : null}
+          {network ? (
+            <p className="gdb-dialog__network-summary">
+              {routingSummaryText[locale](network.nodeCount, network.edgeCount, network.floors.length)}
+            </p>
+          ) : null}
           {inspection.warnings.length > 0 ? (
             <div className="gdb-dialog__warnings">
               <p>{ui.warnings[locale]}</p>
