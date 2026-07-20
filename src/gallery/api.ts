@@ -117,6 +117,13 @@ export function gdbErrorMessage(err: GdbError, locale: LocaleCode): string {
   return base;
 }
 
+export type GdbPublishResponse = {
+  jobId: string;
+  versionId: number;
+  seq: number;
+  excludedLayers: Array<{ layer: string; reason: string }>;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: "same-origin",
@@ -254,7 +261,7 @@ export const api = {
     venueId: number,
     blobHash: string,
     plan: GdbMappingPlan,
-  ): Promise<{ jobId: string; versionId: number; seq: number }> {
+  ): Promise<GdbPublishResponse> {
     const res = await fetch("/api/gdb/publish", {
       method: "POST",
       credentials: "same-origin",
@@ -266,6 +273,12 @@ export const api = {
       try { parsed = (await res.json()) as GdbError; } catch { /* non-JSON */ }
       throw parsed;
     }
-    return (await res.json()) as { jobId: string; versionId: number; seq: number };
+    const body = (await res.json()) as GdbPublishResponse;
+    return {
+      jobId: body.jobId,
+      versionId: body.versionId,
+      seq: body.seq,
+      excludedLayers: Array.isArray(body.excludedLayers) ? body.excludedLayers : [],
+    };
   },
 };
