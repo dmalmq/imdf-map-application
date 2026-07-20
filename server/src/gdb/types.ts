@@ -117,9 +117,43 @@ export interface GdbInspectResponse {
   suggestedPlan: GdbMappingPlan;
 }
 
+/**
+ * Output of extracting the `net_junction`/`net_path` layers from a staged
+ * network `.gdb.zip`: both layers as WGS84 RFC7946 GeoJSON FeatureCollection
+ * text (fed verbatim into `compileImdf`), plus the summary shown in the
+ * import review dialog.
+ */
+export interface NetworkExtraction {
+  junctions: string;
+  paths: string;
+  nodeCount: number;
+  edgeCount: number;
+  /** Distinct `FLOOR` property values across both layers, sorted. */
+  floors: string[];
+}
+
+/**
+ * Response envelope for `POST /api/gdb/inspect-network`. `networkBlobHash`
+ * references the staged raw network `.gdb.zip` in the blob store; the
+ * subsequent publish request may echo it back as `networkBlobHash`.
+ */
+export interface NetworkInspectResponse {
+  networkBlobHash: string;
+  nodeCount: number;
+  edgeCount: number;
+  floors: string[];
+}
+
 /** Payload for `POST /api/gdb/publish`. */
 export interface GdbPublishRequest {
   venueId: number;
   blobHash: string;
   plan: GdbMappingPlan;
+  /**
+   * Optional blob hash of a staged network `.gdb.zip` (from
+   * `POST /api/gdb/inspect-network`). When present, its `net_junction` /
+   * `net_path` layers are extracted and passed to the compile step, which
+   * embeds the routing graph as bundle section 5.
+   */
+  networkBlobHash?: string;
 }

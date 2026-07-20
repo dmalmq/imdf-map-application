@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use sha2::{Digest, Sha256};
 
 use kiriko_bundle::{
-    BundleDocument, BundleErrorCode, BundleMetadata, BundleStats, compile_imdf, decode_bundle,
-    encode_bundle, inspect_bundle,
+    BundleDocument, BundleErrorCode, BundleMetadata, BundleStats, CompileError, compile_imdf,
+    compile_imdf_with_network, decode_bundle, encode_bundle, inspect_bundle,
 };
 
 fn metadata() -> BundleMetadata {
@@ -40,6 +40,66 @@ fn decompress_payload(bytes: &[u8]) -> Vec<u8> {
         "declared length must match the frame's content"
     );
     payload
+}
+
+// -- Network graph embedding (kiriko-route-slice Task 3) -------------------
+
+// Task 1 (kiriko-route) GeoJSON constants: three junctions (two on F1, one
+// on F2 — ordinals 0 and 1, both present in the minimal fixture) and three
+// paths, one of which dangles to the missing NODEID 99.
+const NETWORK_JUNCTIONS: &str = r#"{"type":"FeatureCollection","features":[
+  {"type":"Feature","properties":{"NODEID":1,"FLOOR":"F1"},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+  {"type":"Feature","properties":{"NODEID":2,"FLOOR":"F1"},"geometry":{"type":"Point","coordinates":[139.001,35.0]}},
+  {"type":"Feature","properties":{"NODEID":3,"FLOOR":"F2"},"geometry":{"type":"Point","coordinates":[139.001,35.0]}}]}"#;
+const NETWORK_PATHS: &str = r#"{"type":"FeatureCollection","features":[
+  {"type":"Feature","properties":{"FNODEID":1,"TNODEID":2,"cost":100},"geometry":{"type":"MultiLineString","coordinates":[[[139.0,35.0],[139.001,35.0]]]}},
+  {"type":"Feature","properties":{"FNODEID":2,"TNODEID":3,"cost":5000},"geometry":{"type":"MultiLineString","coordinates":[[[139.001,35.0],[139.001,35.0]]]}},
+  {"type":"Feature","properties":{"FNODEID":2,"TNODEID":99,"cost":10},"geometry":{"type":"MultiLineString","coordinates":[[[139.001,35.0],[139.002,35.0]]]}}]}"#;
+
+#[test]
+fn compile_with_network_embeds_graph_section() {
+    let source = support::build_minimal_imdf_zip();
+    let compiled = compile_imdf_with_network(
+        &source,
+        metadata(),
+        Some(NETWORK_JUNCTIONS),
+        Some(NETWORK_PATHS),
+    )
+    .expect("fixture + network compiles");
+    let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+
+    let graph = document.graph.expect("network must embed a graph section");
+    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.edges.len(), 2, "the dangling edge must be dropped");
+    assert!(
+        compiled
+            .warnings
+            .iter()
+            .any(|w| w.code.as_str() == "route_build" && w.message.contains("dangling_edge")),
+        "build warnings must fold into the compile warning channel"
+    );
+}
+
+#[test]
+fn compile_without_network_has_no_graph() {
+    let source = support::build_minimal_imdf_zip();
+    let compiled = compile_imdf(&source, metadata()).expect("fixture compiles");
+    let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+    assert!(document.graph.is_none());
+}
+
+#[test]
+fn compile_with_malformed_network_is_a_route_error() {
+    let source = support::build_minimal_imdf_zip();
+    let err = compile_imdf_with_network(
+        &source,
+        metadata(),
+        Some("not geojson"),
+        Some(NETWORK_PATHS),
+    )
+    .expect_err("malformed network GeoJSON must fail the compile");
+    assert_eq!(err.code_str(), "route_build_failed");
+    assert!(matches!(err, CompileError::Route(_)));
 }
 
 // -- Step 1: format byte-layout tests -------------------------------------
@@ -362,6 +422,7 @@ fn minimal_document(features: Vec<kiriko_model::model::VenueFeature>) -> BundleD
             levels: 0,
             features: 0,
         },
+        graph: None,
     }
 }
 

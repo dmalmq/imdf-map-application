@@ -178,6 +178,7 @@ pub(crate) enum WarningCodeDto {
     MissingLevelGeometry,
     MissingDisplayPoint,
     UnknownArchiveEntry,
+    RouteBuild,
 }
 
 impl From<WarningCode> for WarningCodeDto {
@@ -188,6 +189,7 @@ impl From<WarningCode> for WarningCodeDto {
             WarningCode::MissingLevelGeometry => Self::MissingLevelGeometry,
             WarningCode::MissingDisplayPoint => Self::MissingDisplayPoint,
             WarningCode::UnknownArchiveEntry => Self::UnknownArchiveEntry,
+            WarningCode::RouteBuild => Self::RouteBuild,
         }
     }
 }
@@ -200,6 +202,7 @@ impl From<WarningCodeDto> for WarningCode {
             WarningCodeDto::MissingLevelGeometry => Self::MissingLevelGeometry,
             WarningCodeDto::MissingDisplayPoint => Self::MissingDisplayPoint,
             WarningCodeDto::UnknownArchiveEntry => Self::UnknownArchiveEntry,
+            WarningCodeDto::RouteBuild => Self::RouteBuild,
         }
     }
 }
@@ -550,7 +553,105 @@ pub(crate) fn manifest_into_document(
             levels: dto.stats.levels,
             features: dto.stats.features,
         },
+        graph: None,
     })
+}
+
+/// Serializable mirror of `kiriko_route::RouteNode`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct GraphNodeDto {
+    lon: f64,
+    lat: f64,
+    ordinal: f64,
+}
+
+/// Serializable mirror of `kiriko_route::RouteEdge`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct GraphEdgeDto {
+    from: u32,
+    to: u32,
+    weight: f32,
+}
+
+/// Section 5 (graph): the routing graph. Optional — `encode_bundle` emits
+/// it only when the document carries a non-empty graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct GraphSectionDto {
+    nodes: Vec<GraphNodeDto>,
+    edges: Vec<GraphEdgeDto>,
+}
+
+/// Validate one graph edge: both endpoints must index an existing node and
+/// the weight must be finite. Shared by the encode and decode paths so a
+/// hand-crafted section is held to exactly the same rules as a freshly
+/// encoded one.
+fn validate_graph_edge(from: u32, to: u32, weight: f32, node_count: usize) -> Result<(), BundleError> {
+    if from as usize >= node_count || to as usize >= node_count {
+        return Err(BundleError::new(
+            BundleErrorCode::InvalidBundle,
+            format!(
+                "graph edge endpoint ({from}, {to}) is out of bounds for {node_count} node(s)"
+            ),
+        ));
+    }
+    if !weight.is_finite() {
+        return Err(BundleError::new(
+            BundleErrorCode::InvalidBundle,
+            "graph edge weight must be finite",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn encode_graph(graph: &kiriko_route::RouteGraph) -> Result<Vec<u8>, BundleError> {
+    let node_count = graph.nodes.len();
+    let mut nodes = Vec::with_capacity(node_count);
+    for node in &graph.nodes {
+        nodes.push(GraphNodeDto {
+            lon: canonical_f64(node.lon)?,
+            lat: canonical_f64(node.lat)?,
+            ordinal: canonical_f64(node.ordinal)?,
+        });
+    }
+    let mut edges = Vec::with_capacity(graph.edges.len());
+    for edge in &graph.edges {
+        validate_graph_edge(edge.from, edge.to, edge.weight, node_count)?;
+        edges.push(GraphEdgeDto {
+            from: edge.from,
+            to: edge.to,
+            weight: edge.weight,
+        });
+    }
+    postcard::to_allocvec(&GraphSectionDto { nodes, edges }).map_err(|e| {
+        BundleError::new(
+            BundleErrorCode::InvalidBundle,
+            format!("encode graph section: {e}"),
+        )
+    })
+}
+
+pub(crate) fn decode_graph(bytes: &[u8]) -> Result<kiriko_route::RouteGraph, BundleError> {
+    let dto: GraphSectionDto =
+        crate::codec::postcard_take_exact(bytes, "decode graph section")?;
+    let node_count = dto.nodes.len();
+    let mut nodes = Vec::with_capacity(node_count);
+    for node in &dto.nodes {
+        nodes.push(kiriko_route::RouteNode {
+            lon: canonical_f64(node.lon)?,
+            lat: canonical_f64(node.lat)?,
+            ordinal: canonical_f64(node.ordinal)?,
+        });
+    }
+    let mut edges = Vec::with_capacity(dto.edges.len());
+    for edge in &dto.edges {
+        validate_graph_edge(edge.from, edge.to, edge.weight, node_count)?;
+        edges.push(kiriko_route::RouteEdge {
+            from: edge.from,
+            to: edge.to,
+            weight: edge.weight,
+        });
+    }
+    Ok(kiriko_route::RouteGraph { nodes, edges })
 }
 
 #[cfg(test)]
@@ -713,6 +814,127 @@ mod tests {
 
         let err = crate::decode_bundle(&bytes)
             .expect_err("trailing bytes after a section value must be rejected");
+        assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+    }
+
+    /// A minimal, well-formed `BundleDocument` with no features and no
+    /// graph, for graph-section round-trip tests.
+    fn minimal_document() -> BundleDocument {
+        BundleDocument {
+            metadata: BundleMetadata {
+                dataset_id: "test".to_string(),
+                version: 1,
+            },
+            manifest: ImdfManifest {
+                version: "1.0.0".to_string(),
+                language: "en".to_string(),
+                rest: BTreeMap::new(),
+            },
+            venue_id: "venue-1".to_string(),
+            levels: Vec::new(),
+            features: Vec::new(),
+            bounds_by_level: BTreeMap::new(),
+            warnings: Vec::new(),
+            stats: BundleStats {
+                levels: 0,
+                features: 0,
+            },
+            graph: None,
+        }
+    }
+
+    #[test]
+    fn graph_section_round_trips() {
+        use kiriko_route::{RouteEdge, RouteGraph, RouteNode};
+        let mut doc = minimal_document();
+        doc.graph = Some(RouteGraph {
+            nodes: vec![
+                RouteNode {
+                    lon: 139.0,
+                    lat: 35.0,
+                    ordinal: 0.0,
+                },
+                RouteNode {
+                    lon: 139.1,
+                    lat: 35.1,
+                    ordinal: 1.0,
+                },
+            ],
+            edges: vec![RouteEdge {
+                from: 0,
+                to: 1,
+                weight: 12.5,
+            }],
+        });
+        let bytes = crate::encode_bundle(&doc).expect("a document with a graph encodes");
+        let back = crate::decode_bundle(&bytes).expect("a graph bundle decodes");
+        assert_eq!(back.graph, doc.graph);
+    }
+
+    #[test]
+    fn no_graph_section_when_absent() {
+        let doc = minimal_document();
+        let bytes = crate::encode_bundle(&doc).expect("a graph-less document encodes");
+        assert_eq!(
+            crate::decode_bundle(&bytes)
+                .expect("a graph-less bundle decodes")
+                .graph,
+            None
+        );
+    }
+
+    /// Wrap a hand-built manifest and graph section into a full bundle,
+    /// bypassing `encode_graph` so an invalid edge endpoint can be smuggled
+    /// straight into the section payload.
+    fn wrap_bundle_with_graph(manifest_bytes: Vec<u8>, graph_bytes: Vec<u8>) -> Vec<u8> {
+        let empty_features: Vec<u8> =
+            postcard::to_allocvec(&Vec::<FeatureDto>::new()).expect("empty vec encodes");
+        let payload = crate::format::build_payload(&[
+            (
+                crate::format::SECTION_MANIFEST,
+                crate::format::SECTION_VERSION,
+                manifest_bytes,
+            ),
+            (
+                crate::format::SECTION_GEOMETRY,
+                crate::format::SECTION_VERSION,
+                empty_features.clone(),
+            ),
+            (
+                crate::format::SECTION_STORES,
+                crate::format::SECTION_VERSION,
+                empty_features,
+            ),
+            (
+                crate::format::SECTION_GRAPH,
+                crate::format::SECTION_VERSION,
+                graph_bytes,
+            ),
+        ]);
+        crate::format::encode_payload(&payload).expect("hand-built payload encodes")
+    }
+
+    #[test]
+    fn rejects_graph_edge_out_of_bounds() {
+        let manifest_bytes = postcard::to_allocvec(&manifest_section_with_ordinal(1.0))
+            .expect("dto encodes");
+        let graph_bytes = postcard::to_allocvec(&GraphSectionDto {
+            nodes: vec![GraphNodeDto {
+                lon: 139.0,
+                lat: 35.0,
+                ordinal: 0.0,
+            }],
+            edges: vec![GraphEdgeDto {
+                from: 0,
+                to: 7, // only one node exists; endpoint 7 is out of bounds
+                weight: 1.0,
+            }],
+        })
+        .expect("an out-of-bounds edge still postcard-encodes");
+        let bytes = wrap_bundle_with_graph(manifest_bytes, graph_bytes);
+
+        let err = crate::decode_bundle(&bytes)
+            .expect_err("a graph edge past the node count must be rejected");
         assert_eq!(err.code, BundleErrorCode::InvalidBundle);
     }
 }

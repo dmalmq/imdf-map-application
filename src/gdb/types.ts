@@ -72,3 +72,15 @@ export interface GdbInspectResponse {
   inspection: GdbInspection;
   suggestedPlan: GdbMappingPlan;
 }
+
+/**
+ * Mirror of the server `NetworkInspectResponse` (`POST /api/gdb/inspect-network`):
+ * summary of the extracted routing network plus the staged blob hash a publish
+ * request may echo back as `networkBlobHash`.
+ */
+export interface NetworkInspectResponse {
+  networkBlobHash: string;
+  nodeCount: number;
+  edgeCount: number;
+  floors: string[];
+}

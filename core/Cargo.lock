@@ -603,6 +603,7 @@ name = "kiriko-bundle"
 version = "0.1.0"
 dependencies = [
  "kiriko-model",
+ "kiriko-route",
  "postcard",
  "serde",
  "serde_json",
@@ -636,15 +637,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiriko-route"
+version = "0.1.0"
+dependencies = [
+ "geojson",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kiriko-wasm"
 version = "0.1.0"
 dependencies = [
  "kiriko-bundle",
  "kiriko-model",
+ "kiriko-route",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",
+ "zip",
 ]
 
 [[package]]

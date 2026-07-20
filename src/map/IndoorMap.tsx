@@ -11,6 +11,7 @@ import maplibregl, {
   type MapMouseEvent,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { RouteEndpoint, RouteResultDto } from "../bundle/wasm";
 import type { LocaleCode, LoadedVenue } from "../imdf/types";
 import type { ViewerTheme } from "../theme/types";
 import { buildIndoorStyle, INDOOR_SOURCE_ID } from "./buildIndoorStyle";
@@ -18,8 +19,10 @@ import { buildRenderFeatures } from "./buildRenderFeatures";
 import {
   applyThemePaintProperties,
   CLICKABLE_LAYER_IDS,
+  ROUTE_SOURCE_ID,
 } from "./featureLayers";
 import { LAYER_GROUP_IDS, type LayerVisibility } from "./layerGroups";
+import { buildRouteFeatures } from "./routeFeatures";
 import { useFeatureMarkers } from "./useFeatureMarkers";
 import { useIssuePins, type MapIssuePin } from "./useIssuePins";
 
@@ -60,6 +63,20 @@ export interface IssueReviewMapProps {
   cameraRequest: { key: number; levelId: string; longitude: number; latitude: number } | null;
 }
 
+/**
+ * Directions-mode projection owned by App. While `active`, map taps report
+ * raw points through `onPickPoint` (snapping happens in wasm) and ordinary
+ * feature selection is suppressed. `route` carries every node; this
+ * component segments it per floor so only the active level's parts render.
+ */
+export interface DirectionsMapProps {
+  active: boolean;
+  origin: RouteEndpoint | null;
+  destination: RouteEndpoint | null;
+  route: RouteResultDto | null;
+  onPickPoint: (point: { longitude: number; latitude: number }) => void;
+}
+
 export interface IndoorMapProps {
   venue: LoadedVenue;
   levelId: string;
@@ -71,6 +88,8 @@ export interface IndoorMapProps {
   onSelectFeature: (featureId: string | null) => void;
   /** null in Task 11; live review controller in Task 12. */
   issueReview: IssueReviewMapProps | null;
+  /** null when the bundle has no §5 graph or Directions is off. */
+  directions?: DirectionsMapProps | null;
   /** Receives camera controls once the map exists; null on teardown. */
   onControls?: (controls: IndoorMapControls | null) => void;
 }
@@ -103,6 +122,38 @@ function getIndoorSource(map: MapLibreMap): GeoJSONSource | null {
     return null;
   }
   return source as GeoJSONSource;
+}
+
+function getRouteSource(map: MapLibreMap): GeoJSONSource | null {
+  const source = map.getSource(ROUTE_SOURCE_ID);
+  if (source == null || source.type !== "geojson") {
+    return null;
+  }
+  return source as GeoJSONSource;
+}
+
+function activeOrdinalFor(venue: LoadedVenue, levelId: string): number | null {
+  return venue.levels.find((level) => level.id === levelId)?.ordinal ?? null;
+}
+
+function setRouteSourceData(
+  map: MapLibreMap,
+  venue: LoadedVenue,
+  levelId: string,
+  directions: DirectionsMapProps | null | undefined,
+): void {
+  const source = getRouteSource(map);
+  if (source == null) {
+    return;
+  }
+  const ordinal = activeOrdinalFor(venue, levelId);
+  const active = directions != null && ordinal !== null;
+  source.setData(
+    buildRouteFeatures(
+      active ? { origin: directions.origin, destination: directions.destination, route: directions.route } : null,
+      ordinal ?? 0,
+    ),
+  );
 }
 
 function fitLevelBounds(
@@ -247,6 +298,7 @@ export function IndoorMap({
   layerVisibility,
   onSelectFeature,
   issueReview,
+  directions = null,
   onControls,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -266,6 +318,7 @@ export function IndoorMap({
   const visibilityRef = useRef(layerVisibility);
   const onControlsRef = useRef(onControls);
   const issueReviewRef = useRef(issueReview);
+  const directionsRef = useRef(directions);
   const [mapInstance, setMapInstance] = useState<MapLibreMap | null>(null);
 
   onSelectRef.current = onSelectFeature;
@@ -275,6 +328,7 @@ export function IndoorMap({
   visibilityRef.current = layerVisibility;
   onControlsRef.current = onControls;
   issueReviewRef.current = issueReview;
+  directionsRef.current = directions;
 
   const onMarkerSelect = useCallback((featureId: string, center: [number, number]) => {
     const review = issueReviewRef.current;
@@ -390,6 +444,13 @@ export function IndoorMap({
         });
         return;
       }
+      const dirs = directionsRef.current;
+      if (dirs?.active === true) {
+        // Directions captures the raw point (snapping happens in wasm) and
+        // suppresses ordinary feature selection.
+        dirs.onPickPoint({ longitude: event.lngLat.lng, latitude: event.lngLat.lat });
+        return;
+      }
       onSelectRef.current(featureId);
     };
 
@@ -425,6 +486,7 @@ export function IndoorMap({
 
     const onLoad = (): void => {
       setSourceData(map, venueRef.current, levelIdRef.current);
+      setRouteSourceData(map, venueRef.current, levelIdRef.current, directionsRef.current);
       applyLayerVisibility(map, visibilityRef.current);
       fitLevelBounds(map, venueRef.current, levelIdRef.current);
       setMapInstance(map);
@@ -664,6 +726,16 @@ export function IndoorMap({
       }
     });
   }, [issueReview?.cameraRequest, levelId]);
+
+  // Directions overlay: re-segment the route per active floor whenever the
+  // route, endpoints, floor, or venue change; empty when Directions is off.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map == null || !map.isStyleLoaded()) {
+      return;
+    }
+    setRouteSourceData(map, venue, levelId, directions);
+  }, [directions, venue, levelId]);
 
   // Layer-group visibility toggles (Layers panel).
   useEffect(() => {

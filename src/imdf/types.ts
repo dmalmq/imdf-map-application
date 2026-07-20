@@ -30,7 +30,8 @@ export type ViewerWarningCode =
   | "unresolved_reference"
   | "missing_level_geometry"
   | "missing_display_point"
-  | "unknown_archive_entry";
+  | "unknown_archive_entry"
+  | "route_build";
 
 export interface ImdfManifest {
   version: "1.0.0";

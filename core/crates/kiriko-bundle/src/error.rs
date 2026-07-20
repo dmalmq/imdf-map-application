@@ -8,6 +8,7 @@
 use std::fmt;
 
 use kiriko_model::ImportError;
+use kiriko_route::RouteBuildError;
 
 /// Stable error code for [`BundleError`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,12 +73,14 @@ impl fmt::Display for BundleError {
 impl std::error::Error for BundleError {}
 
 /// Failure compiling raw IMDF source bytes into a bundle: either the
-/// `kiriko-model` importer rejected the archive, or the codec failed to
-/// encode the resulting model.
+/// `kiriko-model` importer rejected the archive, the codec failed to
+/// encode the resulting model, or the optional network GeoJSON could not
+/// be parsed into a route graph.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompileError {
     Import(ImportError),
     Bundle(BundleError),
+    Route(RouteBuildError),
 }
 
 impl CompileError {
@@ -88,6 +91,7 @@ impl CompileError {
         match self {
             Self::Import(e) => e.code.as_str(),
             Self::Bundle(e) => e.code.as_str(),
+            Self::Route(_) => "route_build_failed",
         }
     }
 }
@@ -97,6 +101,7 @@ impl fmt::Display for CompileError {
         match self {
             Self::Import(e) => fmt::Display::fmt(e, f),
             Self::Bundle(e) => fmt::Display::fmt(e, f),
+            Self::Route(e) => write!(f, "route_build_failed: {e}"),
         }
     }
 }
@@ -112,5 +117,11 @@ impl From<ImportError> for CompileError {
 impl From<BundleError> for CompileError {
     fn from(e: BundleError) -> Self {
         Self::Bundle(e)
+    }
+}
+
+impl From<RouteBuildError> for CompileError {
+    fn from(e: RouteBuildError) -> Self {
+        Self::Route(e)
     }
 }

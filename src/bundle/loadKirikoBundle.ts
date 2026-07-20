@@ -14,6 +14,8 @@ export interface KirikoBundleLoadResult {
     version: number;
   };
   publicVersionId: string | null;
+  /** Whether the bundle carries a §5 network graph (Directions mode gate). */
+  hasGraph: boolean;
 }
 
 /**
@@ -58,7 +60,12 @@ function isWorkerResponse(value: unknown): value is BundleWorkerResponse {
     return false;
   }
   if (value.type === "loaded") {
-    return "venue" in value && value.venue !== null && typeof value.venue === "object";
+    return (
+      "venue" in value &&
+      value.venue !== null &&
+      typeof value.venue === "object" &&
+      (!("hasGraph" in value) || typeof value.hasGraph === "boolean")
+    );
   }
   if (value.type === "failed") {
     if (!("error" in value) || value.error === null || typeof value.error !== "object") {
@@ -194,6 +201,14 @@ export async function loadKirikoBundle(
         });
         return;
       }
+      if (data.type !== "loaded") {
+        // A `routed` response can never answer a decode request.
+        settle(() => {
+          worker.terminate();
+          reject(workerFailedError());
+        });
+        return;
+      }
       let venue: LoadedVenue;
       try {
         venue = hydrateVenue(data.venue);
@@ -213,6 +228,7 @@ export async function loadKirikoBundle(
             version: data.venue.version,
           },
           publicVersionId,
+          hasGraph: data.hasGraph === true,
         });
       });
     };

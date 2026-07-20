@@ -20,6 +20,8 @@ import { SearchPanel } from "../components/SearchPanel";
 import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { WarningsPanel } from "../components/WarningsPanel";
 import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
+import { routeKirikoBundle } from "../bundle/routeKirikoBundle";
+import type { RouteEndpoint, RouteResultDto } from "../bundle/wasm";
 import { ZoomCluster } from "../components/ZoomCluster";
 import { SignInModal } from "../gallery/SignInModal";
 import { VenueLoadError } from "../errors/VenueLoadError";
@@ -34,6 +36,7 @@ import type { ReviewerSummary } from "../issues/types";
 import { useIssueSync } from "../issues/useIssueSync";
 import {
   IndoorMap,
+  type DirectionsMapProps,
   type IndoorMapControls,
   type IssuePlacementAnchor,
   type IssueReviewMapProps,
@@ -67,6 +70,13 @@ const ui = {
   closeInspector: { ja: "詳細を閉じる", en: "Close details" },
   attribution: { ja: "IMDF venue data © Company", en: "IMDF venue data © Company" },
   openInKiriko: { ja: "Kiriko で開く", en: "Open in Kiriko" },
+  directions: { ja: "経路案内", en: "Directions" },
+  directionsPickOrigin: { ja: "地図をタップして出発地を指定", en: "Tap the map to set the origin" },
+  directionsPickDestination: { ja: "地図をタップして目的地を指定", en: "Tap the map to set the destination" },
+  directionsSearching: { ja: "経路を計算中", en: "Computing the route" },
+  directionsNoPath: { ja: "経路が見つかりません", en: "No route found" },
+  directionsFailed: { ja: "経路を計算できませんでした", en: "Could not compute the route" },
+  directionsClear: { ja: "経路をクリア", en: "Clear route" },
 } as const;
 
 const COMPACT_MQ = "(max-width: 899px)";
@@ -153,6 +163,8 @@ type BundleProvenance = {
   datasetId: string;
   version: number;
   publicVersionId: string | null;
+  /** Whether the bundle carries a §5 network graph (Directions mode gate). */
+  hasGraph: boolean;
 };
 
 type IssueMode =
@@ -170,6 +182,24 @@ interface LoadAttempt {
   loadVenue: (signal: AbortSignal) => Promise<ViewerLoadResult>;
   requestedLevel?: string;
 }
+
+type DirectionsStatus = "idle" | "loading" | "error";
+
+interface DirectionsState {
+  active: boolean;
+  origin: RouteEndpoint | null;
+  destination: RouteEndpoint | null;
+  route: RouteResultDto | null;
+  status: DirectionsStatus;
+}
+
+const INITIAL_DIRECTIONS: DirectionsState = {
+  active: false,
+  origin: null,
+  destination: null,
+  route: null,
+  status: "idle",
+};
 
 export function App() {
   const params = useMemo(() => parseViewerParams(window.location.search), []);
@@ -197,6 +227,8 @@ export function App() {
   const [linkCopied, setLinkCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [bundleProvenance, setBundleProvenance] = useState<BundleProvenance | null>(null);
+  const [directions, setDirections] = useState<DirectionsState>(INITIAL_DIRECTIONS);
+  const directionsTokenRef = useRef(0);
   const issueMode: IssueMode = params.embed
     ? { kind: "hidden" as const }
     : bundleProvenance === null
@@ -280,6 +312,92 @@ export function App() {
 
   const locale = state.locale;
   const venueState = activeVenue(state);
+
+  // Directions mode is gated on the decoded bundle's §5 graph (bundle loads
+  // only — a ZIP import has no graph section to route over).
+  const directionsAvailable =
+    !embed && venueState !== null && bundleProvenance?.hasGraph === true && params.dataset !== null;
+
+  // A new venue (or dropping back to no bundle) resets any in-flight picks.
+  useEffect(() => {
+    directionsTokenRef.current += 1;
+    setDirections(INITIAL_DIRECTIONS);
+  }, [bundleProvenance]);
+
+  const fireRoute = useCallback(
+    (origin: RouteEndpoint, destination: RouteEndpoint) => {
+      const dataset = params.dataset;
+      if (dataset === null) {
+        return;
+      }
+      const token = directionsTokenRef.current + 1;
+      directionsTokenRef.current = token;
+      setDirections((current) => ({ ...current, destination, route: null, status: "loading" }));
+      void routeKirikoBundle(datasetBundleUrl(dataset), origin, destination).then(
+        (route) => {
+          if (directionsTokenRef.current === token) {
+            setDirections((current) => ({ ...current, route, status: "idle" }));
+          }
+        },
+        () => {
+          if (directionsTokenRef.current === token) {
+            setDirections((current) => ({ ...current, route: null, status: "error" }));
+          }
+        },
+      );
+    },
+    [params.dataset],
+  );
+
+  const onDirectionsPick = useCallback(
+    (point: { longitude: number; latitude: number }) => {
+      const venue = activeVenue(state);
+      if (venue === null) {
+        return;
+      }
+      const ordinal =
+        venue.loadedVenue.levels.find((level) => level.id === venue.selectedLevelId)?.ordinal ?? 0;
+      const endpoint: RouteEndpoint = { ...point, ordinal };
+      if (directions.origin === null || directions.destination !== null) {
+        // First pick (or a re-pick after a completed route) starts over.
+        directionsTokenRef.current += 1;
+        setDirections((current) => ({
+          ...current,
+          origin: endpoint,
+          destination: null,
+          route: null,
+          status: "idle",
+        }));
+        return;
+      }
+      fireRoute(directions.origin, endpoint);
+    },
+    [directions.origin, directions.destination, fireRoute, state],
+  );
+
+  const clearDirections = useCallback(() => {
+    directionsTokenRef.current += 1;
+    setDirections((current) => ({ ...INITIAL_DIRECTIONS, active: current.active }));
+  }, []);
+
+  const toggleDirections = useCallback(() => {
+    directionsTokenRef.current += 1;
+    setDirections((current) => ({ ...INITIAL_DIRECTIONS, active: !current.active }));
+  }, []);
+
+  const directionsMapProps = useMemo<DirectionsMapProps | null>(
+    () =>
+      directionsAvailable
+        ? {
+            active: directions.active,
+            origin: directions.origin,
+            destination: directions.destination,
+            route: directions.route,
+            onPickPoint: onDirectionsPick,
+          }
+        : null,
+    [directions.active, directions.destination, directions.origin, directions.route, directionsAvailable, onDirectionsPick],
+  );
 
   const searchResults = useMemo(() => {
     if (!venueState) {
@@ -653,6 +771,7 @@ export function App() {
             provenance: {
               ...result.metadata,
               publicVersionId: result.publicVersionId,
+              hasGraph: result.hasGraph,
             },
           };
         },
@@ -843,6 +962,7 @@ export function App() {
             layerVisibility={layerVisibility}
             onSelectFeature={onMapSelectFeature}
             issueReview={issueReview}
+            directions={directionsMapProps}
             onControls={onControls}
           />
         ) : null}
@@ -986,6 +1106,40 @@ export function App() {
 
         {showMap ? (
           <>
+            {directionsAvailable ? (
+              <div className="directions-bar">
+                <button
+                  type="button"
+                  className={directions.active ? "chip chip--selected" : "chip"}
+                  aria-pressed={directions.active}
+                  onClick={toggleDirections}
+                >
+                  {ui.directions[locale]}
+                </button>
+                {directions.active ? (
+                  <>
+                    <span className="directions-bar__status">
+                      {directions.status === "loading"
+                        ? ui.directionsSearching[locale]
+                        : directions.status === "error"
+                          ? ui.directionsFailed[locale]
+                          : directions.destination !== null && directions.route === null
+                            ? ui.directionsNoPath[locale]
+                            : directions.route !== null
+                              ? `${Math.round(directions.route.totalWeight)} m`
+                              : directions.origin === null
+                                ? ui.directionsPickOrigin[locale]
+                                : ui.directionsPickDestination[locale]}
+                    </span>
+                    {directions.origin !== null ? (
+                      <button type="button" className="chip" onClick={clearDirections}>
+                        {ui.directionsClear[locale]}
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            ) : null}
             <FloorStack
               levels={venueState.loadedVenue.levels}
               selectedLevelId={venueState.selectedLevelId}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KirikoMark } from "../components/icons";
-import type { GdbInspectResponse, GdbMappingPlan } from "../gdb/types";
+import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse } from "../gdb/types";
 import type { LocaleCode } from "../imdf/types";
 import { api, gdbErrorMessage, type ApiUser, type GdbError, type VenueSummary } from "./api";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
@@ -47,6 +47,7 @@ type GdbFlow =
       phase: "review";
       target: GdbTarget;
       data: GdbInspectResponse;
+      network: NetworkInspectResponse | null;
       busy: boolean;
       error: GdbError | null;
     }
@@ -126,6 +127,7 @@ export function GalleryPage() {
           phase: "review",
           target,
           data: { ...data, suggestedPlan },
+          network: null,
           busy: false,
           error: null,
         });
@@ -139,11 +141,28 @@ export function GalleryPage() {
     })();
   };
 
+  const onGdbNetworkFile = (file: File) => {
+    if (gdbFlow.phase !== "review") return;
+    void (async () => {
+      try {
+        const network = await api.inspectGdbNetwork(file);
+        setGdbFlow((current) =>
+          current.phase === "review" ? { ...current, network, error: null } : current,
+        );
+      } catch (err) {
+        setGdbFlow((current) =>
+          current.phase === "review" ? { ...current, error: err as GdbError } : current,
+        );
+      }
+    })();
+  };
+
   const publishGdbPlan = (plan: GdbMappingPlan) => {
     if (gdbFlow.phase !== "review") return;
     const data = gdbFlow.data;
     const target = gdbFlow.target;
-    setGdbFlow({ phase: "review", target, data, busy: true, error: null });
+    const network = gdbFlow.network;
+    setGdbFlow({ phase: "review", target, data, network, busy: true, error: null });
     void (async () => {
       let createdVenueId: number | null = null;
       try {
@@ -155,7 +174,7 @@ export function GalleryPage() {
           createdVenueId = venue.id;
           venueId = venue.id;
         }
-        const published = await api.publishGdb(venueId, data.blobHash, plan);
+        const published = await api.publishGdb(venueId, data.blobHash, plan, network?.networkBlobHash ?? null);
         const job = await api.waitForJob(published.jobId);
         if (job.status === "done") {
           const skipped = published.excludedLayers ?? [];
@@ -174,6 +193,7 @@ export function GalleryPage() {
             phase: "review",
             target,
             data,
+            network,
             busy: false,
             error: { code: "gdb_conversion_failed", message: job.error },
           });
@@ -191,6 +211,7 @@ export function GalleryPage() {
           phase: "review",
           target,
           data,
+          network,
           busy: false,
           error: err as GdbError,
         });
@@ -392,6 +413,8 @@ export function GalleryPage() {
           locale={locale}
           busy={gdbFlow.busy}
           error={gdbFlow.error}
+          network={gdbFlow.network}
+          onAddNetwork={onGdbNetworkFile}
           venueNameLocked={gdbFlow.target.mode === "version"}
           onImport={publishGdbPlan}
           onCancel={cancelGdbImport}

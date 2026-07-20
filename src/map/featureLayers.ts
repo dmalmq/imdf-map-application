@@ -43,6 +43,11 @@ export const LAYER_SELECTED_OUTLINE = "indoor-selected-outline";
 export const LAYER_ISSUE_HIGHLIGHT_OUTLINE = "indoor-issue-highlight-outline";
 export const LAYER_ISSUE_HIGHLIGHT_POINT = "indoor-issue-highlight-point";
 
+/** Separate GeoJSON source for the directions overlay (route + endpoints). */
+export const ROUTE_SOURCE_ID = "indoor-route";
+export const LAYER_ROUTE = "indoor-route-line";
+export const LAYER_ROUTE_ENDPOINT = "indoor-route-endpoint";
+
 /** Layers that participate in click / hover hit-testing. */
 export const CLICKABLE_LAYER_IDS: readonly string[] = [
   LAYER_CONTEXT_FILL,
@@ -539,6 +544,41 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
   return layers;
 }
 
+/**
+ * Directions overlay layers, sourced from `ROUTE_SOURCE_ID` (not the indoor
+ * feature source) so route updates never touch venue rendering. Appended
+ * after every feature layer — a route always draws on top. Never clickable:
+ * taps while picking a route belong to the directions flow, not selection.
+ */
+export function buildRouteLayers(theme: ViewerTheme): AnyLayer[] {
+  const c = theme.colors;
+  return [
+    {
+      id: LAYER_ROUTE,
+      type: "line",
+      source: ROUTE_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "segment"],
+      paint: {
+        "line-color": c.accent,
+        "line-width": 4,
+        "line-opacity": 0.9,
+      },
+    },
+    {
+      id: LAYER_ROUTE_ENDPOINT,
+      type: "circle",
+      source: ROUTE_SOURCE_ID,
+      filter: ["in", ["get", "kind"], ["literal", ["origin", "destination"]]],
+      paint: {
+        "circle-radius": 6.5,
+        "circle-color": c.accent,
+        "circle-stroke-width": 2,
+        "circle-stroke-color": c.panel,
+      },
+    },
+  ];
+}
+
 /** Paint property updates applied on theme switch without rebuilding the style. */
 export function applyThemePaintProperties(
   setPaintProperty: (layerId: string, name: string, value: unknown) => void,
@@ -584,6 +624,10 @@ export function applyThemePaintProperties(
   setPaintProperty(LAYER_ISSUE_HIGHLIGHT_OUTLINE, "line-color", c.warning);
   setPaintProperty(LAYER_ISSUE_HIGHLIGHT_POINT, "circle-color", c.warning);
   setPaintProperty(LAYER_ISSUE_HIGHLIGHT_POINT, "circle-stroke-color", c.warning);
+
+  setPaintProperty(LAYER_ROUTE, "line-color", c.accent);
+  setPaintProperty(LAYER_ROUTE_ENDPOINT, "circle-color", c.accent);
+  setPaintProperty(LAYER_ROUTE_ENDPOINT, "circle-stroke-color", c.panel);
 
   setPaintProperty(BACKGROUND_LAYER_ID, "background-color", c.canvas);
 }

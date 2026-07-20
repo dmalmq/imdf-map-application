@@ -6,8 +6,9 @@ use std::fmt::Write;
 
 use kiriko_model::import_imdf;
 use kiriko_model::model::{
-    Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning,
+    Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning, WarningCode,
 };
+use kiriko_route::RouteGraph;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -45,6 +46,9 @@ pub struct BundleDocument {
     pub bounds_by_level: BTreeMap<String, Bounds>,
     pub warnings: Vec<ViewerWarning>,
     pub stats: BundleStats,
+    /// Optional routing graph (section 5). `None` when the bundle carries
+    /// no graph; an empty graph is never emitted.
+    pub graph: Option<RouteGraph>,
 }
 
 /// The result of compiling raw IMDF source bytes into a bundle.
@@ -56,17 +60,38 @@ pub struct CompiledBundle {
 }
 
 /// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, then encode the
-/// canonical venue model as a `kvb1` bundle.
+/// canonical venue model as a `kvb1` bundle. Equivalent to
+/// [`compile_imdf_with_network`] without network GeoJSON.
 pub fn compile_imdf(
     source: &[u8],
     metadata: BundleMetadata,
+) -> Result<CompiledBundle, CompileError> {
+    compile_imdf_with_network(source, metadata, None, None)
+}
+
+/// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, optionally build
+/// a route graph from network junction/path GeoJSON, then encode the
+/// canonical venue model as a `kvb1` bundle.
+///
+/// When both `junctions_geojson` and `paths_geojson` are `Some`,
+/// [`kiriko_route::build_route_graph`] builds the graph against the venue's
+/// level ordinals; a non-empty graph is embedded as section 5 and the build
+/// warnings fold into the compile warning channel (code `route_build`). A
+/// malformed network is fatal ([`CompileError::Route`]). When either input
+/// is `None`, no graph is embedded and the result is identical to
+/// [`compile_imdf`].
+pub fn compile_imdf_with_network(
+    source: &[u8],
+    metadata: BundleMetadata,
+    junctions_geojson: Option<&str>,
+    paths_geojson: Option<&str>,
 ) -> Result<CompiledBundle, CompileError> {
     let venue = import_imdf(source)?;
     let stats = BundleStats {
         levels: venue.levels.len() as u32,
         features: venue.features.len() as u32,
     };
-    let document = BundleDocument {
+    let mut document = BundleDocument {
         metadata,
         manifest: venue.manifest,
         venue_id: venue.venue_id,
@@ -75,7 +100,24 @@ pub fn compile_imdf(
         bounds_by_level: venue.bounds_by_level,
         warnings: venue.warnings,
         stats,
+        graph: None,
     };
+
+    if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
+        let ordinals: Vec<f64> = document.levels.iter().map(|l| l.ordinal).collect();
+        let (graph, build_warnings) = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
+        if !graph.is_empty() {
+            document.graph = Some(graph);
+        }
+        document
+            .warnings
+            .extend(build_warnings.into_iter().map(|w| ViewerWarning {
+                code: WarningCode::RouteBuild,
+                message: format!("{}: {}", w.code, w.detail),
+                feature_id: None,
+                archive_entry: None,
+            }));
+    }
 
     let bytes = encode_bundle(&document)?;
     Ok(CompiledBundle {
@@ -93,7 +135,7 @@ fn postcard_encode_err(context: &str) -> impl Fn(postcard::Error) -> BundleError
 /// bytes are left over. Plain `postcard::from_bytes` silently ignores a
 /// trailing remainder, which would let a corrupted bundle pad a section with
 /// garbage after a validly-encoded prefix and still decode "successfully".
-fn postcard_take_exact<'a, T: Deserialize<'a>>(
+pub(crate) fn postcard_take_exact<'a, T: Deserialize<'a>>(
     bytes: &'a [u8],
     context: &str,
 ) -> Result<T, BundleError> {
@@ -114,8 +156,10 @@ fn postcard_take_exact<'a, T: Deserialize<'a>>(
 /// Encode a [`BundleDocument`] as `kvb1` bundle bytes. `document.features`
 /// is split into the geometry (non-occupant) and stores (occupant) sections;
 /// no section is duplicated and no empty style/graph/beacon section is
-/// emitted. Every `f64` reachable from `document` is validated as finite and
-/// `-0.0` is normalized to `0.0` (see `sections::canonical_f64`).
+/// emitted. The optional graph section (id 5) is emitted only when
+/// `document.graph` is `Some` and non-empty. Every `f64` reachable from
+/// `document` is validated as finite and `-0.0` is normalized to `0.0`
+/// (see `sections::canonical_f64`).
 pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> {
     let manifest_dto = sections::manifest_to_dto(document)?;
     let (geometry, stores) = sections::split_features(&document.features);
@@ -127,7 +171,7 @@ pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> 
     let stores_bytes = postcard::to_allocvec(&sections::feature_dtos(&stores)?)
         .map_err(postcard_encode_err("encode stores section"))?;
 
-    let payload = format::build_payload(&[
+    let mut section_list = vec![
         (
             format::SECTION_MANIFEST,
             format::SECTION_VERSION,
@@ -143,7 +187,20 @@ pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> 
             format::SECTION_VERSION,
             stores_bytes,
         ),
-    ]);
+    ];
+    // Section id 5 sorts after 1-3, so appending keeps the directory
+    // id-ascending as `build_payload` requires.
+    if let Some(graph) = &document.graph
+        && !graph.is_empty()
+    {
+        section_list.push((
+            format::SECTION_GRAPH,
+            format::SECTION_VERSION,
+            sections::encode_graph(graph)?,
+        ));
+    }
+
+    let payload = format::build_payload(&section_list);
 
     format::encode_payload(&payload)
 }
@@ -180,7 +237,13 @@ pub fn decode_bundle(bytes: &[u8]) -> Result<BundleDocument, BundleError> {
         sections::features_from_dtos(&stores_dtos)?,
     )?;
 
-    sections::manifest_into_document(manifest_dto, features)
+    let mut document = sections::manifest_into_document(manifest_dto, features)?;
+    // The graph section is optional: absent means `None`, so bundles
+    // written before section 5 existed still decode.
+    if let Some(graph_bytes) = directory.section(&payload, format::SECTION_GRAPH) {
+        document.graph = Some(sections::decode_graph(graph_bytes)?);
+    }
+    Ok(document)
 }
 
 /// A pure anchor-level projection of a decoded bundle: the whole-file
@@ -310,6 +373,7 @@ mod tests {
                     levels: 1,
                     features: 0,
                 },
+                graph: None,
             };
 
         // Level ordinal.

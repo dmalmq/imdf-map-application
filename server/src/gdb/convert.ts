@@ -28,17 +28,17 @@ import type {
 } from "./types";
 
 /** GDAL output readers. gdal3.js ships plain JS objects; these narrow unknown at the boundary. */
-function asRecord(value: unknown): Record<string, unknown> {
+export function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : {};
 }
 
-function asArray(value: unknown): unknown[] {
+export function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function asString(value: unknown): string {
+export function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
@@ -47,7 +47,7 @@ function asNumber(value: unknown): number {
 }
 
 /** Open the staged `.gdb.zip` via GDAL's `/vsizip/` virtual filesystem. */
-async function openGdbZip(gdal: GdalInstance, path: string): Promise<unknown> {
+export async function openGdbZip(gdal: GdalInstance, path: string): Promise<unknown> {
   // gdal3.js accepts an options/vfs arg list; the canonical GDAL form is the
   // `/vsizip/<path>` prefix. Try both — direct open of the zip first (gdal3.js
   // has special handling), then the explicit `/vsizip/` form.

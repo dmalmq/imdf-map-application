@@ -1,4 +1,4 @@
-import type { GdbInspectResponse, GdbMappingPlan } from "../gdb/types";
+import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse } from "../gdb/types";
 import type { LocaleCode } from "../imdf/types";
 
 export type ApiUserRole = "viewer" | "member" | "admin";
@@ -104,6 +104,10 @@ const gdbErrorCopy: Record<string, { ja: string; en: string } | undefined> = {
   gdb_conversion_failed: {
     ja: "選択したレイヤーを変換できませんでした。割り当てを見直してください。",
     en: "The selected layers could not be converted. Review the mapping and try again.",
+  },
+  gdb_network_extraction_failed: {
+    ja: "ルーティングネットワークを抽出できませんでした。net_junction / net_path レイヤーを確認してください。",
+    en: "The routing network could not be extracted. Check the net_junction / net_path layers.",
   },
 };
 
@@ -257,16 +261,43 @@ export const api = {
     });
   },
 
+  inspectGdbNetwork(file: File): Promise<NetworkInspectResponse> {
+    // Executor form required: tsconfig lib predates Promise.withResolvers (es2024).
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/gdb/inspect-network");
+      xhr.addEventListener("load", () => {
+        if (xhr.status === 200) {
+          resolve(JSON.parse(xhr.responseText) as NetworkInspectResponse);
+        } else {
+          let parsed: GdbError = { code: "gdb_network_extraction_failed", message: xhr.responseText };
+          try { parsed = JSON.parse(xhr.responseText) as GdbError; } catch { /* non-JSON */ }
+          reject(parsed);
+        }
+      });
+      xhr.addEventListener("error", () => reject({ code: "gdb_network_extraction_failed", message: "network error" } as GdbError));
+      const form = new FormData();
+      form.append("file", file);
+      xhr.send(form);
+    });
+  },
+
   async publishGdb(
     venueId: number,
     blobHash: string,
     plan: GdbMappingPlan,
+    networkBlobHash?: string | null,
   ): Promise<GdbPublishResponse> {
     const res = await fetch("/api/gdb/publish", {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ venueId, blobHash, plan }),
+      body: JSON.stringify({
+        venueId,
+        blobHash,
+        plan,
+        ...(networkBlobHash ? { networkBlobHash } : {}),
+      }),
     });
     if (!res.ok) {
       let parsed: GdbError = { code: "gdb_conversion_failed", message: `${res.status}` };

@@ -22,6 +22,6 @@ mod sections;
 
 pub use codec::{
     BundleDocument, BundleInspection, BundleMetadata, BundleStats, CompiledBundle, compile_imdf,
-    decode_bundle, encode_bundle, inspect_bundle,
+    compile_imdf_with_network, decode_bundle, encode_bundle, inspect_bundle,
 };
 pub use error::{BundleError, BundleErrorCode, CompileError};

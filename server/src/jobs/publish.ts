@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import type { BlobStore } from "../blobs/store";
-import { compileVenueBundle, CoreCompileError } from "../core/native";
+import { compileVenueBundle, CoreCompileError, type CompileVenueMetadata } from "../core/native";
 
 /** Persisted into `versions.error` (and mirrored into `jobs.error`) verbatim as JSON. */
 interface StructuredError {
@@ -60,7 +60,11 @@ export function makePublishRunner(
   compile: PublishCompileFn = compileVenueBundle,
 ) {
   return async (payloadJson: string): Promise<{ versionId: number }> => {
-    const { versionId } = JSON.parse(payloadJson) as { versionId: number };
+    const { versionId, networkJunctionsHash, networkPathsHash } = JSON.parse(payloadJson) as {
+      versionId: number;
+      networkJunctionsHash?: string;
+      networkPathsHash?: string;
+    };
     const version = db
       .prepare(
         `SELECT vr.id AS id, vr.venue_id AS venueId, vr.seq AS seq, vr.public_id AS publicId,
@@ -102,10 +106,18 @@ export function makePublishRunner(
 
     try {
       const source = blobs.read(version.hash);
-      const { bundle, stats } = await compile(source, {
+      const metadata: CompileVenueMetadata = {
         datasetId: `${version.tenantSlug}/${version.venueSlug}`,
         version: version.seq,
-      });
+      };
+      // A combined GDB import stores the extracted network GeoJSON as blobs
+      // and references them from the job payload; a network-less publish
+      // carries neither hash and compiles exactly as before.
+      if (networkJunctionsHash !== undefined && networkPathsHash !== undefined) {
+        metadata.networkJunctionsGeoJson = blobs.read(networkJunctionsHash).toString("utf8");
+        metadata.networkPathsGeoJson = blobs.read(networkPathsHash).toString("utf8");
+      }
+      const { bundle, stats } = await compile(source, metadata);
       // Content-addressed: safe to persist even if this row turns out to
       // be stale below — the blob then simply has no referencing row.
       const { hash: bundleHash, size } = blobs.put(bundle);

@@ -1,0 +1,12 @@
+[package]
+name = "kiriko-route"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Indoor route graph build and A* query over network junction/path GeoJSON."
+
+[dependencies]
+geojson.workspace = true
+serde.workspace = true
+serde_json.workspace = true

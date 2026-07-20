@@ -8,6 +8,7 @@ description = "Deterministic content-addressed Kiriko venue bundle (kvb1) codec.
 
 [dependencies]
 kiriko-model = { path = "../kiriko-model" }
+kiriko-route = { path = "../kiriko-route" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

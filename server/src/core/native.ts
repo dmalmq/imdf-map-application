@@ -11,7 +11,8 @@ export type ViewerWarningCode =
   | "unresolved_reference"
   | "missing_level_geometry"
   | "missing_display_point"
-  | "unknown_archive_entry";
+  | "unknown_archive_entry"
+  | "route_build";
 
 export interface ViewerWarning {
   code: ViewerWarningCode;
@@ -23,6 +24,14 @@ export interface ViewerWarning {
 export interface CompileVenueMetadata {
   datasetId: string;
   version: number;
+  /**
+   * WGS84 GeoJSON for the routing network's `net_junction`/`net_path`
+   * layers. When both are present the compiled bundle carries a section-5
+   * routing graph; when absent the compile is byte-identical to a
+   * network-less import.
+   */
+  networkJunctionsGeoJson?: string;
+  networkPathsGeoJson?: string;
 }
 
 /**
@@ -45,7 +54,13 @@ export interface NativeCompileResponse {
  * Untrusted: the native addon's resolved value is validated from scratch
  * (see `validateNativeResponse`), not assumed to match this shape.
  */
-export type NativeCompileFn = (source: Buffer, datasetId: string, version: number) => Promise<unknown>;
+export type NativeCompileFn = (
+  source: Buffer,
+  datasetId: string,
+  version: number,
+  networkJunctionsGeoJson?: string,
+  networkPathsGeoJson?: string,
+) => Promise<unknown>;
 
 const WARNING_CODES: Record<ViewerWarningCode, true> = {
   missing_locale: true,
@@ -53,6 +68,7 @@ const WARNING_CODES: Record<ViewerWarningCode, true> = {
   missing_level_geometry: true,
   missing_display_point: true,
   unknown_archive_entry: true,
+  route_build: true,
 };
 
 const U32_MAX = 0xffff_ffff;
@@ -216,7 +232,15 @@ export async function compileVenueBundle(
   nativeCompile: NativeCompileFn = compileImdf,
 ): Promise<{ bundle: Buffer; stats: ImdfStats; warnings: ViewerWarning[] }> {
   try {
-    const response = validateNativeResponse(await nativeCompile(source, metadata.datasetId, metadata.version));
+    const response = validateNativeResponse(
+      await nativeCompile(
+        source,
+        metadata.datasetId,
+        metadata.version,
+        metadata.networkJunctionsGeoJson,
+        metadata.networkPathsGeoJson,
+      ),
+    );
     if (response.ok) {
       return {
         bundle: response.bundle,

@@ -21,7 +21,7 @@
 extern crate napi_derive;
 
 use kiriko_bundle::{
-    BundleError, BundleMetadata, CompileError, CompiledBundle, compile_imdf as compile_bundle,
+    BundleError, BundleMetadata, CompileError, CompiledBundle, compile_imdf_with_network,
     inspect_bundle as inspect_bundle_pure,
 };
 use kiriko_model::model::ViewerWarning;
@@ -54,6 +54,8 @@ pub struct CompileTask {
     source: Vec<u8>,
     dataset_id: String,
     version: u32,
+    network_junctions_geojson: Option<String>,
+    network_paths_geojson: Option<String>,
 }
 
 #[napi]
@@ -66,7 +68,12 @@ impl Task for CompileTask {
             dataset_id: self.dataset_id.clone(),
             version: self.version,
         };
-        Ok(match compile_bundle(&self.source, metadata) {
+        Ok(match compile_imdf_with_network(
+            &self.source,
+            metadata,
+            self.network_junctions_geojson.as_deref(),
+            self.network_paths_geojson.as_deref(),
+        ) {
             Ok(compiled) => CompileOutcome::Success(compiled),
             Err(err) => CompileOutcome::Failure(err),
         })
@@ -137,21 +144,35 @@ fn error_json(err: &CompileError) -> Value {
             obj.insert("code".to_string(), json!(e.code.as_str()));
             obj.insert("message".to_string(), json!(e.message));
         }
+        CompileError::Route(e) => {
+            obj.insert("code".to_string(), json!("route_build_failed"));
+            obj.insert("message".to_string(), json!(e.message));
+        }
     }
     Value::Object(obj)
 }
 
 /// Compile raw IMDF ZIP `source` bytes into a `kvb1` bundle identified by
-/// `dataset_id`/`version`. Runs entirely off the Node.js event loop via
-/// `AsyncTask`; the returned promise always resolves to a
-/// [`NativeCompileResponse`], never rejecting for domain (IMDF or
-/// bundle-codec) failures.
+/// `dataset_id`/`version`. When both optional network GeoJSON strings are
+/// provided, a route graph is built and embedded as bundle section 5; a
+/// malformed network is a domain failure. Runs entirely off the Node.js
+/// event loop via `AsyncTask`; the returned promise always resolves to a
+/// [`NativeCompileResponse`], never rejecting for domain (IMDF, route-build,
+/// or bundle-codec) failures.
 #[napi]
-pub fn compile_imdf(source: Buffer, dataset_id: String, version: u32) -> AsyncTask<CompileTask> {
+pub fn compile_imdf(
+    source: Buffer,
+    dataset_id: String,
+    version: u32,
+    network_junctions_geojson: Option<String>,
+    network_paths_geojson: Option<String>,
+) -> AsyncTask<CompileTask> {
     AsyncTask::new(CompileTask {
         source: source.to_vec(),
         dataset_id,
         version,
+        network_junctions_geojson,
+        network_paths_geojson,
     })
 }
 

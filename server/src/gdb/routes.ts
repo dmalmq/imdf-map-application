@@ -1,13 +1,19 @@
 /**
- * `POST /api/gdb/inspect` and `POST /api/gdb/publish`.
+ * `POST /api/gdb/inspect`, `POST /api/gdb/inspect-network`, and
+ * `POST /api/gdb/publish`.
  *
  * Inspect stages the uploaded `.gdb.zip` as a content-addressed blob and
- * returns the OGR layer summary plus the blob hash. Publish re-opens that blob
+ * returns the OGR layer summary plus the blob hash; inspect-network does the
+ * same for a routing-network archive, returning the net_junction/net_path
+ * node/edge/floor summary. Publish re-opens that blob
  * by hash, converts the reviewed layers to WGS84 GeoJSON via gdal3.js,
  * synthesizes an IMDF archive, stores it as a fresh blob, inserts a
  * `source_kind='gdb'` version row pointing at the synthesized IMDF, and
  * enqueues the existing `publish_imdf` job — which then compiles the IMDF
- * through the Rust core exactly like a direct IMDF upload.
+ * through the Rust core exactly like a direct IMDF upload. When the request
+ * carries `networkBlobHash`, the network blob's `net_junction`/`net_path`
+ * layers are extracted to GeoJSON, stored as blobs, and referenced from the
+ * job payload so the compile embeds the routing graph as bundle section 5.
  *
  * No per-session GDAL state crosses HTTP requests: both endpoints re-open the
  * blob via `/vsizip/<blob-path>`. The job queue serializes the heavy compile
@@ -19,6 +25,7 @@ import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
 import { inspectGdbArchive, convertGdbLayers } from "./convert";
 import { GdbConversionError, resolveGdbImdfWithExclusions, suggestGdbMapping } from "./mapping";
+import { extractNetworkGeoJson } from "./network";
 import { writeImdfZip } from "./imdfZip";
 import { GdbSourceError, validateGdbArchive } from "./sourceValidation";
 import { removeStagedGdb, stageGdbBlobForGdal } from "./staging";
@@ -26,6 +33,8 @@ import type {
   GdbInspectResponse,
   GdbInspection,
   GdbPublishRequest,
+  NetworkExtraction,
+  NetworkInspectResponse,
 } from "./types";
 import { newPublicVersionId } from "../venues/uploadRoute";
 
@@ -96,6 +105,7 @@ const GdbPublishSchema = Type.Object({
   venueId: Type.Integer({ minimum: 1 }),
   blobHash: Type.String({ pattern: "^[0-9a-f]{64}$" }),
   plan: GdbMappingPlanSchema,
+  networkBlobHash: Type.Optional(Type.String({ pattern: "^[0-9a-f]{64}$" })),
 });
 
 const ErrorSchema = Type.Object({
@@ -195,6 +205,78 @@ export function registerGdbRoutes(app: FastifyInstance): void {
   );
 
   app.post(
+    "/api/gdb/inspect-network",
+    {
+      preHandler: requireSession,
+      schema: {
+        response: {
+          200: Type.Object({
+            networkBlobHash: Type.String(),
+            nodeCount: Type.Integer(),
+            edgeCount: Type.Integer(),
+            floors: Type.Array(Type.String()),
+          }),
+          400: ErrorSchema,
+          500: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const file = await request.file();
+      if (!file) {
+        return reply.code(400).send(errorBody("file_required", "file_required"));
+      }
+      const bytes = await file.toBuffer();
+      try {
+        await validateGdbArchive(bytes);
+      } catch (error) {
+        if (isGdbSourceError(error)) {
+          return reply
+            .code(400)
+            .send(errorBody(error.code, error.message, error.details));
+        }
+        request.log.error({ err: error }, "gdb network inspect validation failed");
+        return reply.code(500).send(errorBody("internal_error", "internal_error"));
+      }
+
+      const { hash, size } = request.server.blobs.put(bytes);
+      request.server.db
+        .prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)")
+        .run(hash, size);
+      const stagedPath = stageGdbBlobForGdal(request.server.blobs.path(hash), hash);
+      let network: NetworkExtraction;
+      try {
+        network = await withTimeout(
+          extractNetworkGeoJson(stagedPath),
+          INSPECT_TIMEOUT_MS,
+          "gdb network inspect",
+        );
+      } catch (error) {
+        if (isGdbSourceError(error)) {
+          return reply
+            .code(400)
+            .send(errorBody(error.code, error.message, error.details));
+        }
+        request.log.warn({ err: error }, "gdb network inspect failed");
+        return reply.code(400).send(
+          errorBody("gdb_network_extraction_failed", "gdb_network_extraction_failed", {
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      } finally {
+        removeStagedGdb(stagedPath);
+      }
+      const body: NetworkInspectResponse = {
+        networkBlobHash: hash,
+        nodeCount: network.nodeCount,
+        edgeCount: network.edgeCount,
+        floors: network.floors,
+      };
+      return reply.send(body);
+    },
+  );
+
+  app.post(
     "/api/gdb/publish",
     {
       preHandler: requireSession,
@@ -217,7 +299,7 @@ export function registerGdbRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       const body = request.body as GdbPublishRequest;
-      const { venueId, blobHash, plan } = body;
+      const { venueId, blobHash, plan, networkBlobHash } = body;
 
       const venue = request.server.db
         .prepare("SELECT id FROM venues WHERE id = ? AND tenant_id = ?")
@@ -228,12 +310,56 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       if (!request.server.blobs.has(blobHash)) {
         return reply.code(404).send({ error: "blob_not_found" });
       }
+      if (networkBlobHash !== undefined && !request.server.blobs.has(networkBlobHash)) {
+        return reply.code(404).send({ error: "network_blob_not_found" });
+      }
 
       const includedLayerNames = plan.layers
         .filter((layer) => layer.included && layer.targetType !== null)
         .map((layer) => layer.key.layerName);
       if (includedLayerNames.length === 0) {
         return reply.code(400).send(errorBody("no_included_layers", "no_included_layers"));
+      }
+
+      // Extract the routing network first so a bad network archive fails the
+      // request before any conversion/publish side effect (no partial
+      // publish). The extracted GeoJSON is stored as content-addressed blobs
+      // and referenced from the job payload, keeping the publish_imdf job
+      // path stateless.
+      let networkJunctionsHash: string | undefined;
+      let networkPathsHash: string | undefined;
+      if (networkBlobHash !== undefined) {
+        const stagedNetworkPath = stageGdbBlobForGdal(
+          request.server.blobs.path(networkBlobHash),
+          networkBlobHash,
+        );
+        let network: NetworkExtraction;
+        try {
+          network = await extractNetworkGeoJson(stagedNetworkPath);
+        } catch (error) {
+          if (isGdbSourceError(error)) {
+            return reply
+              .code(400)
+              .send(errorBody(error.code, error.message, error.details));
+          }
+          request.log.error({ err: error }, "gdb network extract failed");
+          return reply.code(400).send(
+            errorBody("gdb_network_extraction_failed", "gdb_network_extraction_failed", {
+              detail: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        } finally {
+          removeStagedGdb(stagedNetworkPath);
+        }
+        const junctionsBlob = request.server.blobs.put(Buffer.from(network.junctions, "utf8"));
+        const pathsBlob = request.server.blobs.put(Buffer.from(network.paths, "utf8"));
+        const insertBlob = request.server.db.prepare(
+          "INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)",
+        );
+        insertBlob.run(junctionsBlob.hash, junctionsBlob.size);
+        insertBlob.run(pathsBlob.hash, pathsBlob.size);
+        networkJunctionsHash = junctionsBlob.hash;
+        networkPathsHash = pathsBlob.hash;
       }
 
       let conversion;
@@ -291,7 +417,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         )
         .run(venueId, nextSeq, newPublicVersionId(), imdfHash);
       const versionId = Number(info.lastInsertRowid);
-      const jobId = request.server.queue.enqueue("publish_imdf", { versionId });
+      const jobId = request.server.queue.enqueue("publish_imdf", {
+        versionId,
+        networkJunctionsHash,
+        networkPathsHash,
+      });
       return reply.code(202).send({ jobId, versionId, seq: nextSeq, excludedLayers });
     },
   );

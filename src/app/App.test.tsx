@@ -153,11 +153,13 @@ const PUBLIC_VERSION_ID = "a".repeat(64);
 function bundleLoadResult(
   venue = buildMinimalVenue(),
   publicVersionId: string | null = PUBLIC_VERSION_ID,
+  hasGraph = false,
 ): KirikoBundleLoadResult {
   return {
     venue,
     metadata: { datasetId: "default/tokyo-station", version: 7 },
     publicVersionId,
+    hasGraph,
   };
 }
 
@@ -172,6 +174,12 @@ const loadKirikoBundleMock = vi.fn();
 
 vi.mock("../bundle/loadKirikoBundle", () => ({
   loadKirikoBundle: (...args: unknown[]) => loadKirikoBundleMock(...args),
+}));
+
+const routeKirikoBundleMock = vi.fn();
+
+vi.mock("../bundle/routeKirikoBundle", () => ({
+  routeKirikoBundle: (...args: unknown[]) => routeKirikoBundleMock(...args),
 }));
 
 const fetchImdfFileMock = vi.fn();
@@ -329,7 +337,26 @@ vi.mock("../map/IndoorMap", () => ({
         data-camera-level={props.issueReview?.cameraRequest?.levelId ?? ""}
         data-camera-longitude={props.issueReview?.cameraRequest?.longitude ?? ""}
         data-camera-latitude={props.issueReview?.cameraRequest?.latitude ?? ""}
+        data-directions-present={String(props.directions != null)}
+        data-directions-active={String(props.directions?.active === true)}
+        data-directions-origin={
+          props.directions?.origin != null ? JSON.stringify(props.directions.origin) : ""
+        }
+        data-directions-destination={
+          props.directions?.destination != null ? JSON.stringify(props.directions.destination) : ""
+        }
+        data-directions-route={
+          props.directions?.route != null ? JSON.stringify(props.directions.route.nodes) : ""
+        }
       >
+        <button
+          type="button"
+          onClick={() => {
+            props.directions?.onPickPoint({ longitude: 139.7671, latitude: 35.6811 });
+          }}
+        >
+          Tap map for directions
+        </button>
         <button
           type="button"
           onClick={() => {
@@ -413,8 +440,9 @@ async function uploadViaHiddenInput(file: File): Promise<void> {
 async function renderDataset(
   publicVersionId: string | null = PUBLIC_VERSION_ID,
   venue: LoadedVenue = buildMinimalVenue(),
+  hasGraph = false,
 ) {
-  loadKirikoBundleMock.mockResolvedValue(bundleLoadResult(venue, publicVersionId));
+  loadKirikoBundleMock.mockResolvedValue(bundleLoadResult(venue, publicVersionId, hasGraph));
   window.history.replaceState(null, "", "/?dataset=tokyo-station&lang=en");
   const result = render(<App />);
   await waitFor(() => {
@@ -1418,5 +1446,126 @@ describe("App review issue integration", () => {
         "false",
       );
     });
+  });
+});
+
+describe("App directions mode", () => {
+  const ROUTE_NODES = [
+    { lon: 139.7671, lat: 35.6811, ordinal: 0 },
+    { lon: 139.7674, lat: 35.6813, ordinal: 0 },
+  ];
+
+  function mapStub() {
+    return screen.getByTestId("indoor-map-stub");
+  }
+
+  beforeEach(() => {
+    loadImdfArchiveMock.mockReset();
+    loadKirikoBundleMock.mockReset();
+    fetchImdfFileMock.mockReset();
+    routeKirikoBundleMock.mockReset();
+    resetIssueMocks();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("hides the Directions toggle when the bundle has no graph", async () => {
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), false);
+    expect(screen.queryByRole("button", { name: "Directions" })).toBeNull();
+    expect(mapStub().getAttribute("data-directions-present")).toBe("false");
+  });
+
+  it("hides the Directions toggle for a ZIP-loaded venue", async () => {
+    loadImdfArchiveMock.mockResolvedValue(buildMinimalVenue());
+    window.history.replaceState(null, "", "/?lang=en");
+    render(<App />);
+    await uploadViaHiddenInput(zipFile());
+    await waitFor(() => {
+      expect(screen.getByTestId("indoor-map-stub")).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: "Directions" })).toBeNull();
+  });
+
+  it("shows the Directions toggle when the bundle carries a §5 graph", async () => {
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+    expect(screen.getByRole("button", { name: "Directions" })).toBeTruthy();
+  });
+
+  it("routes after two taps: worker route called and polyline reaches the map", async () => {
+    const user = userEvent.setup();
+    routeKirikoBundleMock.mockResolvedValue({ nodes: ROUTE_NODES, totalWeight: 120 });
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+
+    await user.click(screen.getByRole("button", { name: "Directions" }));
+    expect(mapStub().getAttribute("data-directions-active")).toBe("true");
+
+    await user.click(screen.getByRole("button", { name: "Tap map for directions" }));
+    expect(JSON.parse(mapStub().getAttribute("data-directions-origin")!)).toEqual({
+      longitude: 139.7671,
+      latitude: 35.6811,
+      ordinal: 0,
+    });
+    expect(routeKirikoBundleMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Tap map for directions" }));
+    await waitFor(() => {
+      expect(routeKirikoBundleMock).toHaveBeenCalledWith(
+        "/v/default/tokyo-station/bundle",
+        { longitude: 139.7671, latitude: 35.6811, ordinal: 0 },
+        { longitude: 139.7671, latitude: 35.6811, ordinal: 0 },
+      );
+    });
+
+    await waitFor(() => {
+      expect(JSON.parse(mapStub().getAttribute("data-directions-route")!)).toEqual(ROUTE_NODES);
+    });
+    expect(screen.getByText(/120\s*m/)).toBeTruthy();
+  });
+
+  it("shows a no-path message when the worker resolves null", async () => {
+    const user = userEvent.setup();
+    routeKirikoBundleMock.mockResolvedValue(null);
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+
+    await user.click(screen.getByRole("button", { name: "Directions" }));
+    await user.click(screen.getByRole("button", { name: "Tap map for directions" }));
+    await user.click(screen.getByRole("button", { name: "Tap map for directions" }));
+
+    await screen.findByText("No route found");
+    expect(mapStub().getAttribute("data-directions-route")).toBe("");
+  });
+
+  it("clear resets origin, destination, and the route layer data", async () => {
+    const user = userEvent.setup();
+    routeKirikoBundleMock.mockResolvedValue({ nodes: ROUTE_NODES, totalWeight: 120 });
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+
+    await user.click(screen.getByRole("button", { name: "Directions" }));
+    await user.click(screen.getByRole("button", { name: "Tap map for directions" }));
+    await user.click(screen.getByRole("button", { name: "Tap map for directions" }));
+    await waitFor(() => {
+      expect(mapStub().getAttribute("data-directions-route")).not.toBe("");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Clear route" }));
+    expect(mapStub().getAttribute("data-directions-origin")).toBe("");
+    expect(mapStub().getAttribute("data-directions-destination")).toBe("");
+    expect(mapStub().getAttribute("data-directions-route")).toBe("");
+  });
+
+  it("toggling Directions off clears the picks and hides the overlay", async () => {
+    const user = userEvent.setup();
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+
+    const toggle = screen.getByRole("button", { name: "Directions" });
+    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "Tap map for directions" }));
+    expect(mapStub().getAttribute("data-directions-origin")).not.toBe("");
+
+    await user.click(toggle);
+    expect(mapStub().getAttribute("data-directions-active")).toBe("false");
+    expect(mapStub().getAttribute("data-directions-origin")).toBe("");
   });
 });
