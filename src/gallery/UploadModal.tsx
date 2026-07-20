@@ -4,6 +4,7 @@ import { api, publishErrorMessage } from "./api";
 import { IconClose } from "../components/icons";
 
 const ui = {
+  titleVersion: { ja: "IMDF バージョンをアップロード", en: "Upload IMDF version" },
   title: { ja: "ローカルデータを開く", en: "Open local data" },
   dropTitle: { ja: "IMDF ZIP", en: "IMDF ZIP" },
   dropHint: { ja: "ドロップまたはクリックで選択", en: "Drop or click to choose" },
@@ -17,10 +18,17 @@ const ui = {
   cancel: { ja: "キャンセル", en: "Cancel" },
 } as const;
 
+export interface UploadModalTarget {
+  venueId: number;
+  venueName: string;
+  slug: string;
+}
+
 export interface UploadModalProps {
   locale: LocaleCode;
   onClose: () => void;
   onPublished: () => void;
+  target?: UploadModalTarget;
 }
 
 type Phase =
@@ -30,9 +38,9 @@ type Phase =
   | { step: "done"; slug: string }
   | { step: "failed"; message: string };
 
-export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) {
+export function UploadModal({ locale, onClose, onPublished, target }: UploadModalProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(target?.venueName ?? "");
   const [phase, setPhase] = useState<Phase>({ step: "form" });
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -42,7 +50,7 @@ export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) 
       return;
     }
     setFile(candidate);
-    if (name === "") {
+    if (!target && name === "") {
       setName(candidate.name.replace(/\.zip$/i, ""));
     }
   };
@@ -54,26 +62,53 @@ export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) 
   };
 
   const submit = () => {
-    if (!file || name.trim() === "") {
-      return;
-    }
+    if (!file) return;
+    if (!target && name.trim() === "") return;
     setPhase({ step: "uploading", fraction: 0 });
     void (async () => {
+      let createdVenueId: number | null = null;
       try {
-        const venue = await api.createVenue(name.trim());
-        const { jobId } = await api.uploadVersion(venue.id, file, (fraction) => {
+        let venueId: number;
+        let slug: string;
+        if (target) {
+          venueId = target.venueId;
+          slug = target.slug;
+        } else {
+          const venue = await api.createVenue(name.trim());
+          createdVenueId = venue.id;
+          venueId = venue.id;
+          slug = venue.slug;
+        }
+        const { jobId } = await api.uploadVersion(venueId, file, (fraction) => {
           setPhase({ step: "uploading", fraction });
         });
         setPhase({ step: "processing" });
         const job = await api.waitForJob(jobId);
         if (job.status === "done") {
-          setPhase({ step: "done", slug: venue.slug });
+          setPhase({ step: "done", slug });
           onPublished();
         } else {
+          if (createdVenueId !== null) {
+            try {
+              await api.deleteVenue(createdVenueId);
+            } catch {
+              /* best effort */
+            }
+          }
           setPhase({ step: "failed", message: publishErrorMessage(job.error) });
         }
       } catch (error) {
-        setPhase({ step: "failed", message: error instanceof Error ? error.message : String(error) });
+        if (createdVenueId !== null) {
+          try {
+            await api.deleteVenue(createdVenueId);
+          } catch {
+            /* best effort */
+          }
+        }
+        setPhase({
+          step: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     })();
   };
@@ -82,9 +117,11 @@ export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) 
 
   return (
     <div className="modal-overlay">
-      <div className="upload-modal" role="dialog" aria-label={ui.title[locale]}>
+      <div className="upload-modal" role="dialog" aria-label={(target ? ui.titleVersion : ui.title)[locale]}>
         <header className="upload-modal__header">
-          <h2 className="upload-modal__title">{ui.title[locale]}</h2>
+          <h2 className="upload-modal__title">
+            {(target ? ui.titleVersion : ui.title)[locale]}
+          </h2>
           <button type="button" className="floating-panel__close" aria-label={ui.close[locale]} onClick={onClose} disabled={busy}>
             <IconClose />
           </button>
@@ -137,9 +174,11 @@ export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) 
               <div className="kiriko-input">
                 <input
                   aria-label={ui.nameLabel[locale]}
-                  value={name}
+                  value={target ? target.venueName : name}
                   disabled={busy}
+                  readOnly={Boolean(target)}
                   onChange={(event) => {
+                    if (target) return;
                     setName(event.target.value);
                   }}
                 />
@@ -169,7 +208,7 @@ export function UploadModal({ locale, onClose, onPublished }: UploadModalProps) 
                 type="button"
                 className="btn-primary"
                 onClick={submit}
-                disabled={busy || !file || name.trim() === ""}
+                disabled={busy || !file || (!target && name.trim() === "")}
               >
                 {ui.publish[locale]}
               </button>
