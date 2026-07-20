@@ -1,4 +1,4 @@
-import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse } from "../gdb/types";
+import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse, FacilitiesInspectResponse } from "../gdb/types";
 import type { LocaleCode } from "../imdf/types";
 
 export type ApiUserRole = "viewer" | "member" | "admin";
@@ -282,11 +282,33 @@ export const api = {
     });
   },
 
+  inspectGdbFacilities(file: File): Promise<FacilitiesInspectResponse> {
+    // Executor form required: tsconfig lib predates Promise.withResolvers (es2024).
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/gdb/inspect-facilities");
+      xhr.addEventListener("load", () => {
+        if (xhr.status === 200) {
+          resolve(JSON.parse(xhr.responseText) as FacilitiesInspectResponse);
+        } else {
+          let parsed: GdbError = { code: "gdb_facility_extraction_failed", message: xhr.responseText };
+          try { parsed = JSON.parse(xhr.responseText) as GdbError; } catch { /* non-JSON */ }
+          reject(parsed);
+        }
+      });
+      xhr.addEventListener("error", () => reject({ code: "gdb_facility_extraction_failed", message: "network error" } as GdbError));
+      const form = new FormData();
+      form.append("file", file);
+      xhr.send(form);
+    });
+  },
+
   async publishGdb(
     venueId: number,
     blobHash: string,
     plan: GdbMappingPlan,
     networkBlobHash?: string | null,
+    facilitiesBlobHash?: string | null,
   ): Promise<GdbPublishResponse> {
     const res = await fetch("/api/gdb/publish", {
       method: "POST",
@@ -297,6 +319,7 @@ export const api = {
         blobHash,
         plan,
         ...(networkBlobHash ? { networkBlobHash } : {}),
+        ...(facilitiesBlobHash ? { facilitiesBlobHash } : {}),
       }),
     });
     if (!res.ok) {

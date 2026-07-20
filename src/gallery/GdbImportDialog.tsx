@@ -14,6 +14,7 @@ import {
   type GdbMappingPlan,
   type GdbTargetType,
   type NetworkInspectResponse,
+  type FacilitiesInspectResponse,
 } from "../gdb/types";
 
 /** Client-side page size for the layer review table. */
@@ -56,6 +57,7 @@ const ui = {
   cancel: { ja: "キャンセル", en: "Cancel" },
   import: { ja: "取り込む", en: "Import" },
   addNetwork: { ja: "ルーティングネットワークを追加", en: "Add routing network" },
+  addFacilities: { ja: "地点施設を追加", en: "Add point facilities" },
 } as const;
 
 const summaryText = {
@@ -73,6 +75,11 @@ const routingSummaryText = {
     `ルーティングネットワーク: ${nodes} ノード、${paths} パス、${floors} フロア`,
   en: (nodes: number, paths: number, floors: number) =>
     `Routing network: ${nodes} nodes, ${paths} paths, ${floors} floors`,
+};
+
+const facilitiesSummaryText = {
+  ja: (places: number, floors: number) => `施設: ${places} 件、${floors} フロア`,
+  en: (places: number, floors: number) => `Facilities: ${places} places, ${floors} floors`,
 };
 
 
@@ -224,6 +231,10 @@ export interface GdbImportDialogProps {
   network?: NetworkInspectResponse | null;
   /** When provided, an "Add routing network" file picker is shown. */
   onAddNetwork?: (file: File) => void;
+  /** Optional point facilities attached to this import; summarized when present. */
+  facilities?: FacilitiesInspectResponse | null;
+  /** When provided, an "Add point facilities" file picker is shown. */
+  onAddFacilities?: (file: File) => void;
   onImport: (plan: GdbMappingPlan) => void;
   onCancel: () => void;
 }
@@ -259,6 +270,8 @@ export function GdbImportDialog({
   venueNameLocked = false,
   network = null,
   onAddNetwork,
+  facilities = null,
+  onAddFacilities,
   onImport,
   onCancel,
 }: GdbImportDialogProps) {
@@ -714,6 +727,27 @@ export function GdbImportDialog({
           {network ? (
             <p className="gdb-dialog__network-summary">
               {routingSummaryText[locale](network.nodeCount, network.edgeCount, network.floors.length)}
+            </p>
+          ) : null}
+          {onAddFacilities ? (
+            <label className="gdb-dialog__btn gdb-dialog__facilities-add">
+              {ui.addFacilities[locale]}
+              <input
+                type="file"
+                accept=".zip,.gdb.zip"
+                style={{ display: "none" }}
+                aria-label={ui.addFacilities[locale]}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) onAddFacilities(file);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+          ) : null}
+          {facilities ? (
+            <p className="gdb-dialog__facilities-summary">
+              {facilitiesSummaryText[locale](facilities.facilityCount, facilities.floors.length)}
             </p>
           ) : null}
           {inspection.warnings.length > 0 ? (
