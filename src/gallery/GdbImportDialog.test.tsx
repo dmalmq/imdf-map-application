@@ -34,4 +34,23 @@ describe("GdbImportDialog", () => {
     render(<GdbImportDialog inspection={inspection} initialPlan={brokenPlan} locale="en" busy={false} error={null} onImport={vi.fn()} onCancel={() => {}} />);
     expect((screen.getByRole("button", { name: /import/i }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("locks the venue name field when venueNameLocked is true", () => {
+    render(
+      <GdbImportDialog
+        inspection={inspection}
+        initialPlan={plan}
+        locale="en"
+        busy={false}
+        error={null}
+        venueNameLocked
+        onImport={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const input = screen.getByLabelText(/venue name/i) as HTMLInputElement;
+    // Prefer getByRole('textbox', { name: /venue name/i }) if label association works.
+    expect(input.readOnly || input.disabled).toBe(true);
+    expect(input.value).toBe("Station");
+  });
 });

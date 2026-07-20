@@ -140,4 +140,102 @@ describe("GalleryPage", () => {
       expect(screen.getByRole("status").textContent).toMatch(/skipped|スキップ/),
     );
   });
+
+  it("imports a geodatabase as a new version of an existing venue", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 42,
+        slug: "existing-station",
+        name: "Existing Station",
+        createdAt: "2026-07-20 00:00:00",
+        latest: {
+          seq: 1,
+          status: "published",
+          stats: { levels: 2, features: 9 },
+          createdAt: "2026-07-20 00:00:00",
+        },
+      },
+    ]);
+    inspectGdb.mockResolvedValue({
+      blobHash: "b".repeat(64),
+      inspection: gdbInspection,
+      suggestedPlan: { ...gdbPlan, venueName: "FromArchive" },
+    });
+    publishGdb.mockResolvedValue({
+      jobId: "j2",
+      versionId: 2,
+      seq: 2,
+      excludedLayers: [],
+    });
+    waitForJob.mockResolvedValue({ status: "done" });
+
+    const user = userEvent.setup();
+    const { container } = render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Existing Station")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+    await user.click(screen.getByRole("button", { name: "Import GDB" }));
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], "Station.gdb.zip", {
+      type: "application/zip",
+    });
+    await user.upload(input, file);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import" })).toBeTruthy());
+    // Venue name locked to existing venue
+    const nameInput = screen.getByLabelText(/venue name/i) as HTMLInputElement;
+    expect(nameInput.value).toBe("Existing Station");
+    expect(nameInput.readOnly || nameInput.disabled).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Import" }));
+
+    await waitFor(() => expect(publishGdb).toHaveBeenCalledTimes(1));
+    expect(createVenue).not.toHaveBeenCalled();
+    expect(publishGdb).toHaveBeenCalledWith(
+      42,
+      "b".repeat(64),
+      expect.objectContaining({ venueName: "Existing Station" }),
+    );
+    expect(deleteVenue).not.toHaveBeenCalled();
+    await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not delete an existing venue when version publish fails", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 42,
+        slug: "existing-station",
+        name: "Existing Station",
+        createdAt: "2026-07-20 00:00:00",
+        latest: null,
+      },
+    ]);
+    inspectGdb.mockResolvedValue({
+      blobHash: "c".repeat(64),
+      inspection: gdbInspection,
+      suggestedPlan: gdbPlan,
+    });
+    publishGdb.mockRejectedValue({
+      code: "gdb_conversion_failed",
+      message: "nope",
+    });
+
+    const user = userEvent.setup();
+    const { container } = render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Existing Station")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+    await user.click(screen.getByRole("button", { name: "Import GDB" }));
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(
+      input,
+      new File([new Uint8Array([1])], "x.gdb.zip", { type: "application/zip" }),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import" })).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(publishGdb).toHaveBeenCalled());
+    expect(deleteVenue).not.toHaveBeenCalled();
+    expect(createVenue).not.toHaveBeenCalled();
+  });
 });

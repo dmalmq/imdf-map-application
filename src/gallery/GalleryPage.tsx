@@ -36,11 +36,21 @@ type GalleryState =
   | { phase: "ready"; user: ApiUser; venues: VenueSummary[] }
   | { phase: "error" };
 
+type GdbTarget =
+  | { mode: "create" }
+  | { mode: "version"; venueId: number; venueName: string };
+
 type GdbFlow =
   | { phase: "idle" }
-  | { phase: "inspecting" }
-  | { phase: "review"; data: GdbInspectResponse; busy: boolean; error: GdbError | null }
-  | { phase: "error"; message: string };
+  | { phase: "inspecting"; target: GdbTarget }
+  | {
+      phase: "review";
+      target: GdbTarget;
+      data: GdbInspectResponse;
+      busy: boolean;
+      error: GdbError | null;
+    }
+  | { phase: "error"; message: string; target: GdbTarget };
 
 export function GalleryPage() {
   const [locale, setLocale] = useState<LocaleCode>("ja");
@@ -51,6 +61,7 @@ export function GalleryPage() {
   const [gdbFlow, setGdbFlow] = useState<GdbFlow>({ phase: "idle" });
   const [gdbNotice, setGdbNotice] = useState<string | null>(null);
   const gdbInputRef = useRef<HTMLInputElement>(null);
+  const gdbTargetRef = useRef<GdbTarget>({ mode: "create" });
 
   const reload = useCallback(async () => {
     try {
@@ -73,20 +84,37 @@ export function GalleryPage() {
     window.location.assign(`/?dataset=${encodeURIComponent(slug)}`);
   };
 
-  const startGdbImport = () => {
+  const startGdbImport = (target: GdbTarget = { mode: "create" }) => {
     setGdbNotice(null);
+    gdbTargetRef.current = target;
     gdbInputRef.current?.click();
   };
+
   const onGdbFile = (file: File | undefined) => {
     if (!file) return;
+    const target = gdbTargetRef.current;
     setGdbNotice(null);
-    setGdbFlow({ phase: "inspecting" });
+    setGdbFlow({ phase: "inspecting", target });
     void (async () => {
       try {
         const data = await api.inspectGdb(file);
-        setGdbFlow({ phase: "review", data, busy: false, error: null });
+        let suggestedPlan = data.suggestedPlan;
+        if (target.mode === "version") {
+          suggestedPlan = { ...suggestedPlan, venueName: target.venueName };
+        }
+        setGdbFlow({
+          phase: "review",
+          target,
+          data: { ...data, suggestedPlan },
+          busy: false,
+          error: null,
+        });
       } catch (err) {
-        setGdbFlow({ phase: "error", message: gdbErrorMessage(err as GdbError, locale) });
+        setGdbFlow({
+          phase: "error",
+          target,
+          message: gdbErrorMessage(err as GdbError, locale),
+        });
       }
     })();
   };
@@ -94,13 +122,20 @@ export function GalleryPage() {
   const publishGdbPlan = (plan: GdbMappingPlan) => {
     if (gdbFlow.phase !== "review") return;
     const data = gdbFlow.data;
-    setGdbFlow({ phase: "review", data, busy: true, error: null });
+    const target = gdbFlow.target;
+    setGdbFlow({ phase: "review", target, data, busy: true, error: null });
     void (async () => {
-      let venueId: number | null = null;
+      let createdVenueId: number | null = null;
       try {
-        const venue = await api.createVenue(plan.venueName.trim());
-        venueId = venue.id;
-        const published = await api.publishGdb(venue.id, data.blobHash, plan);
+        let venueId: number;
+        if (target.mode === "version") {
+          venueId = target.venueId;
+        } else {
+          const venue = await api.createVenue(plan.venueName.trim());
+          createdVenueId = venue.id;
+          venueId = venue.id;
+        }
+        const published = await api.publishGdb(venueId, data.blobHash, plan);
         const job = await api.waitForJob(published.jobId);
         if (job.status === "done") {
           const skipped = published.excludedLayers ?? [];
@@ -112,25 +147,29 @@ export function GalleryPage() {
           }
           setGdbFlow({ phase: "idle" });
           if (gdbInputRef.current) gdbInputRef.current.value = "";
+          gdbTargetRef.current = { mode: "create" };
           await reload();
         } else {
           setGdbFlow({
             phase: "review",
+            target,
             data,
             busy: false,
             error: { code: "gdb_conversion_failed", message: job.error },
           });
         }
       } catch (err) {
-        if (venueId !== null) {
+        // Orphan cleanup only for venues we just created in this attempt.
+        if (createdVenueId !== null) {
           try {
-            await api.deleteVenue(venueId);
+            await api.deleteVenue(createdVenueId);
           } catch {
-            /* best effort orphan cleanup */
+            /* best effort */
           }
         }
         setGdbFlow({
           phase: "review",
+          target,
           data,
           busy: false,
           error: err as GdbError,
@@ -141,6 +180,7 @@ export function GalleryPage() {
 
   const cancelGdbImport = () => {
     setGdbFlow({ phase: "idle" });
+    gdbTargetRef.current = { mode: "create" };
     if (gdbInputRef.current) gdbInputRef.current.value = "";
   };
 
@@ -244,7 +284,7 @@ export function GalleryPage() {
           <button type="button" className="btn-primary gallery__upload-btn" onClick={() => { setUploadOpen(true); }}>
             {ui.openLocal[locale]}
           </button>
-          <button type="button" className="chip" onClick={startGdbImport}>
+          <button type="button" className="chip" onClick={() => startGdbImport({ mode: "create" })}>
             {ui.importGdb[locale]}
           </button>
           <input
@@ -274,6 +314,13 @@ export function GalleryPage() {
                 }}
                 onDelete={() => {
                   setDeleting(venue);
+                }}
+                onImportGdb={() => {
+                  startGdbImport({
+                    mode: "version",
+                    venueId: venue.id,
+                    venueName: venue.name,
+                  });
                 }}
               />
             ))}
@@ -323,6 +370,7 @@ export function GalleryPage() {
           locale={locale}
           busy={gdbFlow.busy}
           error={gdbFlow.error}
+          venueNameLocked={gdbFlow.target.mode === "version"}
           onImport={publishGdbPlan}
           onCancel={cancelGdbImport}
         />

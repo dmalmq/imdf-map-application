@@ -209,6 +209,8 @@ export interface GdbImportDialogProps {
   locale: LocaleCode;
   busy: boolean;
   error: GdbError | null;
+  /** When true, venue name is shown but not editable (existing-venue version import). */
+  venueNameLocked?: boolean;
   onImport: (plan: GdbMappingPlan) => void;
   onCancel: () => void;
 }
@@ -241,6 +243,7 @@ export function GdbImportDialog({
   locale,
   busy,
   error,
+  venueNameLocked = false,
   onImport,
   onCancel,
 }: GdbImportDialogProps) {
@@ -420,8 +423,13 @@ export function GdbImportDialog({
               ref={venueInputRef}
               type="text"
               className="gdb-dialog__input"
+              aria-label={ui.venueName[locale]}
               value={plan.venueName}
-              onChange={(event) => setPlan((c) => ({ ...c, venueName: event.target.value }))}
+              readOnly={venueNameLocked}
+              onChange={(event) => {
+                if (venueNameLocked) return;
+                setPlan((c) => ({ ...c, venueName: event.target.value }));
+              }}
             />
           </label>
           <ul className="gdb-dialog__buildings">

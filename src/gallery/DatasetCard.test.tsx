@@ -1,0 +1,54 @@
+import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { DatasetCard } from "./DatasetCard";
+import type { VenueSummary } from "./api";
+
+const venue: VenueSummary = {
+  id: 3,
+  slug: "tokyo-station",
+  name: "Tokyo Station",
+  createdAt: "2026-07-20 00:00:00",
+  latest: {
+    seq: 1,
+    status: "published",
+    stats: { levels: 2, features: 10 },
+    createdAt: "2026-07-20 00:00:00",
+  },
+};
+
+describe("DatasetCard", () => {
+  it("shows Import GDB and calls onImportGdb when provided", () => {
+    const onImportGdb = vi.fn();
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="en"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onImportGdb={onImportGdb}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Import GDB" }));
+    expect(onImportGdb).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Import GDB when onImportGdb is omitted", () => {
+    render(
+      <DatasetCard venue={venue} locale="en" onOpen={() => {}} onDelete={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: "Import GDB" })).toBeNull();
+  });
+
+  it("uses Japanese label when locale is ja", () => {
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="ja"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onImportGdb={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "GDB を取り込む" })).toBeTruthy();
+  });
+});
