@@ -75,22 +75,29 @@ pub fn build_facilities(
             .and_then(|v| v.as_str())
             .map(icon_of)
             .unwrap_or_default();
-        let anchor = match prop(&feature.properties, "nodeid1").and_then(|v| v.as_i64()) {
-            Some(id) if id >= 0 => index.get(&(id as u64)).and_then(|&i| {
-                graph.nodes.get(i as usize).map(|n| FacilityAnchor {
-                    lon: n.lon,
-                    lat: n.lat,
-                    ordinal: n.ordinal,
-                })
-            }),
+        // `nodeid1` absent or -1 is the expected "no routing anchor" case
+        // (most named stores) and is silent. A non-negative id that fails to
+        // resolve to a graph node is a genuine mismatch and warns.
+        let nodeid1 = prop(&feature.properties, "nodeid1").and_then(|v| v.as_i64());
+        let anchor = match nodeid1 {
+            Some(id) if id >= 0 => {
+                let resolved = index.get(&(id as u64)).and_then(|&i| {
+                    graph.nodes.get(i as usize).map(|n| FacilityAnchor {
+                        lon: n.lon,
+                        lat: n.lat,
+                        ordinal: n.ordinal,
+                    })
+                });
+                if resolved.is_none() {
+                    warnings.push(FacilityBuildWarning {
+                        code: "unresolved_anchor".into(),
+                        detail: format!("facility {name:?} nodeid1 {id} not in route graph"),
+                    });
+                }
+                resolved
+            }
             _ => None,
         };
-        if anchor.is_none() {
-            warnings.push(FacilityBuildWarning {
-                code: "unresolved_anchor".into(),
-                detail: format!("facility {name:?} nodeid1 does not resolve to a route node"),
-            });
-        }
         items.push(Facility {
             lon,
             lat,
@@ -176,6 +183,18 @@ mod tests {
         assert_eq!(b.icon, "");
         assert_eq!(b.anchor, None); // nodeid1 = -1
         assert!(warns.iter().any(|w| w.code == "unmapped_floor"));
+        // nodeid1 = -1 is the expected "no anchor" case and must stay silent.
+        assert!(!warns.iter().any(|w| w.code == "unresolved_anchor"));
+    }
+
+    #[test]
+    fn warns_when_nonnegative_nodeid_missing_from_graph() {
+        let (g, ids) = graph(); // graph only knows NODEID 10
+        const MISS: &str = r#"{"type":"FeatureCollection","features":[
+ {"type":"Feature","properties":{"name":"Orphan","floor":"F1","image":"","nodeid1":999},"geometry":{"type":"Point","coordinates":[139.0,35.0]}}]}"#;
+        let (f, warns) = build_facilities(MISS, &g, &ids).unwrap();
+        assert_eq!(f.items[0].anchor, None);
+        assert!(warns.iter().any(|w| w.code == "unresolved_anchor"));
     }
 
     #[test]
