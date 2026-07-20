@@ -18,7 +18,7 @@ import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
 import { inspectGdbArchive, convertGdbLayers } from "./convert";
-import { buildGdbImdf, GdbConversionError, suggestGdbMapping } from "./mapping";
+import { GdbConversionError, resolveGdbImdfWithExclusions, suggestGdbMapping } from "./mapping";
 import { writeImdfZip } from "./imdfZip";
 import { GdbSourceError, validateGdbArchive } from "./sourceValidation";
 import { removeStagedGdb, stageGdbBlobForGdal } from "./staging";
@@ -183,6 +183,9 @@ export function registerGdbRoutes(app: FastifyInstance): void {
             jobId: Type.String(),
             versionId: Type.Number(),
             seq: Type.Number(),
+            excludedLayers: Type.Array(
+              Type.Object({ layer: Type.String(), reason: Type.String() }),
+            ),
           }),
           400: ErrorSchema,
           404: Type.Object({ error: Type.String() }),
@@ -230,8 +233,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       }
 
       let archive;
+      let excludedLayers: Array<{ layer: string; reason: string }> = [];
       try {
-        archive = buildGdbImdf(conversion, plan);
+        const resolved = resolveGdbImdfWithExclusions(conversion, plan);
+        archive = resolved.archive;
+        excludedLayers = resolved.excludedLayers;
       } catch (error) {
         if (isGdbConversionError(error)) {
           return reply.code(400).send(
@@ -264,7 +270,7 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         .run(venueId, nextSeq, newPublicVersionId(), imdfHash);
       const versionId = Number(info.lastInsertRowid);
       const jobId = request.server.queue.enqueue("publish_imdf", { versionId });
-      return reply.code(202).send({ jobId, versionId, seq: nextSeq });
+      return reply.code(202).send({ jobId, versionId, seq: nextSeq, excludedLayers });
     },
   );
 }
