@@ -60,11 +60,13 @@ export function makePublishRunner(
   compile: PublishCompileFn = compileVenueBundle,
 ) {
   return async (payloadJson: string): Promise<{ versionId: number }> => {
-    const { versionId, networkJunctionsHash, networkPathsHash } = JSON.parse(payloadJson) as {
-      versionId: number;
-      networkJunctionsHash?: string;
-      networkPathsHash?: string;
-    };
+    const { versionId, networkJunctionsHash, networkPathsHash, facilitiesGeoJsonHash } =
+      JSON.parse(payloadJson) as {
+        versionId: number;
+        networkJunctionsHash?: string;
+        networkPathsHash?: string;
+        facilitiesGeoJsonHash?: string;
+      };
     const version = db
       .prepare(
         `SELECT vr.id AS id, vr.venue_id AS venueId, vr.seq AS seq, vr.public_id AS publicId,
@@ -110,12 +112,15 @@ export function makePublishRunner(
         datasetId: `${version.tenantSlug}/${version.venueSlug}`,
         version: version.seq,
       };
-      // A combined GDB import stores the extracted network GeoJSON as blobs
-      // and references them from the job payload; a network-less publish
-      // carries neither hash and compiles exactly as before.
+      // A combined GDB import stores the extracted network/facilities
+      // GeoJSON as blobs and references them from the job payload; a plain
+      // publish carries no optional hashes and compiles exactly as before.
       if (networkJunctionsHash !== undefined && networkPathsHash !== undefined) {
         metadata.networkJunctionsGeoJson = blobs.read(networkJunctionsHash).toString("utf8");
         metadata.networkPathsGeoJson = blobs.read(networkPathsHash).toString("utf8");
+      }
+      if (facilitiesGeoJsonHash !== undefined) {
+        metadata.facilitiesGeoJson = blobs.read(facilitiesGeoJsonHash).toString("utf8");
       }
       const { bundle, stats } = await compile(source, metadata);
       // Content-addressed: safe to persist even if this row turns out to

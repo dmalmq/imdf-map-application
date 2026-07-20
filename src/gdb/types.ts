@@ -84,3 +84,15 @@ export interface NetworkInspectResponse {
   edgeCount: number;
   floors: string[];
 }
+
+/**
+ * Mirror of the server `FacilitiesInspectResponse`
+ * (`POST /api/gdb/inspect-facilities`): summary of the extracted facility
+ * points plus the staged blob hash a publish request may echo back as
+ * `facilitiesBlobHash`.
+ */
+export interface FacilitiesInspectResponse {
+  facilitiesBlobHash: string;
+  facilityCount: number;
+  floors: string[];
+}

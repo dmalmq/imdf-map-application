@@ -21,7 +21,7 @@ export const NETWORK_PATH_LAYER = "net_path";
 const NETWORK_LAYERS = [NETWORK_JUNCTION_LAYER, NETWORK_PATH_LAYER] as const;
 
 /** Convert one OGR layer to WGS84 RFC7946 GeoJSON text via `ogr2ogr`. */
-async function extractLayerGeoJson(
+export async function extractLayerGeoJson(
   gdal: GdalInstance,
   dataset: unknown,
   layerName: string,
@@ -44,7 +44,7 @@ async function extractLayerGeoJson(
 }
 
 /** Count features and collect distinct `FLOOR` property values from a converted layer. */
-function summarizeLayer(geojson: string, layerName: string): {
+export function summarizeLayer(geojson: string, layerName: string): {
   featureCount: number;
   floors: string[];
 } {
