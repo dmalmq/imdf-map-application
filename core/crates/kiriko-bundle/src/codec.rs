@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write;
 
+use kiriko_facilities::Facilities;
 use kiriko_model::import_imdf;
 use kiriko_model::model::{
     Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning, WarningCode,
@@ -49,6 +50,9 @@ pub struct BundleDocument {
     /// Optional routing graph (section 5). `None` when the bundle carries
     /// no graph; an empty graph is never emitted.
     pub graph: Option<RouteGraph>,
+    /// Optional point facilities (section 7). `None` when the bundle
+    /// carries no facilities; empty facilities are never emitted.
+    pub facilities: Option<Facilities>,
 }
 
 /// The result of compiling raw IMDF source bytes into a bundle.
@@ -101,6 +105,7 @@ pub fn compile_imdf_with_network(
         warnings: venue.warnings,
         stats,
         graph: None,
+        facilities: None,
     };
 
     if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
@@ -157,7 +162,9 @@ pub(crate) fn postcard_take_exact<'a, T: Deserialize<'a>>(
 /// is split into the geometry (non-occupant) and stores (occupant) sections;
 /// no section is duplicated and no empty style/graph/beacon section is
 /// emitted. The optional graph section (id 5) is emitted only when
-/// `document.graph` is `Some` and non-empty. Every `f64` reachable from
+/// `document.graph` is `Some` and non-empty; the optional facilities
+/// section (id 7) only when `document.facilities` is `Some` and non-empty.
+/// Every `f64` reachable from
 /// `document` is validated as finite and `-0.0` is normalized to `0.0`
 /// (see `sections::canonical_f64`).
 pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> {
@@ -197,6 +204,17 @@ pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> 
             format::SECTION_GRAPH,
             format::SECTION_VERSION,
             sections::encode_graph(graph)?,
+        ));
+    }
+    // Section id 7 sorts after 5, so appending keeps the directory
+    // id-ascending as `build_payload` requires.
+    if let Some(facilities) = &document.facilities
+        && !facilities.items.is_empty()
+    {
+        section_list.push((
+            format::SECTION_FACILITIES,
+            format::SECTION_VERSION,
+            sections::encode_facilities(facilities)?,
         ));
     }
 
@@ -242,6 +260,11 @@ pub fn decode_bundle(bytes: &[u8]) -> Result<BundleDocument, BundleError> {
     // written before section 5 existed still decode.
     if let Some(graph_bytes) = directory.section(&payload, format::SECTION_GRAPH) {
         document.graph = Some(sections::decode_graph(graph_bytes)?);
+    }
+    // The facilities section is optional: absent means `None`, so bundles
+    // written before section 7 existed still decode.
+    if let Some(facilities_bytes) = directory.section(&payload, format::SECTION_FACILITIES) {
+        document.facilities = Some(sections::decode_facilities(facilities_bytes)?);
     }
     Ok(document)
 }
@@ -374,6 +397,7 @@ mod tests {
                     features: 0,
                 },
                 graph: None,
+                facilities: None,
             };
 
         // Level ordinal.

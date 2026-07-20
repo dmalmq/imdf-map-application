@@ -602,6 +602,7 @@ dependencies = [
 name = "kiriko-bundle"
 version = "0.1.0"
 dependencies = [
+ "kiriko-facilities",
  "kiriko-model",
  "kiriko-route",
  "postcard",
@@ -611,6 +612,16 @@ dependencies = [
  "thiserror",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "kiriko-facilities"
+version = "0.1.0"
+dependencies = [
+ "geojson",
+ "kiriko-route",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -423,6 +423,7 @@ fn minimal_document(features: Vec<kiriko_model::model::VenueFeature>) -> BundleD
             features: 0,
         },
         graph: None,
+        facilities: None,
     }
 }
 

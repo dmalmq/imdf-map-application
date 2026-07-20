@@ -554,6 +554,7 @@ pub(crate) fn manifest_into_document(
             features: dto.stats.features,
         },
         graph: None,
+        facilities: None,
     })
 }
 
@@ -652,6 +653,89 @@ pub(crate) fn decode_graph(bytes: &[u8]) -> Result<kiriko_route::RouteGraph, Bun
         });
     }
     Ok(kiriko_route::RouteGraph { nodes, edges })
+}
+
+/// Serializable mirror of `kiriko_facilities::FacilityAnchor`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub(crate) struct AnchorDto {
+    lon: f64,
+    lat: f64,
+    ordinal: f64,
+}
+
+/// Serializable mirror of `kiriko_facilities::Facility`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FacilityDto {
+    lon: f64,
+    lat: f64,
+    ordinal: f64,
+    name: String,
+    icon: String,
+    anchor: Option<AnchorDto>,
+}
+
+/// Section 7 (facilities): the point facilities. Optional — `encode_bundle`
+/// emits it only when the document carries non-empty facilities.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FacilitiesSectionDto {
+    items: Vec<FacilityDto>,
+}
+
+fn anchor_to_dto(anchor: &kiriko_facilities::FacilityAnchor) -> Result<AnchorDto, BundleError> {
+    Ok(AnchorDto {
+        lon: canonical_f64(anchor.lon)?,
+        lat: canonical_f64(anchor.lat)?,
+        ordinal: canonical_f64(anchor.ordinal)?,
+    })
+}
+
+fn anchor_from_dto(dto: &AnchorDto) -> Result<kiriko_facilities::FacilityAnchor, BundleError> {
+    Ok(kiriko_facilities::FacilityAnchor {
+        lon: canonical_f64(dto.lon)?,
+        lat: canonical_f64(dto.lat)?,
+        ordinal: canonical_f64(dto.ordinal)?,
+    })
+}
+
+pub(crate) fn encode_facilities(
+    facilities: &kiriko_facilities::Facilities,
+) -> Result<Vec<u8>, BundleError> {
+    let mut items = Vec::with_capacity(facilities.items.len());
+    for facility in &facilities.items {
+        items.push(FacilityDto {
+            lon: canonical_f64(facility.lon)?,
+            lat: canonical_f64(facility.lat)?,
+            ordinal: canonical_f64(facility.ordinal)?,
+            name: facility.name.clone(),
+            icon: facility.icon.clone(),
+            anchor: facility.anchor.as_ref().map(anchor_to_dto).transpose()?,
+        });
+    }
+    postcard::to_allocvec(&FacilitiesSectionDto { items }).map_err(|e| {
+        BundleError::new(
+            BundleErrorCode::InvalidBundle,
+            format!("encode facilities section: {e}"),
+        )
+    })
+}
+
+pub(crate) fn decode_facilities(
+    bytes: &[u8],
+) -> Result<kiriko_facilities::Facilities, BundleError> {
+    let dto: FacilitiesSectionDto =
+        crate::codec::postcard_take_exact(bytes, "decode facilities section")?;
+    let mut items = Vec::with_capacity(dto.items.len());
+    for facility in &dto.items {
+        items.push(kiriko_facilities::Facility {
+            lon: canonical_f64(facility.lon)?,
+            lat: canonical_f64(facility.lat)?,
+            ordinal: canonical_f64(facility.ordinal)?,
+            name: facility.name.clone(),
+            icon: facility.icon.clone(),
+            anchor: facility.anchor.as_ref().map(anchor_from_dto).transpose()?,
+        });
+    }
+    Ok(kiriko_facilities::Facilities { items })
 }
 
 #[cfg(test)]
@@ -840,6 +924,7 @@ mod tests {
                 features: 0,
             },
             graph: None,
+            facilities: None,
         }
     }
 
@@ -912,6 +997,164 @@ mod tests {
             ),
         ]);
         crate::format::encode_payload(&payload).expect("hand-built payload encodes")
+    }
+
+    /// Wrap a hand-built manifest and facilities section into a full bundle,
+    /// bypassing `encode_facilities` so a non-finite coordinate can be
+    /// smuggled straight into the section payload.
+    fn wrap_bundle_with_facilities(manifest_bytes: Vec<u8>, facilities_bytes: Vec<u8>) -> Vec<u8> {
+        let empty_features: Vec<u8> =
+            postcard::to_allocvec(&Vec::<FeatureDto>::new()).expect("empty vec encodes");
+        let payload = crate::format::build_payload(&[
+            (
+                crate::format::SECTION_MANIFEST,
+                crate::format::SECTION_VERSION,
+                manifest_bytes,
+            ),
+            (
+                crate::format::SECTION_GEOMETRY,
+                crate::format::SECTION_VERSION,
+                empty_features.clone(),
+            ),
+            (
+                crate::format::SECTION_STORES,
+                crate::format::SECTION_VERSION,
+                empty_features,
+            ),
+            (
+                crate::format::SECTION_FACILITIES,
+                crate::format::SECTION_VERSION,
+                facilities_bytes,
+            ),
+        ]);
+        crate::format::encode_payload(&payload).expect("hand-built payload encodes")
+    }
+
+    fn facility(
+        lon: f64,
+        lat: f64,
+        ordinal: f64,
+        name: &str,
+        icon: &str,
+        anchor: Option<kiriko_facilities::FacilityAnchor>,
+    ) -> kiriko_facilities::Facility {
+        kiriko_facilities::Facility {
+            lon,
+            lat,
+            ordinal,
+            name: name.to_string(),
+            icon: icon.to_string(),
+            anchor,
+        }
+    }
+
+    #[test]
+    fn facilities_section_round_trips() {
+        let mut doc = minimal_document();
+        doc.facilities = Some(kiriko_facilities::Facilities {
+            items: vec![
+                facility(
+                    139.0,
+                    35.0,
+                    0.0,
+                    "Gate A",
+                    "gate",
+                    Some(kiriko_facilities::FacilityAnchor {
+                        lon: 139.0005,
+                        lat: 35.0005,
+                        ordinal: 0.0,
+                    }),
+                ),
+                facility(139.1, 35.1, 1.0, "Restroom", "restroom", None),
+            ],
+        });
+        let bytes = crate::encode_bundle(&doc).expect("a document with facilities encodes");
+        let back = crate::decode_bundle(&bytes).expect("a facilities bundle decodes");
+        assert_eq!(back.facilities, doc.facilities);
+    }
+
+    #[test]
+    fn no_facilities_section_when_absent() {
+        let doc = minimal_document();
+        let bytes = crate::encode_bundle(&doc).expect("a facility-less document encodes");
+        assert_eq!(
+            crate::decode_bundle(&bytes)
+                .expect("a facility-less bundle decodes")
+                .facilities,
+            None
+        );
+    }
+
+    #[test]
+    fn empty_facilities_are_never_emitted() {
+        let mut doc = minimal_document();
+        doc.facilities = Some(kiriko_facilities::Facilities { items: Vec::new() });
+        let bytes = crate::encode_bundle(&doc).expect("empty facilities still encode");
+        assert_eq!(
+            crate::decode_bundle(&bytes)
+                .expect("the bundle decodes")
+                .facilities,
+            None,
+            "an empty facilities list must not round-trip into a section"
+        );
+    }
+
+    #[test]
+    fn rejects_a_facility_anchor_with_a_non_finite_coordinate() {
+        let manifest_bytes =
+            postcard::to_allocvec(&manifest_section_with_ordinal(1.0)).expect("dto encodes");
+        let facilities_bytes = postcard::to_allocvec(&FacilitiesSectionDto {
+            items: vec![FacilityDto {
+                lon: 139.0,
+                lat: 35.0,
+                ordinal: 0.0,
+                name: "Gate A".to_string(),
+                icon: "gate".to_string(),
+                anchor: Some(AnchorDto {
+                    lon: f64::NAN,
+                    lat: 35.0,
+                    ordinal: 0.0,
+                }),
+            }],
+        })
+        .expect("a NaN anchor still postcard-encodes");
+        let bytes = wrap_bundle_with_facilities(manifest_bytes, facilities_bytes);
+
+        let err = crate::decode_bundle(&bytes)
+            .expect_err("a non-finite anchor coordinate must be rejected");
+        assert_eq!(err.code, BundleErrorCode::InvalidBundle);
+    }
+
+    #[test]
+    fn graph_and_facilities_sections_coexist_in_ascending_directory_order() {
+        use kiriko_route::{RouteGraph, RouteNode};
+        let mut doc = minimal_document();
+        doc.graph = Some(RouteGraph {
+            nodes: vec![RouteNode {
+                lon: 139.0,
+                lat: 35.0,
+                ordinal: 0.0,
+            }],
+            edges: Vec::new(),
+        });
+        doc.facilities = Some(kiriko_facilities::Facilities {
+            items: vec![facility(139.0, 35.0, 0.0, "Gate A", "gate", None)],
+        });
+        let bytes = crate::encode_bundle(&doc).expect("a graph+facilities document encodes");
+
+        let payload = crate::format::decode_payload(&bytes).expect("the envelope decodes");
+        let row_count = u16::from_le_bytes(payload[0..2].try_into().unwrap()) as usize;
+        let ids: Vec<u16> = (0..row_count)
+            .map(|i| {
+                let start = 2 + i * 20;
+                u16::from_le_bytes(payload[start..start + 2].try_into().unwrap())
+            })
+            .collect();
+        assert_eq!(ids, vec![1, 2, 3, 5, 7], "directory ids must ascend");
+
+        let back = crate::decode_bundle(&bytes).expect("the bundle decodes");
+        assert_eq!(back.graph, doc.graph);
+        assert_eq!(back.facilities, doc.facilities);
     }
 
     #[test]
