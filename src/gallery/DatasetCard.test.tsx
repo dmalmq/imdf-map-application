@@ -51,4 +51,39 @@ describe("DatasetCard", () => {
     );
     expect(screen.getByRole("button", { name: "GDB を取り込む" })).toBeTruthy();
   });
+
+  it("shows Upload IMDF and calls onUploadImdf when provided", () => {
+    const onUploadImdf = vi.fn();
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="en"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onUploadImdf={onUploadImdf}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Upload IMDF" }));
+    expect(onUploadImdf).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Upload IMDF when onUploadImdf is omitted", () => {
+    render(
+      <DatasetCard venue={venue} locale="en" onOpen={() => {}} onDelete={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: "Upload IMDF" })).toBeNull();
+  });
+
+  it("uses Japanese Upload IMDF label when locale is ja", () => {
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="ja"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onUploadImdf={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "IMDF をアップロード" })).toBeTruthy();
+  });
 });

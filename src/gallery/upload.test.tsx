@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const createVenue = vi.fn();
 const uploadVersion = vi.fn();
 const waitForJob = vi.fn();
+const deleteVenue = vi.fn();
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
   return {
@@ -14,6 +15,7 @@ vi.mock("./api", async (importOriginal) => {
       createVenue: (...a: unknown[]) => createVenue(...a),
       uploadVersion: (...a: unknown[]) => uploadVersion(...a),
       waitForJob: (...a: unknown[]) => waitForJob(...a),
+      deleteVenue: (...a: unknown[]) => deleteVenue(...a),
     },
   };
 });
@@ -145,5 +147,88 @@ describe("UploadModal", () => {
         true,
       );
     });
+  });
+
+  it("deletes the orphan venue when create succeeds but upload fails", async () => {
+    createVenue.mockResolvedValue({ id: 99, slug: "orphan", name: "orphan", createdAt: "" });
+    uploadVersion.mockRejectedValue(new Error("network error"));
+    deleteVenue.mockResolvedValue(undefined);
+    const onPublished = vi.fn();
+    const user = userEvent.setup();
+    render(<UploadModal locale="en" onClose={() => {}} onPublished={onPublished} />);
+
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("orphan.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(deleteVenue).toHaveBeenCalledWith(99));
+    expect(onPublished).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toBeTruthy();
+  });
+
+  it("deletes the orphan venue when the publish job fails", async () => {
+    createVenue.mockResolvedValue({ id: 100, slug: "job-fail", name: "job-fail", createdAt: "" });
+    uploadVersion.mockResolvedValue({ jobId: "j-fail" });
+    waitForJob.mockResolvedValue({ status: "error", error: "not a ZIP archive" });
+    deleteVenue.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<UploadModal locale="en" onClose={() => {}} onPublished={() => {}} />);
+
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("job-fail.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(deleteVenue).toHaveBeenCalledWith(100));
+    expect(await screen.findByText(/not a ZIP archive/)).toBeTruthy();
+  });
+
+  it("uploads a new version to an existing venue without createVenue", async () => {
+    uploadVersion.mockResolvedValue({ jobId: "jv1" });
+    waitForJob.mockResolvedValue({ status: "done" });
+    const onPublished = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <UploadModal
+        locale="en"
+        onClose={() => {}}
+        onPublished={onPublished}
+        target={{ venueId: 42, venueName: "Existing Station", slug: "existing-station" }}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: /upload imdf version/i })).toBeTruthy();
+    const nameInput = screen.getByLabelText("Dataset name") as HTMLInputElement;
+    expect(nameInput.value).toBe("Existing Station");
+    expect(nameInput.readOnly || nameInput.disabled).toBe(true);
+
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("v2.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(screen.getByText("Published")).toBeTruthy());
+    expect(createVenue).not.toHaveBeenCalled();
+    expect(uploadVersion).toHaveBeenCalled();
+    const uploadArgs = uploadVersion.mock.calls[0]!;
+    expect(uploadArgs[0]).toBe(42);
+    expect(deleteVenue).not.toHaveBeenCalled();
+    expect(onPublished).toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Open" }).getAttribute("href")).toBe(
+      "/?dataset=existing-station",
+    );
+  });
+
+  it("does not delete an existing venue when version upload fails", async () => {
+    uploadVersion.mockRejectedValue(new Error("boom"));
+    const user = userEvent.setup();
+    render(
+      <UploadModal
+        locale="en"
+        onClose={() => {}}
+        onPublished={() => {}}
+        target={{ venueId: 42, venueName: "Existing Station", slug: "existing-station" }}
+      />,
+    );
+    await user.upload(screen.getByLabelText("IMDF ZIP"), zipFile("bad.zip"));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(createVenue).not.toHaveBeenCalled();
+    expect(deleteVenue).not.toHaveBeenCalled();
   });
 });

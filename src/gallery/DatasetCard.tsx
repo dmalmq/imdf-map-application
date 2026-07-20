@@ -4,6 +4,7 @@ import type { VenueSummary } from "./api";
 const ui = {
   open: { ja: "開く", en: "Open" },
   delete: { ja: "削除", en: "Delete" },
+  uploadImdf: { ja: "IMDF をアップロード", en: "Upload IMDF" },
   importGdb: { ja: "GDB を取り込む", en: "Import GDB" },
   floors: { ja: "フロア", en: "floors" },
   features: { ja: "地物", en: "features" },
@@ -16,9 +17,17 @@ export interface DatasetCardProps {
   onOpen: () => void;
   onDelete: () => void;
   onImportGdb?: () => void;
+  onUploadImdf?: () => void;
 }
 
-export function DatasetCard({ venue, locale, onOpen, onDelete, onImportGdb }: DatasetCardProps) {
+export function DatasetCard({
+  venue,
+  locale,
+  onOpen,
+  onDelete,
+  onImportGdb,
+  onUploadImdf,
+}: DatasetCardProps) {
   const stats = venue.latest?.stats ?? null;
   const date = (venue.latest?.createdAt ?? venue.createdAt).slice(0, 10);
   return (
@@ -40,6 +49,11 @@ export function DatasetCard({ venue, locale, onOpen, onDelete, onImportGdb }: Da
         <button type="button" className="btn-ghost" onClick={onDelete} aria-label={`${ui.delete[locale]}: ${venue.name}`}>
           {ui.delete[locale]}
         </button>
+        {onUploadImdf ? (
+          <button type="button" className="btn-ghost" onClick={onUploadImdf}>
+            {ui.uploadImdf[locale]}
+          </button>
+        ) : null}
         {onImportGdb ? (
           <button type="button" className="btn-ghost" onClick={onImportGdb}>
             {ui.importGdb[locale]}

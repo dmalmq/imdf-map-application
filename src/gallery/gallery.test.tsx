@@ -60,6 +60,31 @@ describe("GalleryPage", () => {
     expect(screen.getByText("tokyo-station")).toBeTruthy();
   });
 
+  it("opens IMDF version upload for the selected venue", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        ...VENUE,
+        id: 42,
+        slug: "existing-station",
+        name: "Existing Station",
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Existing Station")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+
+    await user.click(screen.getByRole("button", { name: "Upload IMDF" }));
+
+    expect(
+      screen.getByRole("dialog", { name: "Upload IMDF version" }),
+    ).toBeTruthy();
+    const nameInput = screen.getByLabelText("Dataset name") as HTMLInputElement;
+    expect(nameInput.value).toBe("Existing Station");
+    expect(nameInput.readOnly || nameInput.disabled).toBe(true);
+  });
+
   it("filters cards by name", async () => {
     me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
     listVenues.mockResolvedValue([
