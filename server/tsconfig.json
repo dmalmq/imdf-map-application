@@ -10,7 +10,7 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": ["node", "geojson"],
     "noEmit": true
   },
   "include": ["src", "test", "../tests/fixtures"]

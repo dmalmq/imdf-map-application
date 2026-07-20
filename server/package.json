@@ -14,10 +14,12 @@
     "@fastify/multipart": "^10.1.0",
     "@fastify/swagger": "^9.8.1",
     "@fastify/type-provider-typebox": "^6.1.0",
-    "@sinclair/typebox": "^0.34.52",
     "@kiriko/node": "workspace:*",
+    "@sinclair/typebox": "^0.34.52",
+    "@zip.js/zip.js": "^2.8.26",
     "better-sqlite3": "^12.11.1",
-    "fastify": "^5.10.0"
+    "fastify": "^5.10.0",
+    "gdal3.js": "2.8.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

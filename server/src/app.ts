@@ -13,7 +13,9 @@ import { BlobStore } from "./blobs/store";
 import { JobQueue } from "./jobs/queue";
 import { makePublishRunner } from "./jobs/publish";
 import { registerJobRoutes } from "./jobs/routes";
-import { MAX_UPLOAD_BYTES, registerUploadRoute } from "./venues/uploadRoute";
+import { registerUploadRoute } from "./venues/uploadRoute";
+import { GDB_MAX_UPLOAD_BYTES } from "./gdb/sourceValidation";
+import { registerGdbRoutes } from "./gdb/routes";
 import { registerServeRoutes } from "./serve/routes";
 import { recompileLegacyPublished } from "./core/recompileLegacy";
 import { AnchorIndexCache } from "./issues/anchorIndex";
@@ -57,7 +59,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   }
 
   await app.register(cookie);
-  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
+  await app.register(multipart, { limits: { fileSize: GDB_MAX_UPLOAD_BYTES, files: 1 } });
   await app.register(swagger, {
     openapi: { info: { title: "Kiriko API", version: "0.1.0" } },
   });
@@ -77,6 +79,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   registerAuthRoutes(app);
   registerVenueRoutes(app, issueHub);
   registerUploadRoute(app);
+  registerGdbRoutes(app);
   registerJobRoutes(app);
   registerServeRoutes(app);
   await app.register(issueRoutes, {

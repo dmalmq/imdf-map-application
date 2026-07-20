@@ -40,6 +40,9 @@ export function registerUploadRoute(app: FastifyInstance): void {
         return reply.code(400).send({ error: "file_required" });
       }
       const bytes = await file.toBuffer();
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+        return reply.code(400).send({ error: "file_too_large" });
+      }
       const { hash, size } = request.server.blobs.put(bytes);
       request.server.db
         .prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)")
