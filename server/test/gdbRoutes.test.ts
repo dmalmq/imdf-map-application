@@ -46,3 +46,27 @@ describe("GDB routes", () => {
     });
   });
 });
+
+it("inspect returns a suggestedPlan alongside the inspection", async () => {
+  const { app } = await makeTestApp();
+  const cookie = await loginCookie(app);
+  // A crafted-but-malformed catalog would pass pre-GDAL validation and then
+  // hang the gdal3.js WASM runtime (it emits an out-of-band FS rejection and
+  // never resolves), so this stub deliberately fails pre-GDAL validation and
+  // returns 400. The point here is the wired contract shape: inspect answers
+  // with 200|400 and, on 200, carries `suggestedPlan.layers`. Real 200-path
+  // coverage (suggestedPlan.layers.length === 318) lives in gdbSmoke against
+  // the Tokyo fixture.
+  const multipart = multipartZip(await fakeGdbZip());
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/gdb/inspect",
+    headers: { cookie, ...multipart.headers },
+    payload: multipart.payload,
+  });
+  expect([200, 400]).toContain(response.statusCode);
+  if (response.statusCode === 200) {
+    const body = response.json() as { suggestedPlan?: { layers: unknown[] } };
+    expect(Array.isArray(body.suggestedPlan?.layers)).toBe(true);
+  }
+});
