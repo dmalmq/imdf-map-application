@@ -5,7 +5,7 @@ import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
 const initKirikoWasmMock = vi.fn();
 const decodeBundleMock = vi.fn();
 const routeBundleMock = vi.fn();
-const facilitiesMock = vi.fn(() => []);
+const facilitiesMock = vi.fn((..._args: unknown[]) => [] as unknown[]);
 vi.mock("./wasm", () => ({
   initKirikoWasm: (...args: unknown[]) => initKirikoWasmMock(...args),
   decodeBundle: (...args: unknown[]) => decodeBundleMock(...args),

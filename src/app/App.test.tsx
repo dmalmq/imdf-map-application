@@ -154,12 +154,16 @@ function bundleLoadResult(
   venue = buildMinimalVenue(),
   publicVersionId: string | null = PUBLIC_VERSION_ID,
   hasGraph = false,
+  hasFacilities = false,
+  facilities: KirikoBundleLoadResult["facilities"] = [],
 ): KirikoBundleLoadResult {
   return {
     venue,
     metadata: { datasetId: "default/tokyo-station", version: 7 },
     publicVersionId,
     hasGraph,
+    hasFacilities,
+    facilities,
   };
 }
 
