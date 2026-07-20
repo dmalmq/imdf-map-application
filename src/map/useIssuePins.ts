@@ -3,6 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import type { LocaleCode, ViewerLevel } from "../imdf/types";
 import type { IssueFilter, IssueStatus, ReviewIssue } from "../issues/types";
 import { filterIssues, issueStatusLabel, issueSummary } from "../issues/IssueQueue";
+import { ordinalOfLevel } from "../state/floorGroups";
 
 /** Overlay container class hosting all issue pins (separate from Labels markers). */
 export const ISSUE_PIN_OVERLAY_CLASS = "issue-pin-overlay";
@@ -30,13 +31,13 @@ export interface MapIssuePin {
  */
 export function projectPins(
   issues: ReviewIssue[],
-  levelId: string,
+  levelIds: readonly string[],
   filter: IssueFilter,
   currentUserId: number | null = null,
   locale: LocaleCode = "en",
 ): MapIssuePin[] {
   return filterIssues(issues, filter, currentUserId)
-    .filter((issue) => issue.anchor.levelId === levelId)
+    .filter((issue) => levelIds.includes(issue.anchor.levelId))
     .map((issue) => ({
       id: issue.id,
       pinNumber: issue.pinNumber,
@@ -117,8 +118,14 @@ export function useIssuePins({
       return level.label[locale] ?? level.shortName[locale] ?? Object.values(level.label)[0] ?? id;
     };
 
+    const selectedOrdinal = ordinalOfLevel(levels, levelId);
     const floorPins = pins
-      .filter((pin) => pin.levelId === levelId)
+      .filter((pin) => {
+        if (selectedOrdinal === null) {
+          return pin.levelId === levelId;
+        }
+        return (levelsById.get(pin.levelId)?.ordinal ?? null) === selectedOrdinal;
+      })
       .slice()
       .sort((a, b) => a.pinNumber - b.pinNumber);
 

@@ -43,6 +43,7 @@ import {
 } from "../map/IndoorMap";
 import { defaultLayerVisibility, type MapLayerGroup } from "../map/layerGroups";
 import { projectPins } from "../map/useIssuePins";
+import { levelIdsForOrdinal, ordinalOfLevel } from "../state/floorGroups";
 import { searchVenue } from "../search/searchVenue";
 import {
   initialViewerState,
@@ -511,7 +512,10 @@ export function App() {
         ? []
         : projectPins(
             canonicalIssues,
-            venueState.selectedLevelId,
+            levelIdsForOrdinal(
+              venueState.loadedVenue.levels,
+              ordinalOfLevel(venueState.loadedVenue.levels, venueState.selectedLevelId) ?? NaN,
+            ),
             issueController.state.filter,
             issueCurrentUser?.id ?? null,
             locale,

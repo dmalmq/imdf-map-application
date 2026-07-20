@@ -29,6 +29,7 @@ import { buildFacilityFeatures } from "./facilityFeatures";
 import { FACILITY_PIN_IMAGE, MARKER_ICON_URLS } from "./facilityIcons";
 import { useFeatureMarkers } from "./useFeatureMarkers";
 import { useIssuePins, type MapIssuePin } from "./useIssuePins";
+import { levelIdsForOrdinal, ordinalOfLevel } from "../state/floorGroups";
 
 const PLACE_AT_CENTER_LABEL = {
   ja: "地図の中心に配置",
@@ -243,11 +244,28 @@ function fitLevelBounds(
   venue: LoadedVenue,
   levelId: string,
 ): void {
-  const bounds = venue.boundsByLevel.get(levelId);
-  if (bounds == null) {
+  // Union bounds across every level sharing this floor's ordinal so a
+  // multi-building floor frames all buildings, not just one.
+  const ordinal = ordinalOfLevel(venue.levels, levelId);
+  const groupLevelIds =
+    ordinal === null ? [levelId] : levelIdsForOrdinal(venue.levels, ordinal);
+  let west = Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let north = -Infinity;
+  for (const id of groupLevelIds) {
+    const b = venue.boundsByLevel.get(id);
+    if (b == null) {
+      continue;
+    }
+    if (b[0] < west) west = b[0];
+    if (b[1] < south) south = b[1];
+    if (b[2] > east) east = b[2];
+    if (b[3] > north) north = b[3];
+  }
+  if (west === Infinity) {
     return;
   }
-  const [west, south, east, north] = bounds;
   if (
     !Number.isFinite(west) ||
     !Number.isFinite(south) ||

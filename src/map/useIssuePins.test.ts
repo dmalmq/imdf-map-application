@@ -130,28 +130,32 @@ describe("projectPins", () => {
   ];
 
   it("projects active roots on the current floor in pin-number order", () => {
-    expect(projectPins(issues, "1f", "active").map((pin) => pin.pinNumber)).toEqual([1, 4]);
+    expect(projectPins(issues, ["1f"], "active").map((pin) => pin.pinNumber)).toEqual([1, 4]);
   });
 
   it("excludes closed and deleted roots by default", () => {
-    const numbers = projectPins(issues, "1f", "active").map((pin) => pin.pinNumber);
+    const numbers = projectPins(issues, ["1f"], "active").map((pin) => pin.pinNumber);
     expect(numbers).not.toContain(3);
     expect(numbers).not.toContain(5);
   });
 
   it("shows closed and deleted roots under the closed filter", () => {
-    expect(projectPins(issues, "1f", "closed").map((pin) => pin.pinNumber)).toEqual([3, 5]);
+    expect(projectPins(issues, ["1f"], "closed").map((pin) => pin.pinNumber)).toEqual([3, 5]);
+  });
+
+  it("unions roots across every level id in the ordinal group", () => {
+    expect(projectPins(issues, ["1f", "2f"], "active").map((pin) => pin.pinNumber)).toEqual([1, 2, 4]);
   });
 
   it("keeps deterministic pin order regardless of input order", () => {
     const shuffled = [issues[3]!, issues[0]!, issues[2]!];
-    expect(projectPins(shuffled, "1f", "active").map((pin) => pin.pinNumber)).toEqual([1, 4]);
+    expect(projectPins(shuffled, ["1f"], "active").map((pin) => pin.pinNumber)).toEqual([1, 4]);
   });
 
   it("carries anchor coordinates, status, and summary onto the pin", () => {
     const [pin] = projectPins(
       [issue("i1", 1, "1f", { body: "Gate blocked", longitude: 1, latitude: 2 })],
-      "1f",
+      ["1f"],
       "active",
     );
     expect(pin).toMatchObject({
@@ -178,6 +182,22 @@ describe("useIssuePins", () => {
     const { map } = mountPins();
     const buttons = [...map.container.querySelectorAll("button")];
     expect(buttons.map((b) => b.textContent)).toEqual(["1", "4"]);
+  });
+
+  it("renders pins from sibling levels sharing the selected ordinal", () => {
+    const levels: ViewerLevel[] = [
+      { id: "1f", ordinal: 0, label: { en: "1F" }, shortName: { en: "1F" } },
+      { id: "1f-b", ordinal: 0, label: { en: "1F" }, shortName: { en: "1F" } },
+      { id: "2f", ordinal: 1, label: { en: "2F" }, shortName: { en: "2F" } },
+    ];
+    const merged: MapIssuePin[] = [
+      { id: "i1", pinNumber: 1, levelId: "1f", longitude: 10, latitude: 20, summary: "A", status: "open" },
+      { id: "i2", pinNumber: 2, levelId: "1f-b", longitude: 30, latitude: 40, summary: "B", status: "open" },
+      { id: "i9", pinNumber: 9, levelId: "2f", longitude: 50, latitude: 60, summary: "C", status: "open" },
+    ];
+    const { map } = mountPins({ levels, pins: merged, levelId: "1f" });
+    const buttons = [...map.container.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["1", "2"]);
   });
 
   it("gives each pin an accessible name with number, summary, status, and floor", () => {
