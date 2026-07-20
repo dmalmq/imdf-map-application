@@ -22,6 +22,12 @@ const ui = {
   loadError: { ja: "読み込みに失敗しました", en: "Could not load datasets" },
   importGdb: { ja: "Geodatabase を取り込む", en: "Import Geodatabase" },
   inspecting: { ja: "検査中…", en: "Inspecting…" },
+  publishedWithSkips: {
+    ja: (n: number, sample: string) =>
+      `公開しました（${n} レイヤーをスキップ: 例 ${sample}）`,
+    en: (n: number, sample: string) =>
+      `Published with ${n} layer(s) skipped (e.g. ${sample}).`,
+  },
 } as const;
 
 type GalleryState =
@@ -43,6 +49,7 @@ export function GalleryPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleting, setDeleting] = useState<VenueSummary | null>(null);
   const [gdbFlow, setGdbFlow] = useState<GdbFlow>({ phase: "idle" });
+  const [gdbNotice, setGdbNotice] = useState<string | null>(null);
   const gdbInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
@@ -66,10 +73,13 @@ export function GalleryPage() {
     window.location.assign(`/?dataset=${encodeURIComponent(slug)}`);
   };
 
-  const startGdbImport = () => gdbInputRef.current?.click();
-
+  const startGdbImport = () => {
+    setGdbNotice(null);
+    gdbInputRef.current?.click();
+  };
   const onGdbFile = (file: File | undefined) => {
     if (!file) return;
+    setGdbNotice(null);
     setGdbFlow({ phase: "inspecting" });
     void (async () => {
       try {
@@ -90,9 +100,16 @@ export function GalleryPage() {
       try {
         const venue = await api.createVenue(plan.venueName.trim());
         venueId = venue.id;
-        const { jobId } = await api.publishGdb(venue.id, data.blobHash, plan);
-        const job = await api.waitForJob(jobId);
+        const published = await api.publishGdb(venue.id, data.blobHash, plan);
+        const job = await api.waitForJob(published.jobId);
         if (job.status === "done") {
+          const skipped = published.excludedLayers ?? [];
+          if (skipped.length > 0) {
+            const sample = skipped[0]!.layer;
+            setGdbNotice(ui.publishedWithSkips[locale](skipped.length, sample));
+          } else {
+            setGdbNotice(null);
+          }
           setGdbFlow({ phase: "idle" });
           if (gdbInputRef.current) gdbInputRef.current.value = "";
           await reload();
@@ -296,6 +313,9 @@ export function GalleryPage() {
       ) : null}
       {gdbFlow.phase === "inspecting" ? <div className="gallery-toast">{ui.inspecting[locale]}</div> : null}
       {gdbFlow.phase === "error" ? <div className="gallery-toast gallery-toast--error">{gdbFlow.message}</div> : null}
+      {gdbNotice !== null ? (
+        <div className="gallery-toast" role="status">{gdbNotice}</div>
+      ) : null}
       {gdbFlow.phase === "review" ? (
         <GdbImportDialog
           inspection={gdbFlow.data.inspection}

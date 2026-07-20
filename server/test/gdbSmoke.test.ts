@@ -58,21 +58,7 @@ describe.skipIf(SKIP)("GDB endpoint smoke", () => {
     expect(inspected.suggestedPlan.layers.length).toBe(318);
     expect(inspected.blobHash).toMatch(/^[0-9a-f]{64}$/);
 
-    const suggested = inspected.suggestedPlan;
-    const selectedNames = new Set(["G空間_0_Floor", "G空間_0_Space"]);
-    const selectedRows = suggested.layers.filter((row) => selectedNames.has(row.key.layerName));
-    expect(selectedRows).toHaveLength(2);
-    const buildingId = selectedRows[0]!.buildingId;
-    expect(buildingId).not.toBeNull();
-
-    const plan = {
-      ...suggested,
-      buildings: suggested.buildings.filter((building) => building.id === buildingId),
-      layers: suggested.layers.map((row) => ({
-        ...row,
-        included: selectedNames.has(row.key.layerName),
-      })),
-    };
+    const plan = inspected.suggestedPlan;
 
     const publish = await app.inject({
       method: "POST",
@@ -85,8 +71,15 @@ describe.skipIf(SKIP)("GDB endpoint smoke", () => {
       },
     });
     expect(publish.statusCode, publish.body).toBe(202);
-    const accepted = publish.json() as { jobId: string; versionId: number; seq: number };
+    const accepted = publish.json() as {
+      jobId: string;
+      versionId: number;
+      seq: number;
+      excludedLayers: Array<{ layer: string; reason: string }>;
+    };
     expect(accepted.seq).toBe(1);
+    expect(Array.isArray(accepted.excludedLayers)).toBe(true);
+    // exclusions allowed; must not block publish
 
     await app.queue.idle();
     const version = app.db
@@ -107,5 +100,5 @@ describe.skipIf(SKIP)("GDB endpoint smoke", () => {
     const stats = JSON.parse(version.statsJson!) as { levels: number; features: number };
     expect(stats.levels).toBeGreaterThan(0);
     expect(stats.features).toBeGreaterThan(0);
-  }, 30_000);
+  }, 120_000);
 });

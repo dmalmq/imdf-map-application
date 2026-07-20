@@ -112,7 +112,12 @@ describe("GalleryPage", () => {
     listVenues.mockResolvedValue([]);
     inspectGdb.mockResolvedValue({ blobHash: "a".repeat(64), inspection: gdbInspection, suggestedPlan: gdbPlan });
     createVenue.mockResolvedValue({ id: 9, slug: "station", name: "Station", createdAt: "" });
-    publishGdb.mockResolvedValue({ jobId: "j", versionId: 1, seq: 1 });
+    publishGdb.mockResolvedValue({
+      jobId: "j",
+      versionId: 1,
+      seq: 1,
+      excludedLayers: [{ layer: "Bad_Layer", reason: "empty or geometry-less layer" }],
+    });
     waitForJob.mockResolvedValue({ status: "done" });
 
     const user = userEvent.setup();
@@ -131,5 +136,8 @@ describe("GalleryPage", () => {
     expect(createVenue).toHaveBeenCalledWith("Station");
     expect(publishGdb).toHaveBeenCalledWith(9, "a".repeat(64), expect.objectContaining({ venueName: "Station" }));
     await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toMatch(/skipped|スキップ/),
+    );
   });
 });

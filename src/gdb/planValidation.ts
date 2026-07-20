@@ -207,6 +207,8 @@ export function collectBlockingIssues(
   const issues: string[] = [];
   const included = plan.layers.filter((l) => l.included);
   const buildingIds = new Set(plan.buildings.map((building) => building.id));
+  const hasBuilding = (id: string | null): boolean =>
+    typeof id === "string" && id !== "" && buildingIds.has(id);
 
   let hasLevelSource = false;
   for (const row of included) {
@@ -225,7 +227,7 @@ export function collectBlockingIssues(
     const rule = row.levelRule;
     if (row.targetType === "level") {
       hasLevelSource = true;
-      if (!row.buildingId || !buildingIds.has(row.buildingId)) {
+      if (!hasBuilding(row.buildingId)) {
         issues.push(blockingText.levelNoBuilding[locale](label));
       }
       // A level defines its own ordinal; source-reference is never a valid
@@ -246,7 +248,7 @@ export function collectBlockingIssues(
       issues.push(blockingText.noLevelRule[locale](label));
     } else {
       if (rule.kind === "fixed" || rule.kind === "property") hasLevelSource = true;
-      if (rule.kind !== "source-reference" && (!row.buildingId || !buildingIds.has(row.buildingId))) {
+      if (rule.kind !== "source-reference" && !hasBuilding(row.buildingId)) {
         issues.push(blockingText.needBuilding[locale](label));
       }
       // Layer-name rules must resolve the same way conversion does, so Import

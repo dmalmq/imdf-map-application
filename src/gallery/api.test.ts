@@ -101,13 +101,26 @@ describe("publishErrorMessage", () => {
 describe("gdb api", () => {
   it("publishGdb posts the plan and returns the job envelope", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
-      new Response(JSON.stringify({ jobId: "j1", versionId: 7, seq: 1 }), { status: 202 }),
+      new Response(
+        JSON.stringify({
+          jobId: "j1",
+          versionId: 7,
+          seq: 1,
+          excludedLayers: [{ layer: "Bad_Layer", reason: "empty or geometry-less layer" }],
+        }),
+        { status: 202 },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
     const result = await api.publishGdb(7, "a".repeat(64), {
       venueName: "V", buildings: [], layers: [],
     });
-    expect(result).toEqual({ jobId: "j1", versionId: 7, seq: 1 });
+    expect(result).toEqual({
+      jobId: "j1",
+      versionId: 7,
+      seq: 1,
+      excludedLayers: [{ layer: "Bad_Layer", reason: "empty or geometry-less layer" }],
+    });
     const [, init] = fetchMock.mock.calls[0]!;
     expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ venueId: 7, blobHash: "a".repeat(64) });
   });

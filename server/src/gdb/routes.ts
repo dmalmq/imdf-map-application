@@ -18,7 +18,7 @@ import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
 import { inspectGdbArchive, convertGdbLayers } from "./convert";
-import { buildGdbImdf, GdbConversionError, suggestGdbMapping } from "./mapping";
+import { GdbConversionError, resolveGdbImdfWithExclusions, suggestGdbMapping } from "./mapping";
 import { writeImdfZip } from "./imdfZip";
 import { GdbSourceError, validateGdbArchive } from "./sourceValidation";
 import { removeStagedGdb, stageGdbBlobForGdal } from "./staging";
@@ -30,6 +30,24 @@ import type {
 import { newPublicVersionId } from "../venues/uploadRoute";
 
 const TENANT_ID = 1;
+const INSPECT_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 
 const GdbLayerKeySchema = Type.Object({
   databaseId: Type.String(),
@@ -152,7 +170,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       const stagedPath = stageGdbBlobForGdal(request.server.blobs.path(hash), hash);
       let inspection: GdbInspection;
       try {
-        inspection = await inspectGdbArchive(stagedPath, rootName);
+        inspection = await withTimeout(
+          inspectGdbArchive(stagedPath, rootName),
+          INSPECT_TIMEOUT_MS,
+          "gdb inspect",
+        );
       } catch (error) {
         request.log.warn({ err: error }, "gdb inspect failed");
         return reply.code(400).send(
@@ -183,6 +205,9 @@ export function registerGdbRoutes(app: FastifyInstance): void {
             jobId: Type.String(),
             versionId: Type.Number(),
             seq: Type.Number(),
+            excludedLayers: Type.Array(
+              Type.Object({ layer: Type.String(), reason: Type.String() }),
+            ),
           }),
           400: ErrorSchema,
           404: Type.Object({ error: Type.String() }),
@@ -230,8 +255,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       }
 
       let archive;
+      let excludedLayers: Array<{ layer: string; reason: string }> = [];
       try {
-        archive = buildGdbImdf(conversion, plan);
+        const resolved = resolveGdbImdfWithExclusions(conversion, plan);
+        archive = resolved.archive;
+        excludedLayers = resolved.excludedLayers;
       } catch (error) {
         if (isGdbConversionError(error)) {
           return reply.code(400).send(
@@ -264,7 +292,7 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         .run(venueId, nextSeq, newPublicVersionId(), imdfHash);
       const versionId = Number(info.lastInsertRowid);
       const jobId = request.server.queue.enqueue("publish_imdf", { versionId });
-      return reply.code(202).send({ jobId, versionId, seq: nextSeq });
+      return reply.code(202).send({ jobId, versionId, seq: nextSeq, excludedLayers });
     },
   );
 }

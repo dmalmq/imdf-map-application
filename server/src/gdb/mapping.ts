@@ -360,6 +360,16 @@ function suggestLayerPlan(
     else if (layerToken) levelRule = { kind: "layer-name" };
   }
 
+  // Unstructured POIs without a level/floor source-reference stay opted out;
+  // the reviewer must choose include + level binding intentionally.
+  const structured = STRUCTURED_NAME.test(name);
+  if (included && targetType !== null && targetType !== "level" && !structured) {
+    const hasLevelRef = levelIdField !== null || floorIdField !== null;
+    if (!hasLevelRef) {
+      included = false;
+    }
+  }
+
   // Building assignment. Every row keeps its structured-prefix building,
   // including source-reference rows; a flat POI layer stays null and inherits
   // its building from the resolved level.
@@ -415,6 +425,17 @@ export function suggestGdbMapping(inspection: GdbInspection): GdbMappingPlan {
       .replace(/\.zip$/i, ""),
     buildings,
     layers,
+  };
+}
+
+/** Coerce wire-footgun empty strings so conversion treats them as unset. */
+export function normalizeGdbPlan(plan: GdbMappingPlan): GdbMappingPlan {
+  return {
+    ...plan,
+    layers: plan.layers.map((row) => ({
+      ...row,
+      buildingId: row.buildingId === "" ? null : row.buildingId,
+    })),
   };
 }
 
@@ -1392,4 +1413,51 @@ export function collectGdbConversionFailures(
     }
   }
   return failures;
+}
+
+export interface GdbImdfResolveResult {
+  archive: ParsedImdfArchive;
+  excludedLayers: GdbConversionFailure[];
+}
+
+/**
+ * Normalize plan, build IMDF, or auto-prune blamed layers via
+ * collectGdbConversionFailures. Throws GdbConversionError when nothing
+ * remains convertible or the failure is not layer-attributable.
+ */
+export function resolveGdbImdfWithExclusions(
+  conversion: GdbConversionResult,
+  plan: GdbMappingPlan,
+): GdbImdfResolveResult {
+  const normalized = normalizeGdbPlan(plan);
+  try {
+    return { archive: buildGdbImdf(conversion, normalized), excludedLayers: [] };
+  } catch (error) {
+    if (!(error instanceof GdbConversionError)) throw error;
+
+    const failures = collectGdbConversionFailures(conversion, normalized);
+    if (failures.length === 0) {
+      throw error;
+    }
+
+    const excludedNames = new Set(failures.map((f) => f.layer));
+    const working: GdbMappingPlan = {
+      ...normalized,
+      layers: normalized.layers.map((row) =>
+        excludedNames.has(row.key.layerName) ? { ...row, included: false } : row,
+      ),
+    };
+
+    const stillIncluded = working.layers.some((l) => l.included && l.targetType !== null);
+    if (!stillIncluded) {
+      throw new GdbConversionError(
+        "gdb_conversion_failed",
+        "no convertible layers after exclusions",
+        { excludedLayers: failures },
+      );
+    }
+
+    const archive = buildGdbImdf(conversion, working);
+    return { archive, excludedLayers: failures };
+  }
 }

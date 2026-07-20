@@ -3,10 +3,13 @@ import {
   buildGdbImdf,
   collectGdbConversionFailures,
   extractGdbFloorOrdinal,
+  GdbConversionError,
   gdbTargetTypesForGeometry,
   isGdbTargetGeometryCompatible,
   layerNameFloorOrdinal,
+  normalizeGdbPlan,
   normalizeGdbUuid,
+  resolveGdbImdfWithExclusions,
   structuredFloorOrdinal,
   suggestGdbMapping,
 } from "../src/gdb/mapping";
@@ -158,6 +161,30 @@ describe("suggestGdbMapping", () => {
     expect(row.targetType).toBe("detail");
     expect(row.included).toBe(false);
   });
+
+  it("does not auto-include unstructured amenity without level/floor id field", () => {
+    const inspection = inspect([
+      layer("Free_shuttle_bus_busstop_Facility", "point", 3, ["id", "name", "category"]),
+      layer("Station_1_Floor", "polygon", 2, ["id", "ordinal"]),
+    ]);
+    const plan = suggestGdbMapping(inspection);
+    const shuttle = plan.layers.find((l) => l.key.layerName === "Free_shuttle_bus_busstop_Facility")!;
+    expect(shuttle.targetType).toBe("amenity");
+    expect(shuttle.included).toBe(false);
+    expect(shuttle.buildingId).toBeNull();
+  });
+
+  it("may auto-include unstructured amenity when floor_id is present", () => {
+    const inspection = inspect([
+      layer("Free_shuttle_bus_busstop_Facility", "point", 3, ["id", "floor_id", "name"]),
+      layer("Station_1_Floor", "polygon", 2, ["id", "ordinal"]),
+    ]);
+    const plan = suggestGdbMapping(inspection);
+    const shuttle = plan.layers.find((l) => l.key.layerName === "Free_shuttle_bus_busstop_Facility")!;
+    expect(shuttle.levelRule).toEqual({ kind: "source-reference", field: "floor_id" });
+    expect(shuttle.included).toBe(true);
+    expect(shuttle.buildingId).toBeNull();
+  });
 });
 
 describe("buildGdbImdf", () => {
@@ -230,5 +257,90 @@ describe("buildGdbImdf", () => {
     );
     expect(failures.map((f) => f.layer)).toEqual(["Station_1_Space"]);
     expect(failures[0]?.reason).toBe("empty or geometry-less layer");
+  });
+});
+
+describe("normalizeGdbPlan", () => {
+  it("coerces empty-string buildingId to null and leaves real ids", () => {
+    const plan = {
+      venueName: "V",
+      buildings: [{ id: "building-1", name: "A" }],
+      layers: [
+        {
+          key: { databaseId: "gdb-1", layerName: "A_1_Floor" },
+          included: true,
+          targetType: "level" as const,
+          buildingId: "",
+          levelRule: { kind: "layer-name" as const },
+          idField: "id",
+          ordinalField: null,
+          shortNameField: null,
+          nameField: null,
+          categoryField: null,
+        },
+        {
+          key: { databaseId: "gdb-1", layerName: "A_1_Space" },
+          included: true,
+          targetType: "unit" as const,
+          buildingId: "building-1",
+          levelRule: { kind: "layer-name" as const },
+          idField: "id",
+          ordinalField: null,
+          shortNameField: null,
+          nameField: null,
+          categoryField: null,
+        },
+      ],
+    };
+    const out = normalizeGdbPlan(plan);
+    expect(out.layers[0]!.buildingId).toBeNull();
+    expect(out.layers[1]!.buildingId).toBe("building-1");
+    // Does not mutate input
+    expect(plan.layers[0]!.buildingId).toBe("");
+  });
+});
+
+describe("resolveGdbImdfWithExclusions", () => {
+  it("returns empty excludedLayers when the plan already converts", () => {
+    const ok = layer("Station_1_Floor", "polygon", 1, ["id"]);
+    const plan = suggestGdbMapping(inspect([ok]));
+    // ensure included
+    const resolved = resolveGdbImdfWithExclusions(
+      { layers: [convert([ok], "id1")], warnings: [] },
+      plan,
+    );
+    expect(resolved.excludedLayers).toEqual([]);
+    expect(resolved.archive.collections.level?.features.length).toBeGreaterThan(0);
+  });
+
+  it("prunes blamed layers and returns exclusions", () => {
+    const ok = layer("Station_1_Floor", "polygon", 1, ["id"]);
+    const bad = layer("Station_1_Space", "polygon", 1, ["id"]);
+    const plan = suggestGdbMapping(inspect([ok, bad]));
+    const convertedOk = convert([ok], "id1");
+    const emptyBad = {
+      key: bad.key,
+      featureCollection: { type: "FeatureCollection" as const, features: [] },
+      skippedGeometryCount: 0,
+    };
+    const resolved = resolveGdbImdfWithExclusions(
+      { layers: [convertedOk, emptyBad], warnings: [] },
+      plan,
+    );
+    expect(resolved.excludedLayers.map((f) => f.layer)).toEqual(["Station_1_Space"]);
+    expect(resolved.archive.collections.level?.features.length).toBeGreaterThan(0);
+  });
+
+  it("throws when every included layer is blamed", () => {
+    const bad = layer("Station_1_Floor", "polygon", 1, ["id"]);
+    const plan = suggestGdbMapping(inspect([bad]));
+    const emptyBad = {
+      key: bad.key,
+      featureCollection: { type: "FeatureCollection" as const, features: [] },
+      skippedGeometryCount: 0,
+    };
+    expect(() =>
+      resolveGdbImdfWithExclusions({ layers: [emptyBad], warnings: [] }, plan),
+    ).toThrow(GdbConversionError);
   });
 });

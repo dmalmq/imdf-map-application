@@ -220,16 +220,19 @@ export interface GdbImportDialogProps {
  * declared building with no included assignment.
  */
 function pruneUnusedBuildings(plan: GdbMappingPlan): GdbMappingPlan {
+  const layers = plan.layers.map((layer) => ({
+    ...layer,
+    buildingId: layer.buildingId === "" ? null : layer.buildingId,
+  }));
   const used = new Set(
-    plan.layers
+    layers
       .filter((layer) => layer.included && layer.buildingId !== null)
       .map((layer) => layer.buildingId as string),
   );
-  if (plan.buildings.every((building) => used.has(building.id))) return plan;
-  return {
-    ...plan,
-    buildings: plan.buildings.filter((building) => used.has(building.id)),
-  };
+  const buildings = plan.buildings.every((building) => used.has(building.id))
+    ? plan.buildings
+    : plan.buildings.filter((building) => used.has(building.id));
+  return { ...plan, layers, buildings };
 }
 
 export function GdbImportDialog({
