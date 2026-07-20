@@ -332,7 +332,7 @@ export function resolveGdbImdfWithExclusions(
 
   const stillIncluded = working.layers.some((l) => l.included && l.targetType !== null);
   if (!stillIncluded) {
-    throw new GdbConversionError("no convertible layers after exclusions", {
+    throw new GdbConversionError("gdb_conversion_failed", "no convertible layers after exclusions", {
       excludedLayers: failures,
     });
   }
