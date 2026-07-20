@@ -4,6 +4,7 @@ import type { VenueSummary } from "./api";
 const ui = {
   open: { ja: "開く", en: "Open" },
   delete: { ja: "削除", en: "Delete" },
+  importGdb: { ja: "GDB を取り込む", en: "Import GDB" },
   floors: { ja: "フロア", en: "floors" },
   features: { ja: "地物", en: "features" },
   processing: { ja: "処理中・未公開", en: "not published yet" },
@@ -14,9 +15,10 @@ export interface DatasetCardProps {
   locale: LocaleCode;
   onOpen: () => void;
   onDelete: () => void;
+  onImportGdb?: () => void;
 }
 
-export function DatasetCard({ venue, locale, onOpen, onDelete }: DatasetCardProps) {
+export function DatasetCard({ venue, locale, onOpen, onDelete, onImportGdb }: DatasetCardProps) {
   const stats = venue.latest?.stats ?? null;
   const date = (venue.latest?.createdAt ?? venue.createdAt).slice(0, 10);
   return (
@@ -38,6 +40,11 @@ export function DatasetCard({ venue, locale, onOpen, onDelete }: DatasetCardProp
         <button type="button" className="btn-ghost" onClick={onDelete} aria-label={`${ui.delete[locale]}: ${venue.name}`}>
           {ui.delete[locale]}
         </button>
+        {onImportGdb ? (
+          <button type="button" className="btn-ghost" onClick={onImportGdb}>
+            {ui.importGdb[locale]}
+          </button>
+        ) : null}
         <button type="button" className="btn-primary" onClick={onOpen}>
           {ui.open[locale]}
         </button>
