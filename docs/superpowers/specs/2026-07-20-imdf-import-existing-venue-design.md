@@ -1,7 +1,7 @@
 # Kiriko: IMDF Upload as New Version of Existing Venue
 
 **Date:** 2026-07-20  
-**Status:** Approved (design direction)  
+**Status:** Approved  
 **Depends on:** Gallery upload modal + `POST /api/venues/:id/versions`; mirrors GDB card version import (`2026-07-20-gdb-import-existing-venue-design.md`).
 
 ## 1. Context
