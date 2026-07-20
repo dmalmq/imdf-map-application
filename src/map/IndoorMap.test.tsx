@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoadedVenue, ViewerFeature } from "../imdf/types";
 import { kirikoTheme } from "../theme/presets";
-import { INDOOR_SOURCE_ID, ROUTE_SOURCE_ID } from "./featureLayers";
+import { FACILITY_SOURCE_ID, INDOOR_SOURCE_ID, ROUTE_SOURCE_ID } from "./featureLayers";
 import { defaultLayerVisibility } from "./layerGroups";
 import { IndoorMap, type IndoorMapProps } from "./IndoorMap";
 import type { MapIssuePin } from "./useIssuePins";
@@ -30,6 +30,7 @@ const mapState = vi.hoisted(() => {
     readonly jumpToCalls: Array<{ center: [number, number] }> = [];
     readonly sourceData: unknown[] = [];
     readonly routeSourceData: unknown[] = [];
+    readonly facilitySourceData: unknown[] = [];
     queryResult: Array<{ properties: Record<string, unknown> }> = [];
     styleLoaded = true;
     sourceLoaded = true;
@@ -95,9 +96,26 @@ const mapState = vi.hoisted(() => {
     getSource(id?: string): { type: string; setData: (data: unknown) => void } {
       return {
         type: "geojson",
-        setData: (data: unknown) =>
-          (id === ROUTE_SOURCE_ID ? this.routeSourceData : this.sourceData).push(data),
+        setData: (data: unknown) => {
+          const bucket =
+            id === ROUTE_SOURCE_ID
+              ? this.routeSourceData
+              : id === FACILITY_SOURCE_ID
+                ? this.facilitySourceData
+                : this.sourceData;
+          bucket.push(data);
+        },
       };
+    }
+
+    hasImage(): boolean {
+      return true;
+    }
+
+    addImage(): void {}
+
+    loadImage(): Promise<{ data: { width: number; height: number; data: Uint8Array } }> {
+      return Promise.resolve({ data: { width: 1, height: 1, data: new Uint8Array(4) } });
     }
 
     isSourceLoaded(): boolean {
@@ -668,5 +686,36 @@ describe("IndoorMap issue pins", () => {
       (b.getAttribute("aria-label") ?? "").startsWith("Issue #"),
     );
     expect(buttons.map((b) => b.textContent)).toEqual(["1"]);
+  });
+});
+
+describe("IndoorMap facilities", () => {
+  const facilities = [
+    { lon: 139.7, lat: 35.6, ordinal: 0, name: "Gate", icon: "ticket", anchor: { lon: 139.7, lat: 35.6, ordinal: 0 } },
+    { lon: 139.8, lat: 35.7, ordinal: 1, name: "Upstairs shop", icon: "", anchor: null },
+  ];
+
+  it("populates the facility source with only the active floor's markers", () => {
+    const { map, rerender } = renderMap(baseProps({ facilities }));
+    const first = map.facilitySourceData.at(-1) as GeoJSON.FeatureCollection;
+    expect(first.features).toHaveLength(1);
+    expect(first.features[0]?.properties?.["name"]).toBe("Gate");
+
+    rerender(baseProps({ facilities, levelId: "level-2" }));
+    const second = map.facilitySourceData.at(-1) as GeoJSON.FeatureCollection;
+    expect(second.features).toHaveLength(1);
+    expect(second.features[0]?.properties?.["name"]).toBe("Upstairs shop");
+  });
+
+  it("reports a tapped facility through onSelectFacility", () => {
+    const onSelectFacility = vi.fn();
+    const { map } = renderMap(baseProps({ facilities, onSelectFacility }));
+
+    map.queryResult = [{ properties: { kind: "facility", index: 0 } }];
+    act(() => {
+      map.emit("click", { point: { x: 2, y: 2 }, lngLat: { lng: 139.7, lat: 35.6 } });
+    });
+
+    expect(onSelectFacility).toHaveBeenCalledWith(facilities[0]);
   });
 });

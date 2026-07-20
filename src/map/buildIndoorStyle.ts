@@ -2,8 +2,10 @@ import type { StyleSpecification } from "maplibre-gl";
 import type { ViewerTheme } from "../theme/types";
 import {
   BACKGROUND_LAYER_ID,
+  buildFacilityLayers,
   buildFeatureLayers,
   buildRouteLayers,
+  FACILITY_SOURCE_ID,
   INDOOR_SOURCE_ID,
   ROUTE_SOURCE_ID,
 } from "./featureLayers";
@@ -33,6 +35,10 @@ export function buildIndoorStyle(theme: ViewerTheme): StyleSpecification {
         type: "geojson",
         data: EMPTY_COLLECTION,
       },
+      [FACILITY_SOURCE_ID]: {
+        type: "geojson",
+        data: EMPTY_COLLECTION,
+      },
     },
     layers: [
       {
@@ -43,6 +49,7 @@ export function buildIndoorStyle(theme: ViewerTheme): StyleSpecification {
         },
       },
       ...buildFeatureLayers(theme),
+      ...buildFacilityLayers(),
       ...buildRouteLayers(theme),
     ],
   };

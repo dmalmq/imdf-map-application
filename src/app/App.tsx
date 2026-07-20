@@ -21,7 +21,7 @@ import { ViewerErrorNotice } from "../components/ViewerNotice";
 import { WarningsPanel } from "../components/WarningsPanel";
 import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
 import { routeKirikoBundle } from "../bundle/routeKirikoBundle";
-import type { RouteEndpoint, RouteResultDto } from "../bundle/wasm";
+import type { FacilityDto, RouteEndpoint, RouteResultDto } from "../bundle/wasm";
 import { ZoomCluster } from "../components/ZoomCluster";
 import { SignInModal } from "../gallery/SignInModal";
 import { VenueLoadError } from "../errors/VenueLoadError";
@@ -77,6 +77,9 @@ const ui = {
   directionsNoPath: { ja: "経路が見つかりません", en: "No route found" },
   directionsFailed: { ja: "経路を計算できませんでした", en: "Could not compute the route" },
   directionsClear: { ja: "経路をクリア", en: "Clear route" },
+  facilityRouteHere: { ja: "ここへの経路", en: "Route here" },
+  facilityClose: { ja: "閉じる", en: "Close" },
+  facilityUnnamed: { ja: "施設", en: "Facility" },
 } as const;
 
 const COMPACT_MQ = "(max-width: 899px)";
@@ -165,6 +168,8 @@ type BundleProvenance = {
   publicVersionId: string | null;
   /** Whether the bundle carries a §5 network graph (Directions mode gate). */
   hasGraph: boolean;
+  /** Point facilities from §7; empty when absent. */
+  facilities: FacilityDto[];
 };
 
 type IssueMode =
@@ -191,6 +196,8 @@ interface DirectionsState {
   destination: RouteEndpoint | null;
   route: RouteResultDto | null;
   status: DirectionsStatus;
+  /** Destination pre-set by "Route here"; consumed on the next origin tap. */
+  pendingDestination: RouteEndpoint | null;
 }
 
 const INITIAL_DIRECTIONS: DirectionsState = {
@@ -199,6 +206,7 @@ const INITIAL_DIRECTIONS: DirectionsState = {
   destination: null,
   route: null,
   status: "idle",
+  pendingDestination: null,
 };
 
 export function App() {
@@ -318,10 +326,13 @@ export function App() {
   const directionsAvailable =
     !embed && venueState !== null && bundleProvenance?.hasGraph === true && params.dataset !== null;
 
+  const [selectedFacility, setSelectedFacility] = useState<FacilityDto | null>(null);
+
   // A new venue (or dropping back to no bundle) resets any in-flight picks.
   useEffect(() => {
     directionsTokenRef.current += 1;
     setDirections(INITIAL_DIRECTIONS);
+    setSelectedFacility(null);
   }, [bundleProvenance]);
 
   const fireRoute = useCallback(
@@ -358,6 +369,13 @@ export function App() {
       const ordinal =
         venue.loadedVenue.levels.find((level) => level.id === venue.selectedLevelId)?.ordinal ?? 0;
       const endpoint: RouteEndpoint = { ...point, ordinal };
+      if (directions.pendingDestination !== null && directions.origin === null) {
+        // "Route here" pre-set the destination; this first tap is the origin.
+        const dest = directions.pendingDestination;
+        setDirections((current) => ({ ...current, origin: endpoint, pendingDestination: null }));
+        fireRoute(endpoint, dest);
+        return;
+      }
       if (directions.origin === null || directions.destination !== null) {
         // First pick (or a re-pick after a completed route) starts over.
         directionsTokenRef.current += 1;
@@ -372,7 +390,7 @@ export function App() {
       }
       fireRoute(directions.origin, endpoint);
     },
-    [directions.origin, directions.destination, fireRoute, state],
+    [directions.origin, directions.destination, directions.pendingDestination, fireRoute, state],
   );
 
   const clearDirections = useCallback(() => {
@@ -383,6 +401,20 @@ export function App() {
   const toggleDirections = useCallback(() => {
     directionsTokenRef.current += 1;
     setDirections((current) => ({ ...INITIAL_DIRECTIONS, active: !current.active }));
+  }, []);
+
+  const routeToFacility = useCallback((facility: FacilityDto) => {
+    setSelectedFacility(null);
+    if (facility.anchor === null) {
+      return;
+    }
+    const dest: RouteEndpoint = {
+      longitude: facility.anchor.lon,
+      latitude: facility.anchor.lat,
+      ordinal: facility.anchor.ordinal,
+    };
+    directionsTokenRef.current += 1;
+    setDirections({ ...INITIAL_DIRECTIONS, active: true, pendingDestination: dest });
   }, []);
 
   const directionsMapProps = useMemo<DirectionsMapProps | null>(
@@ -772,6 +804,7 @@ export function App() {
               ...result.metadata,
               publicVersionId: result.publicVersionId,
               hasGraph: result.hasGraph,
+              facilities: result.facilities,
             },
           };
         },
@@ -964,7 +997,41 @@ export function App() {
             issueReview={issueReview}
             directions={directionsMapProps}
             onControls={onControls}
+            facilities={bundleProvenance?.facilities ?? []}
+            onSelectFacility={setSelectedFacility}
           />
+        ) : null}
+
+        {selectedFacility !== null ? (
+          <div className="facility-popup" role="dialog" aria-label={selectedFacility.name || ui.facilityUnnamed[locale]}>
+            <div className="facility-popup__body">
+              <p className="facility-popup__name">
+                {selectedFacility.name || ui.facilityUnnamed[locale]}
+              </p>
+              <div className="facility-popup__actions">
+                {directionsAvailable && selectedFacility.anchor !== null ? (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      routeToFacility(selectedFacility);
+                    }}
+                  >
+                    {ui.facilityRouteHere[locale]}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => {
+                    setSelectedFacility(null);
+                  }}
+                >
+                  {ui.facilityClose[locale]}
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {!embed ? (
