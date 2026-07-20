@@ -30,6 +30,24 @@ import type {
 import { newPublicVersionId } from "../venues/uploadRoute";
 
 const TENANT_ID = 1;
+const INSPECT_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 
 const GdbLayerKeySchema = Type.Object({
   databaseId: Type.String(),
@@ -152,7 +170,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       const stagedPath = stageGdbBlobForGdal(request.server.blobs.path(hash), hash);
       let inspection: GdbInspection;
       try {
-        inspection = await inspectGdbArchive(stagedPath, rootName);
+        inspection = await withTimeout(
+          inspectGdbArchive(stagedPath, rootName),
+          INSPECT_TIMEOUT_MS,
+          "gdb inspect",
+        );
       } catch (error) {
         request.log.warn({ err: error }, "gdb inspect failed");
         return reply.code(400).send(
