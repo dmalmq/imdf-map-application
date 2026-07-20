@@ -301,7 +301,7 @@ fn route_in_document(document: &BundleDocument, origin: Point3, dest: Point3) ->
 /// serialized with the same json-compatible `serde-wasm-bindgen` serializer
 /// as [`to_js`]. Bundle-format failures throw (unlike [`decode_bundle_js`],
 /// which reports them structurally).
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = "routeBundle")]
 pub fn route_bundle(
     bundle: &[u8],
     o_lon: f64,
