@@ -32,6 +32,14 @@ export function KirikoMark({ size = 20, ...rest }: IconProps): ReactElement {
   );
 }
 
+export function IconChevronLeft(props: IconProps): ReactElement {
+  return (
+    <svg {...base(props)}>
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
 export function IconSearch(props: IconProps): ReactElement {
   return (
     <svg {...base(props)}>

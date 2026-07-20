@@ -235,6 +235,23 @@ button {
   box-shadow: var(--shadow-floating);
 }
 
+.context-bar__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: calc(-1 * var(--space-2));
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  flex-shrink: 0;
+  transition: background 0.15s ease-out;
+}
+
+.context-bar__back:hover {
+  background: var(--color-chip-fill);
+}
+
 .context-bar__mark {
   color: var(--color-accent);
   flex-shrink: 0;
@@ -736,10 +753,16 @@ button {
   gap: var(--space-1);
   max-height: min(60vh, 420px);
   overflow-y: auto;
+  /* Scrollable on dense venues, but without a visible scrollbar. */
+  scrollbar-width: none;
   padding: var(--space-1);
   border-radius: var(--radius-lg);
   background: var(--color-panel);
   box-shadow: var(--shadow-floating);
+}
+
+.floor-stack::-webkit-scrollbar {
+  display: none;
 }
 
 .floor-stack__btn {

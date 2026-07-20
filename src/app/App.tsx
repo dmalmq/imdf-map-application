@@ -849,7 +849,11 @@ export function App() {
 
         {!embed ? (
           <>
-            <ContextBar venueName={venueName ?? ui.product[locale]} levelName={levelName} />
+            <ContextBar
+              venueName={venueName ?? ui.product[locale]}
+              levelName={levelName}
+              locale={locale}
+            />
 
             <div className="top-actions">
               <button type="button" className="btn-ghost top-actions__open" onClick={openPicker}>
