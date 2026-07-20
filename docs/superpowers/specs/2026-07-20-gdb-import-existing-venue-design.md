@@ -1,7 +1,7 @@
 # Kiriko: GDB Import as New Version of Existing Venue
 
 **Date:** 2026-07-20  
-**Status:** Draft for review  
+**Status:** Approved  
 **Depends on:** Frontend GDB import (`2026-07-20-gdb-import-frontend-design.md`) and harden/auto-prune (`2026-07-20-gdb-harden-design.md`). Server `POST /api/gdb/publish` already accepts `venueId`.
 
 ## 1. Context
