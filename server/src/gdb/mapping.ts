@@ -360,6 +360,16 @@ function suggestLayerPlan(
     else if (layerToken) levelRule = { kind: "layer-name" };
   }
 
+  // Unstructured POIs without a level/floor source-reference stay opted out;
+  // the reviewer must choose include + level binding intentionally.
+  const structured = STRUCTURED_NAME.test(name);
+  if (included && targetType !== null && targetType !== "level" && !structured) {
+    const hasLevelRef = levelIdField !== null || floorIdField !== null;
+    if (!hasLevelRef) {
+      included = false;
+    }
+  }
+
   // Building assignment. Every row keeps its structured-prefix building,
   // including source-reference rows; a flat POI layer stays null and inherits
   // its building from the resolved level.

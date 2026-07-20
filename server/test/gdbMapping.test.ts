@@ -159,6 +159,30 @@ describe("suggestGdbMapping", () => {
     expect(row.targetType).toBe("detail");
     expect(row.included).toBe(false);
   });
+
+  it("does not auto-include unstructured amenity without level/floor id field", () => {
+    const inspection = inspect([
+      layer("Free_shuttle_bus_busstop_Facility", "point", 3, ["id", "name", "category"]),
+      layer("Station_1_Floor", "polygon", 2, ["id", "ordinal"]),
+    ]);
+    const plan = suggestGdbMapping(inspection);
+    const shuttle = plan.layers.find((l) => l.key.layerName === "Free_shuttle_bus_busstop_Facility")!;
+    expect(shuttle.targetType).toBe("amenity");
+    expect(shuttle.included).toBe(false);
+    expect(shuttle.buildingId).toBeNull();
+  });
+
+  it("may auto-include unstructured amenity when floor_id is present", () => {
+    const inspection = inspect([
+      layer("Free_shuttle_bus_busstop_Facility", "point", 3, ["id", "floor_id", "name"]),
+      layer("Station_1_Floor", "polygon", 2, ["id", "ordinal"]),
+    ]);
+    const plan = suggestGdbMapping(inspection);
+    const shuttle = plan.layers.find((l) => l.key.layerName === "Free_shuttle_bus_busstop_Facility")!;
+    expect(shuttle.levelRule).toEqual({ kind: "source-reference", field: "floor_id" });
+    expect(shuttle.included).toBe(true);
+    expect(shuttle.buildingId).toBeNull();
+  });
 });
 
 describe("buildGdbImdf", () => {
