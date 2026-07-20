@@ -4,6 +4,7 @@ import type {
   FillLayerSpecification,
   FilterSpecification,
   LineLayerSpecification,
+  SymbolLayerSpecification,
 } from "maplibre-gl";
 import type { ViewerTheme } from "../theme/types";
 
@@ -47,6 +48,10 @@ export const LAYER_ISSUE_HIGHLIGHT_POINT = "indoor-issue-highlight-point";
 export const ROUTE_SOURCE_ID = "indoor-route";
 export const LAYER_ROUTE = "indoor-route-line";
 export const LAYER_ROUTE_ENDPOINT = "indoor-route-endpoint";
+
+/** Separate GeoJSON source for the point-facility symbol overlay (§7). */
+export const FACILITY_SOURCE_ID = "indoor-facilities";
+export const LAYER_FACILITY_SYMBOL = "indoor-facility-symbol";
 
 /** Layers that participate in click / hover hit-testing. */
 export const CLICKABLE_LAYER_IDS: readonly string[] = [
@@ -100,7 +105,8 @@ const restroomPrefix: ExpressionSpecification = [
 type AnyLayer =
   | FillLayerSpecification
   | LineLayerSpecification
-  | CircleLayerSpecification;
+  | CircleLayerSpecification
+  | SymbolLayerSpecification;
 
 /**
  * Fixed layer order (plan §3):
@@ -574,6 +580,31 @@ export function buildRouteLayers(theme: ViewerTheme): AnyLayer[] {
         "circle-color": c.accent,
         "circle-stroke-width": 2,
         "circle-stroke-color": c.panel,
+      },
+    },
+  ];
+}
+
+/**
+ * Point-facility symbol overlay, sourced from `FACILITY_SOURCE_ID`. Icon-only
+ * (the neutral style ships no glyphs, so the name surfaces in the tap popup,
+ * not on the map). Each feature's `icon` property is a pre-resolved image id
+ * (a staged marker basename or the pin fallback); `icon-allow-overlap` is
+ * left false so MapLibre declutters the dense 2k-plus symbol set by zoom.
+ */
+export function buildFacilityLayers(): AnyLayer[] {
+  return [
+    {
+      id: LAYER_FACILITY_SYMBOL,
+      type: "symbol",
+      source: FACILITY_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "facility"],
+      layout: {
+        "icon-image": ["get", "icon"],
+        "icon-size": 0.5,
+        "icon-anchor": "bottom",
+        "icon-allow-overlap": false,
+        "icon-optional": true,
       },
     },
   ];

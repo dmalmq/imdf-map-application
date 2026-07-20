@@ -1966,6 +1966,34 @@ button {
   border-color: var(--color-error);
 }
 
+.facility-popup {
+  position: fixed;
+  bottom: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-overlay);
+  max-width: min(90vw, 360px);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-floating);
+}
+
+.facility-popup__name {
+  margin: 0 0 var(--space-2);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.facility-popup__actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
 /* ── Modals (gallery) ──────────────────────────────────── */
 
 .modal-overlay {

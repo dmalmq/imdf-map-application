@@ -144,6 +144,31 @@ export interface NetworkInspectResponse {
   floors: string[];
 }
 
+/**
+ * Output of extracting the `point_facility_network` layer from a staged
+ * facilities `.gdb.zip`: the layer as WGS84 RFC7946 GeoJSON FeatureCollection
+ * text (fed verbatim into `compileImdf`), plus the summary shown in the
+ * import review dialog.
+ */
+export interface FacilitiesExtraction {
+  geojson: string;
+  facilityCount: number;
+  /** Distinct `FLOOR` property values, sorted. */
+  floors: string[];
+}
+
+/**
+ * Response envelope for `POST /api/gdb/inspect-facilities`.
+ * `facilitiesBlobHash` references the staged raw facilities `.gdb.zip` in
+ * the blob store; the subsequent publish request may echo it back as
+ * `facilitiesBlobHash`.
+ */
+export interface FacilitiesInspectResponse {
+  facilitiesBlobHash: string;
+  facilityCount: number;
+  floors: string[];
+}
+
 /** Payload for `POST /api/gdb/publish`. */
 export interface GdbPublishRequest {
   venueId: number;
@@ -156,4 +181,11 @@ export interface GdbPublishRequest {
    * embeds the routing graph as bundle section 5.
    */
   networkBlobHash?: string;
+  /**
+   * Optional blob hash of a staged facilities `.gdb.zip` (from
+   * `POST /api/gdb/inspect-facilities`). When present, its
+   * `point_facility_network` layer is extracted and passed to the compile
+   * step, which embeds the facility point index as bundle section 7.
+   */
+  facilitiesBlobHash?: string;
 }

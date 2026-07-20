@@ -7,6 +7,7 @@ const me = vi.fn();
 const listVenues = vi.fn();
 const inspectGdb = vi.fn();
 const inspectGdbNetwork = vi.fn();
+const inspectGdbFacilities = vi.fn();
 const createVenue = vi.fn();
 const publishGdb = vi.fn();
 const waitForJob = vi.fn();
@@ -21,6 +22,7 @@ vi.mock("./api", async (importOriginal) => {
       listVenues: () => listVenues(),
       inspectGdb: (...args: unknown[]) => inspectGdb(...args),
       inspectGdbNetwork: (...args: unknown[]) => inspectGdbNetwork(...args),
+      inspectGdbFacilities: (...args: unknown[]) => inspectGdbFacilities(...args),
       createVenue: (...args: unknown[]) => createVenue(...args),
       publishGdb: (...args: unknown[]) => publishGdb(...args),
       waitForJob: (...args: unknown[]) => waitForJob(...args),
@@ -161,7 +163,7 @@ describe("GalleryPage", () => {
 
     await waitFor(() => expect(publishGdb).toHaveBeenCalledTimes(1));
     expect(createVenue).toHaveBeenCalledWith("Station");
-    expect(publishGdb).toHaveBeenCalledWith(9, "a".repeat(64), expect.objectContaining({ venueName: "Station" }), null);
+    expect(publishGdb).toHaveBeenCalledWith(9, "a".repeat(64), expect.objectContaining({ venueName: "Station" }), null, null);
     await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toMatch(/skipped|スキップ/),
@@ -224,6 +226,7 @@ describe("GalleryPage", () => {
       "b".repeat(64),
       expect.objectContaining({ venueName: "Existing Station" }),
       null,
+      null,
     );
     expect(deleteVenue).not.toHaveBeenCalled();
     await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
@@ -268,8 +271,50 @@ describe("GalleryPage", () => {
       "a".repeat(64),
       expect.objectContaining({ venueName: "Station" }),
       "n".repeat(64),
+      null,
     );
     await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
+  });
+
+  it("attaches optional point facilities before publishing", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([]);
+    inspectGdb.mockResolvedValue({ blobHash: "a".repeat(64), inspection: gdbInspection, suggestedPlan: gdbPlan });
+    inspectGdbFacilities.mockResolvedValue({
+      facilitiesBlobHash: "f".repeat(64),
+      facilityCount: 2426,
+      floors: ["B1", "F1"],
+    });
+    createVenue.mockResolvedValue({ id: 9, slug: "station", name: "Station", createdAt: "" });
+    publishGdb.mockResolvedValue({ jobId: "j", versionId: 1, seq: 1, excludedLayers: [] });
+    waitForJob.mockResolvedValue({ status: "done" });
+
+    const user = userEvent.setup();
+    const { container } = render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("データセットがありません")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File([new Uint8Array([1, 2, 3])], "Station.gdb.zip", { type: "application/zip" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import" })).toBeTruthy());
+    expect(screen.queryByText(/facilities: \d+ places/i)).toBeNull();
+
+    const facInput = screen.getByLabelText(/add point facilities/i);
+    await user.upload(facInput, new File([new Uint8Array([6, 7])], "fac.gdb.zip", { type: "application/zip" }));
+    await waitFor(() =>
+      expect(screen.getByText("Facilities: 2426 places, 2 floors")).toBeTruthy(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(publishGdb).toHaveBeenCalledTimes(1));
+    expect(inspectGdbFacilities).toHaveBeenCalledTimes(1);
+    expect(publishGdb).toHaveBeenCalledWith(
+      9,
+      "a".repeat(64),
+      expect.objectContaining({ venueName: "Station" }),
+      null,
+      "f".repeat(64),
+    );
   });
 
   it("does not delete an existing venue when version publish fails", async () => {

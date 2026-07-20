@@ -7,7 +7,11 @@
  *
  * Phase Two Task 4: WASM decode adapter (browser side).
  */
-import init, { decodeBundle as decodeBundleWasm, routeBundle as routeBundleWasm } from "@kiriko/wasm";
+import init, {
+  decodeBundle as decodeBundleWasm,
+  routeBundle as routeBundleWasm,
+  facilities as facilitiesWasm,
+} from "@kiriko/wasm";
 // Vite emits a hashed, origin-relative asset path (e.g.
 // `/assets/kiriko_wasm_bg-[hash].wasm`) for this `?url` import. Resolving
 // it explicitly here — instead of letting `@kiriko/wasm`'s generated glue
@@ -78,6 +82,25 @@ export interface DecodeResponseDto {
   error: { code: BundleErrorCode; message: string } | null;
   /** Whether the decoded bundle carries a §5 network graph (routing UI gate). */
   hasGraph: boolean;
+  /** Whether the decoded bundle carries a §7 facilities section (marker UI gate). */
+  hasFacilities: boolean;
+}
+
+/** A facility's routing anchor: the network node it snaps to, when linked. */
+export interface FacilityAnchorDto {
+  lon: number;
+  lat: number;
+  ordinal: number;
+}
+
+/** One point facility as serialized by the wasm `facilities` binding. */
+export interface FacilityDto {
+  lon: number;
+  lat: number;
+  ordinal: number;
+  name: string;
+  icon: string;
+  anchor: FacilityAnchorDto | null;
 }
 
 /** One routed node as serialized by the wasm `routeBundle` binding. */
@@ -181,4 +204,13 @@ export function routeBundle(
     destination.latitude,
     destination.ordinal,
   ) as RouteResultDto | null;
+}
+
+/**
+ * Reads the point facilities embedded in a `kvb1` bundle's §7 section. Must
+ * only be called after `initKirikoWasm` has resolved. Returns an empty array
+ * when the bundle carries no facilities section.
+ */
+export function facilities(bytes: Uint8Array): FacilityDto[] {
+  return facilitiesWasm(bytes) as FacilityDto[];
 }

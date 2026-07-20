@@ -99,7 +99,8 @@ struct DecodeErrorDto {
 
 /// Structured success/failure result of [`decode_bundle_js`]. `has_graph`
 /// reports whether the decoded bundle carries a §5 network graph, so the
-/// viewer can gate routing UI without attempting a route query.
+/// viewer can gate routing UI without attempting a route query; likewise
+/// `has_facilities` reports a §7 point-facilities section.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DecodeResponseDto {
@@ -107,6 +108,7 @@ struct DecodeResponseDto {
     venue: Option<DecodedVenueDto>,
     error: Option<DecodeErrorDto>,
     has_graph: bool,
+    has_facilities: bool,
 }
 
 fn canonical_to_json(value: &CanonicalValue) -> JsonValue {
@@ -225,6 +227,7 @@ fn to_js(response: &DecodeResponseDto) -> JsValue {
                 message: format!("failed to serialize decoded venue: {e}"),
             }),
             has_graph: false,
+            has_facilities: false,
         };
         fallback
             .serialize(&serializer)
@@ -242,11 +245,13 @@ pub fn decode_bundle_js(bytes: &[u8]) -> JsValue {
     let response = match decode_bundle(bytes) {
         Ok(document) => {
             let has_graph = document.graph.is_some();
+            let has_facilities = document.facilities.is_some();
             DecodeResponseDto {
                 ok: true,
                 venue: Some(document_dto(document)),
                 error: None,
                 has_graph,
+                has_facilities,
             }
         }
         Err(err) => DecodeResponseDto {
@@ -254,6 +259,7 @@ pub fn decode_bundle_js(bytes: &[u8]) -> JsValue {
             venue: None,
             error: Some(error_dto(&err)),
             has_graph: false,
+            has_facilities: false,
         },
     };
     to_js(&response)
@@ -339,6 +345,71 @@ pub fn route_bundle(
         .map_err(|e| JsError::new(&e.to_string()))
 }
 
+// -- Facilities query (point-facility-poi Task 5) ---------------------------
+
+/// Route-graph anchor of a facility, `{lon, lat, ordinal}`; serialized as
+/// `null` when the facility has no anchor.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FacilityAnchorDto {
+    lon: f64,
+    lat: f64,
+    ordinal: f64,
+}
+
+/// A point facility: `{lon, lat, ordinal, name, icon, anchor}`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FacilityDto {
+    lon: f64,
+    lat: f64,
+    ordinal: f64,
+    name: String,
+    icon: String,
+    anchor: Option<FacilityAnchorDto>,
+}
+
+impl From<&kiriko_facilities::Facility> for FacilityDto {
+    fn from(facility: &kiriko_facilities::Facility) -> Self {
+        FacilityDto {
+            lon: facility.lon,
+            lat: facility.lat,
+            ordinal: facility.ordinal,
+            name: facility.name.clone(),
+            icon: facility.icon.clone(),
+            anchor: facility.anchor.map(|a| FacilityAnchorDto {
+                lon: a.lon,
+                lat: a.lat,
+                ordinal: a.ordinal,
+            }),
+        }
+    }
+}
+
+/// Non-wasm core of [`facilities_js`]: the document's embedded facilities
+/// section as DTOs. Empty when the bundle carries no §7 facilities section.
+fn facilities_in_document(document: &BundleDocument) -> Vec<FacilityDto> {
+    document
+        .facilities
+        .as_ref()
+        .map(|f| f.items.iter().map(FacilityDto::from).collect())
+        .unwrap_or_default()
+}
+
+/// List a `kvb1` bundle's embedded point facilities. Returns `[]` when the
+/// bundle carries no facilities section; otherwise
+/// `[{lon, lat, ordinal, name, icon, anchor}]` with `anchor`
+/// `{lon, lat, ordinal}` or `null`, serialized with the same json-compatible
+/// `serde-wasm-bindgen` serializer as [`to_js`]. Bundle-format failures
+/// throw (unlike [`decode_bundle_js`], which reports them structurally).
+#[wasm_bindgen(js_name = "facilities")]
+pub fn facilities_js(bundle: &[u8]) -> Result<JsValue, JsError> {
+    let document = decode_bundle(bundle).map_err(|e| JsError::new(&e.message))?;
+    facilities_in_document(&document)
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -404,8 +475,29 @@ mod tests {
             metadata(),
             Some(NETWORK_JUNCTIONS),
             Some(NETWORK_PATHS),
+            None,
         )
         .expect("fixture + network compiles")
+        .bytes
+    }
+
+    // Task 2 (kiriko-facilities) GeoJSON, mirrored from kiriko-bundle's
+    // facilities-embedding test: Store A anchored to NODEID 1 (icon derived
+    // from `image`), Store B with `nodeid1: -1` (silently unanchored).
+    const FACILITIES: &str = r#"{"type":"FeatureCollection","features":[
+      {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png","nodeid1":1},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+      {"type":"Feature","properties":{"name":"Store B","floor":"F2","image":"","nodeid1":-1},"geometry":{"type":"Point","coordinates":[139.001,35.0]}}]}"#;
+
+    fn compile_with_facilities() -> Vec<u8> {
+        let source = build_minimal_imdf_zip();
+        compile_imdf_with_network(
+            &source,
+            metadata(),
+            Some(NETWORK_JUNCTIONS),
+            Some(NETWORK_PATHS),
+            Some(FACILITIES),
+        )
+        .expect("fixture + network + facilities compiles")
         .bytes
     }
 
@@ -429,6 +521,47 @@ mod tests {
         .expect("node 1 to node 2 must route");
         assert_eq!(route.nodes.len(), 2);
         assert_eq!(route.total_weight, 100.0);
+    }
+
+    #[test]
+    fn facilities_returns_items_for_bundle_with_facilities() {
+        let bundle = compile_with_facilities();
+        let document = decode_bundle(&bundle).expect("bundle decodes");
+        assert!(document.facilities.is_some(), "hasFacilities must be true");
+
+        let items = facilities_in_document(&document);
+        assert_eq!(items.len(), 2);
+
+        // Sorted by (ordinal, lon, lat, name): Store A (F1) before Store B (F2).
+        let store_a = &items[0];
+        assert_eq!(store_a.name, "Store A");
+        assert_eq!(store_a.icon, "ticket");
+        assert_eq!(store_a.lon, 139.0);
+        assert_eq!(store_a.lat, 35.0);
+        assert_eq!(store_a.ordinal, 0.0);
+        let anchor = store_a
+            .anchor
+            .as_ref()
+            .expect("nodeid1 1 must resolve to graph node NODEID 1");
+        assert_eq!(anchor.lon, 139.0);
+        assert_eq!(anchor.lat, 35.0);
+        assert_eq!(anchor.ordinal, 0.0);
+
+        let store_b = &items[1];
+        assert_eq!(store_b.name, "Store B");
+        assert_eq!(store_b.ordinal, 1.0);
+        assert!(store_b.anchor.is_none(), "nodeid1 -1 stays unanchored");
+    }
+
+    #[test]
+    fn facilities_empty_for_bundle_without_section() {
+        let bundle = compile_with_graph();
+        let document = decode_bundle(&bundle).expect("bundle decodes");
+        assert!(document.facilities.is_none(), "hasFacilities must be false");
+        assert!(
+            facilities_in_document(&document).is_empty(),
+            "a bundle with no facilities section must yield an empty list"
+        );
     }
 
     #[test]

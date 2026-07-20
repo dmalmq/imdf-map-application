@@ -3,7 +3,7 @@
 import { venueLoadErrorCopy } from "../errors/VenueLoadError";
 import { BUNDLE_WORKER_FAILED_MESSAGE } from "./types";
 import type { BundleDecodeRequest, BundleRouteRequest, BundleWorkerResponse } from "./types";
-import { decodeBundle, initKirikoWasm, routeBundle } from "./wasm";
+import { decodeBundle, facilities, initKirikoWasm, routeBundle } from "./wasm";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -22,9 +22,16 @@ export async function decodeBundleMessage(
 ): Promise<BundleWorkerResponse> {
   try {
     await initKirikoWasm();
-    const response = decodeBundle(new Uint8Array(request.buffer));
+    const bytes = new Uint8Array(request.buffer);
+    const response = decodeBundle(bytes);
     if (response.ok && response.venue !== null) {
-      return { type: "loaded", venue: response.venue, hasGraph: response.hasGraph };
+      return {
+        type: "loaded",
+        venue: response.venue,
+        hasGraph: response.hasGraph === true,
+        hasFacilities: response.hasFacilities === true,
+        facilities: response.hasFacilities === true ? facilities(bytes) : [],
+      };
     }
     const code = response.error?.code ?? "invalid_bundle";
     return { type: "failed", error: { code, message: venueLoadErrorCopy[code] } };

@@ -22,7 +22,11 @@ export const GDB_MAX_GENERATED_BYTES = 1_000 * MIB;
 
 export class GdbSourceError extends Error {
   constructor(
-    readonly code: "invalid_geodatabase" | "gdb_too_large" | "missing_network_layers",
+    readonly code:
+      | "invalid_geodatabase"
+      | "gdb_too_large"
+      | "missing_network_layers"
+      | "missing_facility_layer",
     message: string,
     readonly details?: Record<string, unknown>,
   ) {

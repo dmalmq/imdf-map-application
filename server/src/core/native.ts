@@ -12,7 +12,8 @@ export type ViewerWarningCode =
   | "missing_level_geometry"
   | "missing_display_point"
   | "unknown_archive_entry"
-  | "route_build";
+  | "route_build"
+  | "facility_build";
 
 export interface ViewerWarning {
   code: ViewerWarningCode;
@@ -32,6 +33,12 @@ export interface CompileVenueMetadata {
    */
   networkJunctionsGeoJson?: string;
   networkPathsGeoJson?: string;
+  /**
+   * WGS84 GeoJSON for the optional `point_facility_network` layer. When
+   * present the compiled bundle carries the facility point index as section
+   * 7; when absent facility compilation is unchanged.
+   */
+  facilitiesGeoJson?: string;
 }
 
 /**
@@ -60,6 +67,7 @@ export type NativeCompileFn = (
   version: number,
   networkJunctionsGeoJson?: string,
   networkPathsGeoJson?: string,
+  facilitiesGeoJson?: string,
 ) => Promise<unknown>;
 
 const WARNING_CODES: Record<ViewerWarningCode, true> = {
@@ -69,6 +77,7 @@ const WARNING_CODES: Record<ViewerWarningCode, true> = {
   missing_display_point: true,
   unknown_archive_entry: true,
   route_build: true,
+  facility_build: true,
 };
 
 const U32_MAX = 0xffff_ffff;
@@ -239,6 +248,7 @@ export async function compileVenueBundle(
         metadata.version,
         metadata.networkJunctionsGeoJson,
         metadata.networkPathsGeoJson,
+        metadata.facilitiesGeoJson,
       ),
     );
     if (response.ok) {

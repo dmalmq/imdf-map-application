@@ -64,6 +64,7 @@ fn compile_with_network_embeds_graph_section() {
         metadata(),
         Some(NETWORK_JUNCTIONS),
         Some(NETWORK_PATHS),
+        None,
     )
     .expect("fixture + network compiles");
     let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
@@ -96,10 +97,127 @@ fn compile_with_malformed_network_is_a_route_error() {
         metadata(),
         Some("not geojson"),
         Some(NETWORK_PATHS),
+        None,
     )
     .expect_err("malformed network GeoJSON must fail the compile");
     assert_eq!(err.code_str(), "route_build_failed");
     assert!(matches!(err, CompileError::Route(_)));
+}
+
+// -- Facilities embedding (point-facility-poi Task 4) ----------------------
+
+// One facility anchored to NODEID 1 (icon derived from `image`), one with
+// `nodeid1: -1` (silently unanchored), and one on an unmappable floor that
+// must be dropped with a `facility_build` warning.
+const FACILITIES: &str = r#"{"type":"FeatureCollection","features":[
+  {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png","nodeid1":1},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+  {"type":"Feature","properties":{"name":"Store B","floor":"F2","image":"","nodeid1":-1},"geometry":{"type":"Point","coordinates":[139.001,35.0]}},
+  {"type":"Feature","properties":{"name":"Bad","floor":"garbage","image":"","nodeid1":1},"geometry":{"type":"Point","coordinates":[139.0,35.0]}}]}"#;
+
+#[test]
+fn compile_with_facilities_embeds_facilities_section() {
+    let source = support::build_minimal_imdf_zip();
+    let compiled = compile_imdf_with_network(
+        &source,
+        metadata(),
+        Some(NETWORK_JUNCTIONS),
+        Some(NETWORK_PATHS),
+        Some(FACILITIES),
+    )
+    .expect("fixture + network + facilities compiles");
+    let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+
+    let facilities = document
+        .facilities
+        .expect("facilities GeoJSON must embed a facilities section");
+    assert_eq!(facilities.items.len(), 2, "the bad-floor facility drops");
+    let store_a = facilities
+        .items
+        .iter()
+        .find(|f| f.name == "Store A")
+        .expect("Store A must be present");
+    assert_eq!(store_a.icon, "ticket");
+    assert_eq!(
+        store_a.anchor,
+        Some(kiriko_facilities::FacilityAnchor {
+            lon: 139.0,
+            lat: 35.0,
+            ordinal: 0.0,
+        }),
+        "nodeid1 1 must resolve to graph node NODEID 1"
+    );
+    let store_b = facilities
+        .items
+        .iter()
+        .find(|f| f.name == "Store B")
+        .expect("Store B must be present");
+    assert_eq!(store_b.anchor, None, "nodeid1 -1 stays unanchored");
+    assert!(
+        compiled
+            .warnings
+            .iter()
+            .any(|w| w.code.as_str() == "facility_build" && w.message.contains("unmapped_floor")),
+        "facility build warnings must fold into the compile warning channel"
+    );
+}
+
+#[test]
+fn compile_without_facilities_has_no_facilities_section() {
+    let source = support::build_minimal_imdf_zip();
+    let compiled = compile_imdf_with_network(
+        &source,
+        metadata(),
+        Some(NETWORK_JUNCTIONS),
+        Some(NETWORK_PATHS),
+        None,
+    )
+    .expect("fixture + network compiles");
+    let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+    assert!(document.facilities.is_none());
+    assert!(
+        !compiled
+            .warnings
+            .iter()
+            .any(|w| w.code.as_str() == "facility_build"),
+        "no facilities input must produce no facility warnings"
+    );
+}
+
+#[test]
+fn compile_with_facilities_but_no_network_warns_once_and_leaves_anchors_unset() {
+    let source = support::build_minimal_imdf_zip();
+    let compiled = compile_imdf_with_network(&source, metadata(), None, None, Some(FACILITIES))
+        .expect("fixture + facilities compiles without a network");
+    let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+
+    let facilities = document
+        .facilities
+        .expect("facilities must embed even without a graph");
+    let store_a = facilities
+        .items
+        .iter()
+        .find(|f| f.name == "Store A")
+        .expect("Store A must be present");
+    assert_eq!(store_a.anchor, None, "no graph means no resolved anchor");
+    let no_graph_warnings: Vec<_> = compiled
+        .warnings
+        .iter()
+        .filter(|w| w.code.as_str() == "facility_build" && w.message.contains("no route graph"))
+        .collect();
+    assert_eq!(
+        no_graph_warnings.len(),
+        1,
+        "the missing-graph warning fires exactly once"
+    );
+}
+
+#[test]
+fn compile_with_malformed_facilities_is_a_facility_error() {
+    let source = support::build_minimal_imdf_zip();
+    let err = compile_imdf_with_network(&source, metadata(), None, None, Some("not geojson"))
+        .expect_err("malformed facilities GeoJSON must fail the compile");
+    assert_eq!(err.code_str(), "facility_build_failed");
+    assert!(matches!(err, CompileError::Facility(_)));
 }
 
 // -- Step 1: format byte-layout tests -------------------------------------
@@ -423,6 +541,7 @@ fn minimal_document(features: Vec<kiriko_model::model::VenueFeature>) -> BundleD
             features: 0,
         },
         graph: None,
+        facilities: None,
     }
 }
 

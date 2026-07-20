@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { GdbImportDialog } from "./GdbImportDialog";
-import type { GdbInspection, GdbMappingPlan, NetworkInspectResponse } from "../gdb/types";
+import type { GdbInspection, GdbMappingPlan, NetworkInspectResponse, FacilitiesInspectResponse } from "../gdb/types";
 
 const inspection: GdbInspection = {
   sourceName: "Station.gdb",
@@ -25,6 +25,12 @@ const network: NetworkInspectResponse = {
   nodeCount: 120,
   edgeCount: 340,
   floors: ["1F", "2F"],
+};
+
+const facilities: FacilitiesInspectResponse = {
+  facilitiesBlobHash: "f".repeat(64),
+  facilityCount: 2426,
+  floors: ["B1", "F1", "F2"],
 };
 
 describe("GdbImportDialog", () => {
@@ -63,6 +69,29 @@ describe("GdbImportDialog", () => {
     const input = screen.getByLabelText(/add routing network/i);
     fireEvent.change(input, { target: { files: [new File([new Uint8Array([1])], "net.gdb.zip")] } });
     expect(onAddNetwork).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the facilities summary when facilities are attached", () => {
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="en" busy={false} error={null} facilities={facilities} onImport={vi.fn()} onCancel={() => {}} />);
+    expect(screen.getByText("Facilities: 2426 places, 3 floors")).toBeTruthy();
+  });
+
+  it("localizes the facilities summary", () => {
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="ja" busy={false} error={null} facilities={facilities} onImport={vi.fn()} onCancel={() => {}} />);
+    expect(screen.getByText(/施設: 2426/)).toBeTruthy();
+  });
+
+  it("renders no facilities summary without facilities", () => {
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="en" busy={false} error={null} onImport={vi.fn()} onCancel={() => {}} />);
+    expect(screen.queryByText(/facilities:/i)).toBeNull();
+  });
+
+  it("notifies when a facilities file is chosen", () => {
+    const onAddFacilities = vi.fn();
+    render(<GdbImportDialog inspection={inspection} initialPlan={plan} locale="en" busy={false} error={null} onAddFacilities={onAddFacilities} onImport={vi.fn()} onCancel={() => {}} />);
+    const input = screen.getByLabelText(/add point facilities/i);
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array([1])], "fac.gdb.zip")] } });
+    expect(onAddFacilities).toHaveBeenCalledTimes(1);
   });
 
   it("locks the venue name field when venueNameLocked is true", () => {

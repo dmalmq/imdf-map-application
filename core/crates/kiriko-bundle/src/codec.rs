@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write;
 
+use kiriko_facilities::Facilities;
 use kiriko_model::import_imdf;
 use kiriko_model::model::{
     Bounds, FeatureType, ImdfManifest, VenueFeature, ViewerLevel, ViewerWarning, WarningCode,
@@ -49,6 +50,9 @@ pub struct BundleDocument {
     /// Optional routing graph (section 5). `None` when the bundle carries
     /// no graph; an empty graph is never emitted.
     pub graph: Option<RouteGraph>,
+    /// Optional point facilities (section 7). `None` when the bundle
+    /// carries no facilities; empty facilities are never emitted.
+    pub facilities: Option<Facilities>,
 }
 
 /// The result of compiling raw IMDF source bytes into a bundle.
@@ -61,12 +65,12 @@ pub struct CompiledBundle {
 
 /// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, then encode the
 /// canonical venue model as a `kvb1` bundle. Equivalent to
-/// [`compile_imdf_with_network`] without network GeoJSON.
+/// [`compile_imdf_with_network`] without network or facilities GeoJSON.
 pub fn compile_imdf(
     source: &[u8],
     metadata: BundleMetadata,
 ) -> Result<CompiledBundle, CompileError> {
-    compile_imdf_with_network(source, metadata, None, None)
+    compile_imdf_with_network(source, metadata, None, None, None)
 }
 
 /// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, optionally build
@@ -78,13 +82,21 @@ pub fn compile_imdf(
 /// level ordinals; a non-empty graph is embedded as section 5 and the build
 /// warnings fold into the compile warning channel (code `route_build`). A
 /// malformed network is fatal ([`CompileError::Route`]). When either input
-/// is `None`, no graph is embedded and the result is identical to
-/// [`compile_imdf`].
+/// is `None`, no graph is embedded.
+///
+/// When `facilities_geojson` is `Some`,
+/// [`kiriko_facilities::build_facilities`] builds the point-facility list
+/// against the route graph (or an empty graph when no network was supplied,
+/// which leaves every anchor unset and warns once); non-empty facilities are
+/// embedded as section 7 and the build warnings fold into the compile
+/// warning channel (code `facility_build`). Malformed facilities GeoJSON is
+/// fatal ([`CompileError::Facility`]).
 pub fn compile_imdf_with_network(
     source: &[u8],
     metadata: BundleMetadata,
     junctions_geojson: Option<&str>,
     paths_geojson: Option<&str>,
+    facilities_geojson: Option<&str>,
 ) -> Result<CompiledBundle, CompileError> {
     let venue = import_imdf(source)?;
     let stats = BundleStats {
@@ -101,18 +113,60 @@ pub fn compile_imdf_with_network(
         warnings: venue.warnings,
         stats,
         graph: None,
+        facilities: None,
     };
 
+    let mut route_node_ids: Option<Vec<u64>> = None;
     if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
         let ordinals: Vec<f64> = document.levels.iter().map(|l| l.ordinal).collect();
-        let (graph, build_warnings) = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
-        if !graph.is_empty() {
-            document.graph = Some(graph);
+        let build = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
+        route_node_ids = Some(build.node_ids);
+        if !build.graph.is_empty() {
+            document.graph = Some(build.graph);
+        }
+        document
+            .warnings
+            .extend(build.warnings.into_iter().map(|w| ViewerWarning {
+                code: WarningCode::RouteBuild,
+                message: format!("{}: {}", w.code, w.detail),
+                feature_id: None,
+                archive_entry: None,
+            }));
+    }
+
+    if let Some(facilities_geojson) = facilities_geojson {
+        let has_graph = document.graph.is_some() && route_node_ids.is_some();
+        if !has_graph {
+            document.warnings.push(ViewerWarning {
+                code: WarningCode::FacilityBuild,
+                message: "facilities GeoJSON built with no route graph: all \
+                          facility anchors are unset"
+                    .to_string(),
+                feature_id: None,
+                archive_entry: None,
+            });
+        }
+        let empty_graph = RouteGraph {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+        let (graph, node_ids): (&RouteGraph, &[u64]) = if has_graph {
+            (
+                document.graph.as_ref().expect("checked above"),
+                route_node_ids.as_deref().expect("checked above"),
+            )
+        } else {
+            (&empty_graph, &[])
+        };
+        let (facilities, build_warnings) =
+            kiriko_facilities::build_facilities(facilities_geojson, graph, node_ids)?;
+        if !facilities.items.is_empty() {
+            document.facilities = Some(facilities);
         }
         document
             .warnings
             .extend(build_warnings.into_iter().map(|w| ViewerWarning {
-                code: WarningCode::RouteBuild,
+                code: WarningCode::FacilityBuild,
                 message: format!("{}: {}", w.code, w.detail),
                 feature_id: None,
                 archive_entry: None,
@@ -157,7 +211,9 @@ pub(crate) fn postcard_take_exact<'a, T: Deserialize<'a>>(
 /// is split into the geometry (non-occupant) and stores (occupant) sections;
 /// no section is duplicated and no empty style/graph/beacon section is
 /// emitted. The optional graph section (id 5) is emitted only when
-/// `document.graph` is `Some` and non-empty. Every `f64` reachable from
+/// `document.graph` is `Some` and non-empty; the optional facilities
+/// section (id 7) only when `document.facilities` is `Some` and non-empty.
+/// Every `f64` reachable from
 /// `document` is validated as finite and `-0.0` is normalized to `0.0`
 /// (see `sections::canonical_f64`).
 pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> {
@@ -197,6 +253,17 @@ pub fn encode_bundle(document: &BundleDocument) -> Result<Vec<u8>, BundleError> 
             format::SECTION_GRAPH,
             format::SECTION_VERSION,
             sections::encode_graph(graph)?,
+        ));
+    }
+    // Section id 7 sorts after 5, so appending keeps the directory
+    // id-ascending as `build_payload` requires.
+    if let Some(facilities) = &document.facilities
+        && !facilities.items.is_empty()
+    {
+        section_list.push((
+            format::SECTION_FACILITIES,
+            format::SECTION_VERSION,
+            sections::encode_facilities(facilities)?,
         ));
     }
 
@@ -242,6 +309,11 @@ pub fn decode_bundle(bytes: &[u8]) -> Result<BundleDocument, BundleError> {
     // written before section 5 existed still decode.
     if let Some(graph_bytes) = directory.section(&payload, format::SECTION_GRAPH) {
         document.graph = Some(sections::decode_graph(graph_bytes)?);
+    }
+    // The facilities section is optional: absent means `None`, so bundles
+    // written before section 7 existed still decode.
+    if let Some(facilities_bytes) = directory.section(&payload, format::SECTION_FACILITIES) {
+        document.facilities = Some(sections::decode_facilities(facilities_bytes)?);
     }
     Ok(document)
 }
@@ -374,6 +446,7 @@ mod tests {
                     features: 0,
                 },
                 graph: None,
+                facilities: None,
             };
 
         // Level ordinal.

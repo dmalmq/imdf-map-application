@@ -163,6 +163,12 @@ pub enum WarningCode {
     /// specific route code (`unmapped_floor`, `dangling_edge`,
     /// `unmatched_level`) is embedded in the warning message.
     RouteBuild,
+    /// Non-fatal problem building the optional facilities section from
+    /// point-facility GeoJSON (e.g. an unmappable floor label, an
+    /// unresolved route-graph anchor, or facilities supplied without a
+    /// routing network). The specific facility code (`unmapped_floor`,
+    /// `unresolved_anchor`) is embedded in the warning message.
+    FacilityBuild,
 }
 
 impl WarningCode {
@@ -175,6 +181,7 @@ impl WarningCode {
             Self::MissingDisplayPoint => "missing_display_point",
             Self::UnknownArchiveEntry => "unknown_archive_entry",
             Self::RouteBuild => "route_build",
+            Self::FacilityBuild => "facility_build",
         }
     }
 }

@@ -24,12 +24,15 @@ import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
 import { inspectGdbArchive, convertGdbLayers } from "./convert";
+import { extractFacilitiesGeoJson } from "./facilities";
 import { GdbConversionError, resolveGdbImdfWithExclusions, suggestGdbMapping } from "./mapping";
 import { extractNetworkGeoJson } from "./network";
 import { writeImdfZip } from "./imdfZip";
 import { GdbSourceError, validateGdbArchive } from "./sourceValidation";
 import { removeStagedGdb, stageGdbBlobForGdal } from "./staging";
 import type {
+  FacilitiesExtraction,
+  FacilitiesInspectResponse,
   GdbInspectResponse,
   GdbInspection,
   GdbPublishRequest,
@@ -106,6 +109,7 @@ const GdbPublishSchema = Type.Object({
   blobHash: Type.String({ pattern: "^[0-9a-f]{64}$" }),
   plan: GdbMappingPlanSchema,
   networkBlobHash: Type.Optional(Type.String({ pattern: "^[0-9a-f]{64}$" })),
+  facilitiesBlobHash: Type.Optional(Type.String({ pattern: "^[0-9a-f]{64}$" })),
 });
 
 const ErrorSchema = Type.Object({
@@ -277,6 +281,76 @@ export function registerGdbRoutes(app: FastifyInstance): void {
   );
 
   app.post(
+    "/api/gdb/inspect-facilities",
+    {
+      preHandler: requireSession,
+      schema: {
+        response: {
+          200: Type.Object({
+            facilitiesBlobHash: Type.String(),
+            facilityCount: Type.Integer(),
+            floors: Type.Array(Type.String()),
+          }),
+          400: ErrorSchema,
+          500: ErrorSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const file = await request.file();
+      if (!file) {
+        return reply.code(400).send(errorBody("file_required", "file_required"));
+      }
+      const bytes = await file.toBuffer();
+      try {
+        await validateGdbArchive(bytes);
+      } catch (error) {
+        if (isGdbSourceError(error)) {
+          return reply
+            .code(400)
+            .send(errorBody(error.code, error.message, error.details));
+        }
+        request.log.error({ err: error }, "gdb facilities inspect validation failed");
+        return reply.code(500).send(errorBody("internal_error", "internal_error"));
+      }
+
+      const { hash, size } = request.server.blobs.put(bytes);
+      request.server.db
+        .prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)")
+        .run(hash, size);
+      const stagedPath = stageGdbBlobForGdal(request.server.blobs.path(hash), hash);
+      let facilities: FacilitiesExtraction;
+      try {
+        facilities = await withTimeout(
+          extractFacilitiesGeoJson(stagedPath),
+          INSPECT_TIMEOUT_MS,
+          "gdb facilities inspect",
+        );
+      } catch (error) {
+        if (isGdbSourceError(error)) {
+          return reply
+            .code(400)
+            .send(errorBody(error.code, error.message, error.details));
+        }
+        request.log.warn({ err: error }, "gdb facilities inspect failed");
+        return reply.code(400).send(
+          errorBody("gdb_facilities_extraction_failed", "gdb_facilities_extraction_failed", {
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      } finally {
+        removeStagedGdb(stagedPath);
+      }
+      const body: FacilitiesInspectResponse = {
+        facilitiesBlobHash: hash,
+        facilityCount: facilities.facilityCount,
+        floors: facilities.floors,
+      };
+      return reply.send(body);
+    },
+  );
+
+  app.post(
     "/api/gdb/publish",
     {
       preHandler: requireSession,
@@ -299,7 +373,7 @@ export function registerGdbRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       const body = request.body as GdbPublishRequest;
-      const { venueId, blobHash, plan, networkBlobHash } = body;
+      const { venueId, blobHash, plan, networkBlobHash, facilitiesBlobHash } = body;
 
       const venue = request.server.db
         .prepare("SELECT id FROM venues WHERE id = ? AND tenant_id = ?")
@@ -313,6 +387,12 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       if (networkBlobHash !== undefined && !request.server.blobs.has(networkBlobHash)) {
         return reply.code(404).send({ error: "network_blob_not_found" });
       }
+      if (
+        facilitiesBlobHash !== undefined &&
+        !request.server.blobs.has(facilitiesBlobHash)
+      ) {
+        return reply.code(404).send({ error: "facilities_blob_not_found" });
+      }
 
       const includedLayerNames = plan.layers
         .filter((layer) => layer.included && layer.targetType !== null)
@@ -321,11 +401,11 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         return reply.code(400).send(errorBody("no_included_layers", "no_included_layers"));
       }
 
-      // Extract the routing network first so a bad network archive fails the
-      // request before any conversion/publish side effect (no partial
-      // publish). The extracted GeoJSON is stored as content-addressed blobs
-      // and referenced from the job payload, keeping the publish_imdf job
-      // path stateless.
+      // Extract the optional combined-import data first so a bad network or
+      // facilities archive fails the request before any conversion/publish
+      // side effect (no partial publish). The extracted GeoJSON is stored as
+      // content-addressed blobs and referenced from the job payload, keeping
+      // the publish_imdf job path stateless.
       let networkJunctionsHash: string | undefined;
       let networkPathsHash: string | undefined;
       if (networkBlobHash !== undefined) {
@@ -360,6 +440,43 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         insertBlob.run(pathsBlob.hash, pathsBlob.size);
         networkJunctionsHash = junctionsBlob.hash;
         networkPathsHash = pathsBlob.hash;
+      }
+
+      let facilitiesGeoJsonHash: string | undefined;
+      if (facilitiesBlobHash !== undefined) {
+        const stagedFacilitiesPath = stageGdbBlobForGdal(
+          request.server.blobs.path(facilitiesBlobHash),
+          facilitiesBlobHash,
+        );
+        let facilities: FacilitiesExtraction;
+        try {
+          facilities = await extractFacilitiesGeoJson(stagedFacilitiesPath);
+        } catch (error) {
+          if (isGdbSourceError(error)) {
+            return reply
+              .code(400)
+              .send(errorBody(error.code, error.message, error.details));
+          }
+          request.log.error({ err: error }, "gdb facilities extract failed");
+          return reply.code(400).send(
+            errorBody(
+              "gdb_facilities_extraction_failed",
+              "gdb_facilities_extraction_failed",
+              {
+                detail: error instanceof Error ? error.message : String(error),
+              },
+            ),
+          );
+        } finally {
+          removeStagedGdb(stagedFacilitiesPath);
+        }
+        const facilitiesBlob = request.server.blobs.put(
+          Buffer.from(facilities.geojson, "utf8"),
+        );
+        request.server.db
+          .prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)")
+          .run(facilitiesBlob.hash, facilitiesBlob.size);
+        facilitiesGeoJsonHash = facilitiesBlob.hash;
       }
 
       let conversion;
@@ -421,6 +538,7 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         versionId,
         networkJunctionsHash,
         networkPathsHash,
+        facilitiesGeoJsonHash,
       });
       return reply.code(202).send({ jobId, versionId, seq: nextSeq, excludedLayers });
     },

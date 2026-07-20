@@ -118,6 +118,8 @@ describe("loadKirikoBundle", () => {
       metadata: { datasetId: "default/minimal", version: 1 },
       publicVersionId,
       hasGraph: true,
+      hasFacilities: false,
+      facilities: [],
     });
     expect(hydrateVenueMock).toHaveBeenCalledWith(dto);
     expect(worker.terminate).toHaveBeenCalledTimes(1);
@@ -149,6 +151,8 @@ describe("loadKirikoBundle", () => {
       metadata: { datasetId: "default/minimal", version: 1 },
       publicVersionId: null,
       hasGraph: false,
+      hasFacilities: false,
+      facilities: [],
     });
     expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);
   });
@@ -509,6 +513,8 @@ describe("loadKirikoBundle", () => {
       metadata: { datasetId: "default/minimal", version: 1 },
       publicVersionId: null,
       hasGraph: false,
+      hasFacilities: false,
+      facilities: [],
     });
     expect(worker.terminate).toHaveBeenCalledTimes(1);
 
@@ -612,12 +618,16 @@ describe("loadKirikoBundle", () => {
       metadata: { datasetId: "default/one", version: 1 },
       publicVersionId: "1".repeat(64),
       hasGraph: false,
+      hasFacilities: false,
+      facilities: [],
     });
     expect(r2).toEqual({
       venue: { n: 2 },
       metadata: { datasetId: "default/two", version: 2 },
       publicVersionId: "2".repeat(64),
       hasGraph: false,
+      hasFacilities: false,
+      facilities: [],
     });
     expect(createdWorkers[0]).not.toBe(createdWorkers[1]);
     expect(createdWorkers[0]!.terminate).toHaveBeenCalledTimes(1);

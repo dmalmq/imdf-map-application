@@ -11,7 +11,7 @@ import maplibregl, {
   type MapMouseEvent,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { RouteEndpoint, RouteResultDto } from "../bundle/wasm";
+import type { FacilityDto, RouteEndpoint, RouteResultDto } from "../bundle/wasm";
 import type { LocaleCode, LoadedVenue } from "../imdf/types";
 import type { ViewerTheme } from "../theme/types";
 import { buildIndoorStyle, INDOOR_SOURCE_ID } from "./buildIndoorStyle";
@@ -19,10 +19,14 @@ import { buildRenderFeatures } from "./buildRenderFeatures";
 import {
   applyThemePaintProperties,
   CLICKABLE_LAYER_IDS,
+  FACILITY_SOURCE_ID,
+  LAYER_FACILITY_SYMBOL,
   ROUTE_SOURCE_ID,
 } from "./featureLayers";
 import { LAYER_GROUP_IDS, type LayerVisibility } from "./layerGroups";
 import { buildRouteFeatures } from "./routeFeatures";
+import { buildFacilityFeatures } from "./facilityFeatures";
+import { FACILITY_PIN_IMAGE, MARKER_ICON_URLS } from "./facilityIcons";
 import { useFeatureMarkers } from "./useFeatureMarkers";
 import { useIssuePins, type MapIssuePin } from "./useIssuePins";
 
@@ -92,6 +96,10 @@ export interface IndoorMapProps {
   directions?: DirectionsMapProps | null;
   /** Receives camera controls once the map exists; null on teardown. */
   onControls?: (controls: IndoorMapControls | null) => void;
+  /** Point facilities (§7) to render as symbol markers; empty when absent. */
+  facilities?: FacilityDto[];
+  /** Invoked when a facility symbol is tapped (outside directions picking). */
+  onSelectFacility?: (facility: FacilityDto) => void;
 }
 
 const FIT_PADDING = 48;
@@ -154,6 +162,80 @@ function setRouteSourceData(
       ordinal ?? 0,
     ),
   );
+}
+
+function getFacilitySource(map: MapLibreMap): GeoJSONSource | null {
+  const source = map.getSource(FACILITY_SOURCE_ID);
+  if (source == null || source.type !== "geojson") {
+    return null;
+  }
+  return source as GeoJSONSource;
+}
+
+function setFacilitySourceData(
+  map: MapLibreMap,
+  venue: LoadedVenue,
+  levelId: string,
+  facilities: readonly FacilityDto[],
+): void {
+  const source = getFacilitySource(map);
+  if (source == null) {
+    return;
+  }
+  const ordinal = activeOrdinalFor(venue, levelId);
+  source.setData(
+    ordinal === null
+      ? { type: "FeatureCollection", features: [] }
+      : buildFacilityFeatures(facilities, ordinal),
+  );
+}
+
+/** A neutral round pin used when a facility's icon has no staged asset. */
+function buildPinImage(): { width: number; height: number; data: Uint8Array } {
+  const size = 16;
+  const data = new Uint8Array(size * size * 4);
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const r = 6;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4;
+      if (Math.hypot(x - cx, y - cy) <= r) {
+        data[i] = 0x4f;
+        data[i + 1] = 0x46;
+        data[i + 2] = 0xe5;
+        data[i + 3] = 0xff;
+      }
+    }
+  }
+  return { width: size, height: size, data };
+}
+
+/**
+ * Register the staged marker icons (and the pin fallback) as MapLibre images.
+ * Idempotent: skips ids already present. PNGs load asynchronously; a symbol
+ * referencing an image that has not finished loading is simply not drawn yet
+ * (`icon-optional`), then appears once the image resolves.
+ */
+function registerFacilityImages(map: MapLibreMap): void {
+  if (!map.hasImage(FACILITY_PIN_IMAGE)) {
+    map.addImage(FACILITY_PIN_IMAGE, buildPinImage());
+  }
+  for (const [name, url] of Object.entries(MARKER_ICON_URLS)) {
+    if (map.hasImage(name)) {
+      continue;
+    }
+    void map
+      .loadImage(url)
+      .then((result) => {
+        if (result != null && !map.hasImage(name)) {
+          map.addImage(name, result.data);
+        }
+      })
+      .catch(() => {
+        /* a missing icon falls back to the pin via icon-image resolution */
+      });
+  }
 }
 
 function fitLevelBounds(
@@ -300,6 +382,8 @@ export function IndoorMap({
   issueReview,
   directions = null,
   onControls,
+  facilities = [],
+  onSelectFacility,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -329,6 +413,10 @@ export function IndoorMap({
   onControlsRef.current = onControls;
   issueReviewRef.current = issueReview;
   directionsRef.current = directions;
+  const facilitiesRef = useRef(facilities);
+  const onSelectFacilityRef = useRef(onSelectFacility);
+  facilitiesRef.current = facilities;
+  onSelectFacilityRef.current = onSelectFacility;
 
   const onMarkerSelect = useCallback((featureId: string, center: [number, number]) => {
     const review = issueReviewRef.current;
@@ -451,6 +539,17 @@ export function IndoorMap({
         dirs.onPickPoint({ longitude: event.lngLat.lng, latitude: event.lngLat.lat });
         return;
       }
+      const facilityHit = map.queryRenderedFeatures(event.point, {
+        layers: [LAYER_FACILITY_SYMBOL],
+      });
+      const facIndex = facilityHit[0]?.properties?.["index"];
+      if (typeof facIndex === "number") {
+        const facility = facilitiesRef.current[facIndex];
+        if (facility !== undefined) {
+          onSelectFacilityRef.current?.(facility);
+          return;
+        }
+      }
       onSelectRef.current(featureId);
     };
 
@@ -487,6 +586,8 @@ export function IndoorMap({
     const onLoad = (): void => {
       setSourceData(map, venueRef.current, levelIdRef.current);
       setRouteSourceData(map, venueRef.current, levelIdRef.current, directionsRef.current);
+      registerFacilityImages(map);
+      setFacilitySourceData(map, venueRef.current, levelIdRef.current, facilitiesRef.current);
       applyLayerVisibility(map, visibilityRef.current);
       fitLevelBounds(map, venueRef.current, levelIdRef.current);
       setMapInstance(map);
@@ -736,6 +837,16 @@ export function IndoorMap({
     }
     setRouteSourceData(map, venue, levelId, directions);
   }, [directions, venue, levelId]);
+
+  // Facility symbols: refresh per active floor (and when the facility set or
+  // venue changes). Icons are registered once on load.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map == null || !map.isStyleLoaded()) {
+      return;
+    }
+    setFacilitySourceData(map, venue, levelId, facilities);
+  }, [facilities, venue, levelId]);
 
   // Layer-group visibility toggles (Layers panel).
   useEffect(() => {

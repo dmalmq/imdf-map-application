@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KirikoMark } from "../components/icons";
-import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse } from "../gdb/types";
+import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse, FacilitiesInspectResponse } from "../gdb/types";
 import type { LocaleCode } from "../imdf/types";
 import { api, gdbErrorMessage, type ApiUser, type GdbError, type VenueSummary } from "./api";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
@@ -48,6 +48,7 @@ type GdbFlow =
       target: GdbTarget;
       data: GdbInspectResponse;
       network: NetworkInspectResponse | null;
+      facilities: FacilitiesInspectResponse | null;
       busy: boolean;
       error: GdbError | null;
     }
@@ -128,6 +129,7 @@ export function GalleryPage() {
           target,
           data: { ...data, suggestedPlan },
           network: null,
+          facilities: null,
           busy: false,
           error: null,
         });
@@ -157,12 +159,29 @@ export function GalleryPage() {
     })();
   };
 
+  const onGdbFacilityFile = (file: File) => {
+    if (gdbFlow.phase !== "review") return;
+    void (async () => {
+      try {
+        const facilities = await api.inspectGdbFacilities(file);
+        setGdbFlow((current) =>
+          current.phase === "review" ? { ...current, facilities, error: null } : current,
+        );
+      } catch (err) {
+        setGdbFlow((current) =>
+          current.phase === "review" ? { ...current, error: err as GdbError } : current,
+        );
+      }
+    })();
+  };
+
   const publishGdbPlan = (plan: GdbMappingPlan) => {
     if (gdbFlow.phase !== "review") return;
     const data = gdbFlow.data;
     const target = gdbFlow.target;
     const network = gdbFlow.network;
-    setGdbFlow({ phase: "review", target, data, network, busy: true, error: null });
+    const facilities = gdbFlow.facilities;
+    setGdbFlow({ phase: "review", target, data, network, facilities, busy: true, error: null });
     void (async () => {
       let createdVenueId: number | null = null;
       try {
@@ -174,7 +193,7 @@ export function GalleryPage() {
           createdVenueId = venue.id;
           venueId = venue.id;
         }
-        const published = await api.publishGdb(venueId, data.blobHash, plan, network?.networkBlobHash ?? null);
+        const published = await api.publishGdb(venueId, data.blobHash, plan, network?.networkBlobHash ?? null, facilities?.facilitiesBlobHash ?? null);
         const job = await api.waitForJob(published.jobId);
         if (job.status === "done") {
           const skipped = published.excludedLayers ?? [];
@@ -194,6 +213,7 @@ export function GalleryPage() {
             target,
             data,
             network,
+            facilities,
             busy: false,
             error: { code: "gdb_conversion_failed", message: job.error },
           });
@@ -212,6 +232,7 @@ export function GalleryPage() {
           target,
           data,
           network,
+          facilities,
           busy: false,
           error: err as GdbError,
         });
@@ -415,6 +436,8 @@ export function GalleryPage() {
           error={gdbFlow.error}
           network={gdbFlow.network}
           onAddNetwork={onGdbNetworkFile}
+          facilities={gdbFlow.facilities}
+          onAddFacilities={onGdbFacilityFile}
           venueNameLocked={gdbFlow.target.mode === "version"}
           onImport={publishGdbPlan}
           onCancel={cancelGdbImport}
