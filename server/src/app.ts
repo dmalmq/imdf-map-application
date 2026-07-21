@@ -7,6 +7,7 @@ import type { AppConfig } from "./config";
 import { openDb } from "./db/db";
 import { migrate } from "./db/migrate";
 import { ensureBootstrapUser } from "./auth/bootstrap";
+import { seedDevUsers } from "./auth/devSeed";
 import { registerAuthRoutes } from "./auth/routes";
 import { registerVenueRoutes } from "./venues/routes";
 import { BlobStore } from "./blobs/store";
@@ -76,6 +77,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const issueService = new IssueService(issueRepository, anchorIndexCache, issueHub);
 
   ensureBootstrapUser(db, config);
+  seedDevUsers(db, config, (message) => app.log.warn(message));
   registerAuthRoutes(app);
   registerVenueRoutes(app, issueHub);
   registerUploadRoute(app);
