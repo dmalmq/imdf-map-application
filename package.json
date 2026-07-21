@@ -17,7 +17,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "core:build:node": "pnpm --filter @kiriko/node build",
-    "core:build:wasm": "pnpm --filter @kiriko/wasm build",
+    "core:build:wasm": "node scripts/build-wasm.mjs",
     "core:build": "pnpm core:build:node && pnpm core:build:wasm",
     "test:core": "cargo test --manifest-path core/Cargo.toml --workspace",
     "predev": "pnpm core:build:wasm",

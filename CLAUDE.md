@@ -18,6 +18,8 @@ First run seeds an admin only from env on an empty DB:
 `KIRIKO_BOOTSTRAP_USER=admin KIRIKO_BOOTSTRAP_PASSWORD=… pnpm dev:server`.
 Editing Rust while servers run needs a restart (or `pnpm core:build`). Verify: `cargo test --manifest-path core/Cargo.toml --workspace`, `pnpm exec tsc --noEmit`, `pnpm --dir server exec tsc --noEmit`, `pnpm exec vitest run`, `pnpm --dir server exec vitest run`.
 
+**Windows toolchain:** the wasm build (`core:build:wasm`) compiles a C dependency (`zstd-sys`) for `wasm32`, which requires **clang** (MSVC can't target wasm). Install LLVM (`winget install LLVM.LLVM`). `scripts/build-wasm.mjs` auto-points cc-rs at a standard LLVM install when clang isn't on PATH; otherwise set `CC_wasm32_unknown_unknown` to a wasm-capable clang.
+
 ## GDB / network / routing data
 The JR East Tokyo dataset is three EPSG:3857 File Geodatabases (venue, routing network, point facilities). **Full schema, layer inventory, floor-label mapping, icon situation, and the GDB→GeoJSON→KVB→routing pipeline are documented in `docs/gdb-data-reference.md` — read it before touching GDB import, `kiriko-route`, `kiriko-facilities`, or KVB sections.**
 
