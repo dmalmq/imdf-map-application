@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import type { AppConfig } from "../src/config";
 import { seedDevUsers, DEV_USERS, DEV_PASSWORD } from "../src/auth/devSeed";
-import { verifyPassword } from "../src/auth/passwords";
+import { hashPassword, verifyPassword } from "../src/auth/passwords";
 import { cleanupTestApps, makeTestDb } from "./helpers";
 
 const baseConfig: AppConfig = {
@@ -54,16 +54,27 @@ describe("seedDevUsers", () => {
     expect(users(db)).toHaveLength(0);
   });
 
-  it("is idempotent and never clobbers an existing account", () => {
+  it("is safe to re-run and keeps the dev password", () => {
     const db = makeTestDb();
     seedDevUsers(db, { ...baseConfig, seedDevUsers: true });
-    const firstAdminHash = users(db).find((r) => r.username === "admin")!.password_hash;
-
     seedDevUsers(db, { ...baseConfig, seedDevUsers: true });
     const rows = users(db);
     expect(rows).toHaveLength(3);
-    // Same row untouched (no re-hash / re-insert).
-    expect(rows.find((r) => r.username === "admin")!.password_hash).toBe(firstAdminHash);
+    for (const row of rows) {
+      expect(verifyPassword(DEV_PASSWORD, row.password_hash)).toBe(true);
+    }
+  });
+
+  it("resets a pre-existing account to the dev password (upsert)", () => {
+    const db = makeTestDb();
+    db.prepare("INSERT INTO users (username, password_hash, role) VALUES ('admin', ?, 'admin')").run(
+      hashPassword("some-other-password"),
+    );
+    seedDevUsers(db, { ...baseConfig, seedDevUsers: true });
+    const admin = users(db).find((r) => r.username === "admin")!;
+    expect(verifyPassword(DEV_PASSWORD, admin.password_hash)).toBe(true);
+    expect(verifyPassword("some-other-password", admin.password_hash)).toBe(false);
+    expect(users(db)).toHaveLength(3);
   });
 
   it("refuses to seed under NODE_ENV=production even when opted in", () => {

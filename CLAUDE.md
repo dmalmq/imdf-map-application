@@ -16,7 +16,7 @@ pnpm dev          # predev rebuilds @kiriko/wasm; Vite on :5173
 ```
 First run seeds an admin only from env on an empty DB:
 `KIRIKO_BOOTSTRAP_USER=admin KIRIKO_BOOTSTRAP_PASSWORD=… pnpm dev:server`.
-For local role testing, `KIRIKO_SEED_DEV_USERS=1 pnpm dev:server` also seeds `admin`/`member`/`viewer` (all password `password`). Opt-in, idempotent, and hard-skipped under `NODE_ENV=production`.
+For local role testing, `KIRIKO_SEED_DEV_USERS=1 pnpm dev:server` also seeds `admin`/`member`/`viewer` (all password `password`), (re)setting those three accounts' passwords/roles each run. Opt-in, and hard-skipped under `NODE_ENV=production`.
 Editing Rust while servers run needs a restart (or `pnpm core:build`). Verify: `cargo test --manifest-path core/Cargo.toml --workspace`, `pnpm exec tsc --noEmit`, `pnpm --dir server exec tsc --noEmit`, `pnpm exec vitest run`, `pnpm --dir server exec vitest run`.
 
 **Windows toolchain:** the wasm build (`core:build:wasm`) compiles a C dependency (`zstd-sys`) for `wasm32`, which requires **clang** (MSVC can't target wasm). Install LLVM (`winget install LLVM.LLVM`). `scripts/build-wasm.mjs` auto-points cc-rs at a standard LLVM install when clang isn't on PATH; otherwise set `CC_wasm32_unknown_unknown` to a wasm-capable clang.
