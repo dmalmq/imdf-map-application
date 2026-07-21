@@ -8,6 +8,14 @@ import type {
 } from "maplibre-gl";
 import type { ViewerTheme } from "../theme/types";
 
+/**
+ * Unit fill paint: honor a per-feature `color2` fill (`__unit_color`) when the
+ * feature carries one, else fall back to the category theme color.
+ */
+function unitFillColor(themeColor: string): ExpressionSpecification {
+  return ["coalesce", ["get", "__unit_color"], themeColor];
+}
+
 /** Single GeoJSON source for the selected level + venue context. */
 export const INDOOR_SOURCE_ID = "indoor-features";
 
@@ -223,7 +231,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: ["any", matchLevelFloor, matchWalkwayUnit],
       paint: {
-        "fill-color": c.walkway,
+        "fill-color": unitFillColor(c.walkway),
         "fill-opacity": 1,
       },
     },
@@ -243,7 +251,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchRoomUnit,
       paint: {
-        "fill-color": c.unit,
+        "fill-color": unitFillColor(c.unit),
         "fill-opacity": 1,
       },
     },
@@ -263,7 +271,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchUnenclosedUnit,
       paint: {
-        "fill-color": c.unitUnenclosed,
+        "fill-color": unitFillColor(c.unitUnenclosed),
         "fill-opacity": 1,
       },
     },
@@ -283,7 +291,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchTransitUnit,
       paint: {
-        "fill-color": c.unitTransit,
+        "fill-color": unitFillColor(c.unitTransit),
         "fill-opacity": 1,
       },
     },
@@ -303,7 +311,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchRestroomUnit,
       paint: {
-        "fill-color": c.unitRestroom,
+        "fill-color": unitFillColor(c.unitRestroom),
         "fill-opacity": 1,
       },
     },
@@ -323,7 +331,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchNonPublicUnit,
       paint: {
-        "fill-color": c.unitNonPublic,
+        "fill-color": unitFillColor(c.unitNonPublic),
         "fill-opacity": 1,
       },
     },
@@ -345,7 +353,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       source: INDOOR_SOURCE_ID,
       filter: matchStructureUnit,
       paint: {
-        "fill-color": c.unit,
+        "fill-color": unitFillColor(c.unit),
         "fill-opacity": 0.92,
       },
     },
@@ -620,20 +628,20 @@ export function applyThemePaintProperties(
   setPaintProperty(LAYER_CONTEXT_FILL, "fill-color", c.unit);
   setPaintProperty(LAYER_CONTEXT_OUTLINE, "line-color", c.unitOutline);
 
-  setPaintProperty(LAYER_WALKWAY_FILL, "fill-color", c.walkway);
+  setPaintProperty(LAYER_WALKWAY_FILL, "fill-color", unitFillColor(c.walkway));
   setPaintProperty(LAYER_WALKWAY_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_ROOM_FILL, "fill-color", c.unit);
+  setPaintProperty(LAYER_ROOM_FILL, "fill-color", unitFillColor(c.unit));
   setPaintProperty(LAYER_ROOM_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_UNENCLOSED_FILL, "fill-color", c.unitUnenclosed);
+  setPaintProperty(LAYER_UNENCLOSED_FILL, "fill-color", unitFillColor(c.unitUnenclosed));
   setPaintProperty(LAYER_UNENCLOSED_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_TRANSIT_FILL, "fill-color", c.unitTransit);
+  setPaintProperty(LAYER_TRANSIT_FILL, "fill-color", unitFillColor(c.unitTransit));
   setPaintProperty(LAYER_TRANSIT_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_RESTROOM_FILL, "fill-color", c.unitRestroom);
+  setPaintProperty(LAYER_RESTROOM_FILL, "fill-color", unitFillColor(c.unitRestroom));
   setPaintProperty(LAYER_RESTROOM_OUTLINE, "line-color", c.unitOutline);
-  setPaintProperty(LAYER_NONPUBLIC_FILL, "fill-color", c.unitNonPublic);
+  setPaintProperty(LAYER_NONPUBLIC_FILL, "fill-color", unitFillColor(c.unitNonPublic));
   setPaintProperty(LAYER_NONPUBLIC_OUTLINE, "line-color", c.unitOutline);
 
-  setPaintProperty(LAYER_STRUCTURE_FILL, "fill-color", c.unit);
+  setPaintProperty(LAYER_STRUCTURE_FILL, "fill-color", unitFillColor(c.unit));
   setPaintProperty(LAYER_STRUCTURE_OUTLINE, "line-color", c.unitOutline);
   setPaintProperty(LAYER_RESTRICTED_FILL, "fill-color", c.restricted);
   setPaintProperty(LAYER_RESTRICTED_OUTLINE, "line-color", c.unitOutline);

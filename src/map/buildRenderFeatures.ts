@@ -1,6 +1,7 @@
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { FeatureType, LoadedVenue, ViewerFeature } from "../imdf/types";
 import { levelIdsForOrdinal, ordinalOfLevel } from "../state/floorGroups";
+import { color2Fill } from "./color2";
 
 /** Renderer-owned property keys flattened onto derived GeoJSON features. */
 export interface RenderFeatureProperties {
@@ -9,6 +10,8 @@ export interface RenderFeatureProperties {
   __level_id: string | null;
   __category: string | null;
   __restricted: boolean;
+  /** Per-unit fill resolved from the source `color2` value; absent when not applicable. */
+  __unit_color?: string;
   [key: string]: unknown;
 }
 
@@ -37,6 +40,13 @@ export function renderFeatureFromViewer(
     __category: feature.category,
     __restricted: feature.restriction !== null,
   };
+
+  if (feature.featureType === "unit") {
+    const unitColor = color2Fill(feature.sourceProperties["color2"]);
+    if (unitColor !== null) {
+      properties.__unit_color = unitColor;
+    }
+  }
 
   return {
     type: "Feature",

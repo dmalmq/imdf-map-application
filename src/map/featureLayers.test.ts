@@ -19,6 +19,7 @@ import {
   LAYER_RESTROOM_FILL,
   LAYER_RESTROOM_OUTLINE,
   LAYER_ROOM_FILL,
+  LAYER_STRUCTURE_FILL,
   LAYER_TRANSIT_FILL,
   LAYER_TRANSIT_OUTLINE,
   LAYER_UNENCLOSED_FILL,
@@ -68,12 +69,12 @@ describe("category sets", () => {
 describe("buildFeatureLayers category coloring", () => {
   it("paints each bucket with its theme token", () => {
     const c = theme.colors;
-    expect(fillColor(LAYER_TRANSIT_FILL)).toBe(c.unitTransit);
-    expect(fillColor(LAYER_RESTROOM_FILL)).toBe(c.unitRestroom);
-    expect(fillColor(LAYER_UNENCLOSED_FILL)).toBe(c.unitUnenclosed);
-    expect(fillColor(LAYER_NONPUBLIC_FILL)).toBe(c.unitNonPublic);
-    expect(fillColor(LAYER_ROOM_FILL)).toBe(c.unit);
-    expect(fillColor(LAYER_WALKWAY_FILL)).toBe(c.walkway);
+    expect(fillColor(LAYER_TRANSIT_FILL)).toEqual(["coalesce", ["get", "__unit_color"], c.unitTransit]);
+    expect(fillColor(LAYER_RESTROOM_FILL)).toEqual(["coalesce", ["get", "__unit_color"], c.unitRestroom]);
+    expect(fillColor(LAYER_UNENCLOSED_FILL)).toEqual(["coalesce", ["get", "__unit_color"], c.unitUnenclosed]);
+    expect(fillColor(LAYER_NONPUBLIC_FILL)).toEqual(["coalesce", ["get", "__unit_color"], c.unitNonPublic]);
+    expect(fillColor(LAYER_ROOM_FILL)).toEqual(["coalesce", ["get", "__unit_color"], c.unit]);
+    expect(fillColor(LAYER_WALKWAY_FILL)).toEqual(["coalesce", ["get", "__unit_color"], c.walkway]);
   });
 
   it("filters transit units by category and non-restricted state", () => {
@@ -168,13 +169,13 @@ describe("applyThemePaintProperties", () => {
     }, themes.kiriko);
 
     for (const expected of [
-      [LAYER_UNENCLOSED_FILL, "fill-color", c.unitUnenclosed],
+      [LAYER_UNENCLOSED_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitUnenclosed]],
       [LAYER_UNENCLOSED_OUTLINE, "line-color", c.unitOutline],
-      [LAYER_TRANSIT_FILL, "fill-color", c.unitTransit],
+      [LAYER_TRANSIT_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitTransit]],
       [LAYER_TRANSIT_OUTLINE, "line-color", c.unitOutline],
-      [LAYER_RESTROOM_FILL, "fill-color", c.unitRestroom],
+      [LAYER_RESTROOM_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitRestroom]],
       [LAYER_RESTROOM_OUTLINE, "line-color", c.unitOutline],
-      [LAYER_NONPUBLIC_FILL, "fill-color", c.unitNonPublic],
+      [LAYER_NONPUBLIC_FILL, "fill-color", ["coalesce", ["get", "__unit_color"], c.unitNonPublic]],
       [LAYER_NONPUBLIC_OUTLINE, "line-color", c.unitOutline],
     ]) {
       expect(calls).toContainEqual(expected);
@@ -227,5 +228,23 @@ describe("issue highlight outline", () => {
       calls.push([layerId, name, value]);
     }, theme);
     expect(calls).toContainEqual([LAYER_ISSUE_HIGHLIGHT_OUTLINE, "line-color", theme.colors.warning]);
+  });
+});
+
+describe("unit color2 fill coalesce", () => {
+  const c = theme.colors;
+  it("wraps each unit fill layer in a coalesce over __unit_color", () => {
+    const expected: [string, string][] = [
+      [LAYER_WALKWAY_FILL, c.walkway],
+      [LAYER_ROOM_FILL, c.unit],
+      [LAYER_UNENCLOSED_FILL, c.unitUnenclosed],
+      [LAYER_TRANSIT_FILL, c.unitTransit],
+      [LAYER_RESTROOM_FILL, c.unitRestroom],
+      [LAYER_NONPUBLIC_FILL, c.unitNonPublic],
+      [LAYER_STRUCTURE_FILL, c.unit],
+    ];
+    for (const [id, themeColor] of expected) {
+      expect(fillColor(id)).toEqual(["coalesce", ["get", "__unit_color"], themeColor]);
+    }
   });
 });
