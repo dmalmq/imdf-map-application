@@ -86,4 +86,26 @@ describe("DatasetCard", () => {
     );
     expect(screen.getByRole("button", { name: "IMDF をアップロード" })).toBeTruthy();
   });
+
+  it("shows Add routing / facilities and calls onAddData when provided", () => {
+    const onAddData = vi.fn();
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="en"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onAddData={onAddData}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add routing / facilities" }));
+    expect(onAddData).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Add routing / facilities when onAddData is omitted", () => {
+    render(
+      <DatasetCard venue={venue} locale="en" onOpen={() => {}} onDelete={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: "Add routing / facilities" })).toBeNull();
+  });
 });

@@ -335,4 +335,26 @@ export const api = {
       excludedLayers: Array.isArray(body.excludedLayers) ? body.excludedLayers : [],
     };
   },
+
+  async augmentGdb(
+    venueId: number,
+    opts: { networkBlobHash?: string; facilitiesBlobHash?: string },
+  ): Promise<{ jobId: string; versionId: number; seq: number }> {
+    const res = await fetch("/api/gdb/augment", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        venueId,
+        ...(opts.networkBlobHash ? { networkBlobHash: opts.networkBlobHash } : {}),
+        ...(opts.facilitiesBlobHash ? { facilitiesBlobHash: opts.facilitiesBlobHash } : {}),
+      }),
+    });
+    if (!res.ok) {
+      let parsed: GdbError = { code: "gdb_conversion_failed", message: `${res.status}` };
+      try { parsed = (await res.json()) as GdbError; } catch { /* non-JSON */ }
+      throw parsed;
+    }
+    return (await res.json()) as { jobId: string; versionId: number; seq: number };
+  },
 };

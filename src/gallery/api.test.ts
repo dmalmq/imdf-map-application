@@ -134,3 +134,31 @@ describe("gdb api", () => {
     expect(conv).toContain("Station_1_Space");
   });
 });
+
+describe("augmentGdb", () => {
+  it("posts venueId + blob hashes and returns the accepted job", async () => {
+    const fetchSpy = vi.fn(
+      (..._args: unknown[]) =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jobId: "j1", versionId: 2, seq: 2 }), { status: 202 }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await api.augmentGdb(7, { networkBlobHash: "n".repeat(64) });
+    expect(out).toEqual({ jobId: "j1", versionId: 2, seq: 2 });
+    const call = fetchSpy.mock.calls[0]!;
+    expect(call[0]).toBe("/api/gdb/augment");
+    const init = call[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({ venueId: 7, networkBlobHash: "n".repeat(64) });
+  });
+
+  it("throws the parsed GdbError on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "no_base_version" }), { status: 404 })),
+    );
+    await expect(api.augmentGdb(7, { networkBlobHash: "n".repeat(64) })).rejects.toMatchObject({
+      error: "no_base_version",
+    });
+  });
+});

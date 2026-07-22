@@ -10,6 +10,7 @@ const inspectGdbNetwork = vi.fn();
 const inspectGdbFacilities = vi.fn();
 const createVenue = vi.fn();
 const publishGdb = vi.fn();
+const augmentGdb = vi.fn();
 const waitForJob = vi.fn();
 const deleteVenue = vi.fn();
 vi.mock("./api", async (importOriginal) => {
@@ -25,6 +26,7 @@ vi.mock("./api", async (importOriginal) => {
       inspectGdbFacilities: (...args: unknown[]) => inspectGdbFacilities(...args),
       createVenue: (...args: unknown[]) => createVenue(...args),
       publishGdb: (...args: unknown[]) => publishGdb(...args),
+      augmentGdb: (...args: unknown[]) => augmentGdb(...args),
       waitForJob: (...args: unknown[]) => waitForJob(...args),
       deleteVenue: (...args: unknown[]) => deleteVenue(...args),
     },
@@ -353,5 +355,51 @@ describe("GalleryPage", () => {
     await waitFor(() => expect(publishGdb).toHaveBeenCalled());
     expect(deleteVenue).not.toHaveBeenCalled();
     expect(createVenue).not.toHaveBeenCalled();
+  });
+});
+
+describe("GalleryPage add routing/facilities", () => {
+  it("augments the selected dataset with a network archive without creating a venue", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 42,
+        slug: "existing-station",
+        name: "Existing Station",
+        createdAt: "2026-07-20 00:00:00",
+        latest: {
+          seq: 1,
+          status: "published",
+          stats: { levels: 2, features: 9 },
+          createdAt: "2026-07-20 00:00:00",
+        },
+      },
+    ]);
+    inspectGdbNetwork.mockResolvedValue({
+      networkBlobHash: "n".repeat(64),
+      nodeCount: 120,
+      edgeCount: 340,
+      floors: ["1F", "2F"],
+    });
+    augmentGdb.mockResolvedValue({ jobId: "j", versionId: 2, seq: 2 });
+    waitForJob.mockResolvedValue({ status: "done" });
+
+    const user = userEvent.setup();
+    render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Existing Station")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+    await user.click(screen.getByRole("button", { name: "Add routing / facilities" }));
+
+    await user.upload(
+      screen.getByLabelText("Add routing network"),
+      new File([new Uint8Array([1, 2])], "net.gdb.zip", { type: "application/zip" }),
+    );
+    await waitFor(() => expect(screen.getByText(/120 nodes/)).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(augmentGdb).toHaveBeenCalledTimes(1));
+    expect(augmentGdb).toHaveBeenCalledWith(42, { networkBlobHash: "n".repeat(64) });
+    expect(createVenue).not.toHaveBeenCalled();
+    await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
   });
 });

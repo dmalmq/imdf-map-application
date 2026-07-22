@@ -70,14 +70,14 @@ const pageText = {
   en: (page: number, total: number) => `Page ${page} of ${total}`,
 };
 
-const routingSummaryText = {
+export const routingSummaryText = {
   ja: (nodes: number, paths: number, floors: number) =>
     `ルーティングネットワーク: ${nodes} ノード、${paths} パス、${floors} フロア`,
   en: (nodes: number, paths: number, floors: number) =>
     `Routing network: ${nodes} nodes, ${paths} paths, ${floors} floors`,
 };
 
-const facilitiesSummaryText = {
+export const facilitiesSummaryText = {
   ja: (places: number, floors: number) => `施設: ${places} 件、${floors} フロア`,
   en: (places: number, floors: number) => `Facilities: ${places} places, ${floors} floors`,
 };

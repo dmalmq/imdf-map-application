@@ -3,6 +3,7 @@ import { KirikoMark } from "../components/icons";
 import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse, FacilitiesInspectResponse } from "../gdb/types";
 import type { LocaleCode } from "../imdf/types";
 import { api, gdbErrorMessage, type ApiUser, type GdbError, type VenueSummary } from "./api";
+import { AddDataDialog } from "./AddDataDialog";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 import { DatasetCard } from "./DatasetCard";
 import { GdbImportDialog } from "./GdbImportDialog";
@@ -54,6 +55,18 @@ type GdbFlow =
     }
   | { phase: "error"; message: string; target: GdbTarget };
 
+type AddDataFlow =
+  | { phase: "idle" }
+  | {
+      phase: "open";
+      venueId: number;
+      venueName: string;
+      network: NetworkInspectResponse | null;
+      facilities: FacilitiesInspectResponse | null;
+      busy: boolean;
+      error: GdbError | null;
+    };
+
 export function GalleryPage() {
   const [locale, setLocale] = useState<LocaleCode>("ja");
   const [state, setState] = useState<GalleryState>({ phase: "loading" });
@@ -63,6 +76,7 @@ export function GalleryPage() {
   const [deleting, setDeleting] = useState<VenueSummary | null>(null);
   const [gdbFlow, setGdbFlow] = useState<GdbFlow>({ phase: "idle" });
   const [gdbNotice, setGdbNotice] = useState<string | null>(null);
+  const [addData, setAddData] = useState<AddDataFlow>({ phase: "idle" });
   const gdbInputRef = useRef<HTMLInputElement>(null);
   const gdbTargetRef = useRef<GdbTarget>({ mode: "create" });
 
@@ -246,6 +260,73 @@ export function GalleryPage() {
     if (gdbInputRef.current) gdbInputRef.current.value = "";
   };
 
+  const openAddData = (venue: VenueSummary) => {
+    setGdbNotice(null);
+    setAddData({
+      phase: "open",
+      venueId: venue.id,
+      venueName: venue.name,
+      network: null,
+      facilities: null,
+      busy: false,
+      error: null,
+    });
+  };
+
+  const onAddDataNetwork = (file: File) => {
+    void (async () => {
+      try {
+        const network = await api.inspectGdbNetwork(file);
+        setAddData((c) => (c.phase === "open" ? { ...c, network, error: null } : c));
+      } catch (err) {
+        setAddData((c) => (c.phase === "open" ? { ...c, error: err as GdbError } : c));
+      }
+    })();
+  };
+
+  const onAddDataFacilities = (file: File) => {
+    void (async () => {
+      try {
+        const facilities = await api.inspectGdbFacilities(file);
+        setAddData((c) => (c.phase === "open" ? { ...c, facilities, error: null } : c));
+      } catch (err) {
+        setAddData((c) => (c.phase === "open" ? { ...c, error: err as GdbError } : c));
+      }
+    })();
+  };
+
+  const submitAddData = () => {
+    if (addData.phase !== "open") return;
+    const { venueId, network, facilities } = addData;
+    if (network === null && facilities === null) return;
+    setAddData({ ...addData, busy: true, error: null });
+    void (async () => {
+      try {
+        const res = await api.augmentGdb(venueId, {
+          ...(network ? { networkBlobHash: network.networkBlobHash } : {}),
+          ...(facilities ? { facilitiesBlobHash: facilities.facilitiesBlobHash } : {}),
+        });
+        const job = await api.waitForJob(res.jobId);
+        if (job.status === "done") {
+          setAddData({ phase: "idle" });
+          await reload();
+        } else {
+          setAddData((c) =>
+            c.phase === "open"
+              ? { ...c, busy: false, error: { code: "gdb_conversion_failed", message: job.error } }
+              : c,
+          );
+        }
+      } catch (err) {
+        setAddData((c) => (c.phase === "open" ? { ...c, busy: false, error: err as GdbError } : c));
+      }
+    })();
+  };
+
+  const cancelAddData = () => {
+    setAddData({ phase: "idle" });
+  };
+
   const header = (
     <header className="gallery-header">
       <div className="gallery-header__brand">
@@ -387,6 +468,9 @@ export function GalleryPage() {
                     venueName: venue.name,
                   });
                 }}
+                onAddData={() => {
+                  openAddData(venue);
+                }}
               />
             ))}
           </div>
@@ -441,6 +525,20 @@ export function GalleryPage() {
           venueNameLocked={gdbFlow.target.mode === "version"}
           onImport={publishGdbPlan}
           onCancel={cancelGdbImport}
+        />
+      ) : null}
+      {addData.phase === "open" ? (
+        <AddDataDialog
+          locale={locale}
+          venueName={addData.venueName}
+          network={addData.network}
+          facilities={addData.facilities}
+          busy={addData.busy}
+          error={addData.error}
+          onAddNetwork={onAddDataNetwork}
+          onAddFacilities={onAddDataFacilities}
+          onImport={submitAddData}
+          onCancel={cancelAddData}
         />
       ) : null}
     </div>
