@@ -40,29 +40,33 @@ A File Geodatabase is a **directory**; upload/inspection expects it zipped as `<
 - **8 layers:**
   | layer | geom | feats | use |
   |---|---|---|---|
-  | `point_facility_network` | Point | 2426 | **canonical POIs** — metadata + routing linkage |
-  | `point_facility` | Point | 2426 | POIs (icon-styling variant) |
-  | `Facility_Merge` | Point | 2591 | merged POIs incl. building/area overlays |
+  | `point_facility_network` | Point | 2426 | POIs with **routing linkage** (`nodeid1`) but **no icon field** |
+  | `point_facility` | Point | 2426 | POIs (routing linkage; also **no icon field**) |
+  | `Facility_Merge` | Point | 2591 | **icon-bearing POIs** (`image` field) — the layer Kiriko imports for markers; incl. building/area overlays |
   | `Facility_Merge_tap` | Point | 135 | tappable/labeled subset |
   | `wifi` | Point | 288 | WiFi APs (positioning — Phase 6) |
   | `beacon` | Point | 540 | beacons (positioning — Phase 6) |
   | `floor_all` | MultiPolygon | 16 | per-floor outline polygons |
   | `not_ar` | MultiPolygon | 5 | (non-AR regions) |
-- **Facility fields** (`point_facility_network`): `name` (store/facility name, e.g. `博多らーめん由丸　八重洲店`), `category` (`movement`, `Tickets`, `area`, …), `floor`, `symbol_id` (e.g. `1039_0300`; generic facilities may instead carry `image`), `image` (icon path like `/marker/escalator.png`; **empty for most named stores**), `pict_scale` (icon scale 0.08–0.48), `min_zoom_level`/`max_zoom_level`, `w3` (location description, e.g. `B1F改札内` = inside ticket gate), `altitude`, and **routing linkage**: `nodeid1`/`nodeid2` (net_junction NODEIDs, `-1` = none), `node1_len`/`node2_len` (distance to node), `pathid`, `node_index`.
+- **`Facility_Merge` fields** (the imported icon layer): `name`, `category` (`movement`, `Tickets`, `area`, …), `floor`, `image` (icon path like `/marker/escalator.png`; empty for named-store/`.svg` icons), `symbol_id` (e.g. `1039_0300`), `pict_scale` (0.08–0.48), `min_zoom_level`/`max_zoom_level`, `color`. **No routing linkage.**
+- **`point_facility_network` fields** (routing layer, **not** imported — it has **no `image`**): `name`, `symbol_id`, `floor`, `w3` (location description), and **routing linkage** `nodeid1`/`nodeid2` (net_junction NODEIDs, `-1` = none), `node1_len`/`node2_len`, `pathid`, `node_index`. The two layers do **not** join cleanly (id/symbol_id/exact-coords all mismatch), so Kiriko draws markers from `Facility_Merge` and derives each route anchor by proximity instead of `nodeid1`.
 
 ## Floor labels → ordinals
 
-Network and facility `FLOOR`/`floor` labels map to venue level ordinals (`kiriko_route::floor_to_ordinal`):
+Network and facility `FLOOR`/`floor` labels map to venue level ordinals via `kiriko_route::floor_to_ordinal`, kept in lockstep with the venue importer's `parseFloorToken` (`server/src/gdb/mapping.ts`) so points land on the venue's floors:
 
 - `F<n>` → `n - 1`  (F1 = ground = ordinal 0; F36 → 35)
 - `B<n>` → `-n`     (B1 → -1; B5 → -5)
-- `M<n>` → `(n - 1) + 0.5`  (mezzanine above floor n)
-- anything else → unmapped → node/facility dropped with a warning.
+- `M<n>` (mezzanine) → `n`  — matches the venue, whose `M2F` levels are ordinal 2 (the venue has **no** fractional ordinals; do not use `n-0.5`)
+- `<letters>B<n>` deep basements (`KB3`, `SB4` — Keiyo/Sobu lines) → `-n`; a single trailing `F` is tolerated (`SB4F` → -4)
+- case-insensitive; roof (`R`/`RF`), empty, or junk → unmapped → node/facility dropped with a warning.
+
+**Both parsers must stay aligned.** When they diverged, facilities on `KB*/SB*` floors were silently dropped and `M2` facilities landed on a phantom ordinal `1.5` the venue never has.
 
 ## Icons
 
 - 34 generic facility PNGs are staged at `src/map/icons/marker/` (elevator, escalator, stairs_up/down, ticket, locker, bus, taxi, male/female/unisex, info, smoking, …).
-- Facilities reference icons via the `image` field basename (`/marker/escalator.png` → `escalator`). **Named-store and building images (e.g. `marunouchi_bldg.png`) are NOT in the staged set** and are not currently available — those facilities fall back to a generic **pin** marker.
+- Facilities reference icons via the `Facility_Merge` `image` field basename (`/marker/escalator.png` → `escalator`). **Named-store/building images (e.g. `marunouchi_bldg.png`) and `.svg` entries are NOT in the staged set** — those facilities fall back to a generic **pin** marker.
 
 ## Kiriko pipeline (how it all comes together)
 
@@ -71,8 +75,8 @@ Network and facility `FLOOR`/`floor` labels map to venue level ordinals (`kiriko
 **Combined GDB import** (one publish → one bundle → one `source_kind='gdb'` version):
 - `POST /api/gdb/inspect` — venue GDB → layer summary + suggested plan (`blobHash`).
 - `POST /api/gdb/inspect-network` — network GDB → `{ networkBlobHash, nodeCount, edgeCount, floors }`.
-- `POST /api/gdb/inspect-facilities` — point-facility GDB → `{ facilitiesBlobHash, facilityCount, floors }`.
-- `POST /api/gdb/publish` — `{ venueId, blobHash, plan, networkBlobHash?, facilitiesBlobHash? }`. Server converts venue layers → synthesized IMDF, extracts `net_junction`/`net_path` and `point_facility_network` → GeoJSON, and threads all of it into `compileImdf` (napi). The Rust core builds the graph and facilities and embeds them in the bundle.
+- `POST /api/gdb/inspect-facilities` — point-facility GDB → `{ facilitiesBlobHash, facilityCount, floors }` (extracts the `Facility_Merge` layer).
+- `POST /api/gdb/publish` — `{ venueId, blobHash, plan, networkBlobHash?, facilitiesBlobHash? }`. Server converts venue layers → synthesized IMDF, extracts `net_junction`/`net_path` and `Facility_Merge` → GeoJSON, and threads all of it into `compileImdf` (napi). The Rust core builds the graph and facilities and embeds them in the bundle.
 
 **KVB bundle sections** (`kiriko-bundle`, `core/crates/kiriko-bundle/src/format.rs`):
 - `1 manifest`, `2 geometry`, `3 stores` — always (IMDF).
@@ -88,7 +92,7 @@ Network and facility `FLOOR`/`floor` labels map to venue level ordinals (`kiriko
 - WASM: `routeBundle(bundle, oLon,oLat,oOrd, dLon,dLat,dOrd)` decodes §5 and runs A\*.
 
 **Facilities (`kiriko-facilities`):**
-- `build_facilities(geojson, graph, node_ids)` → `Facilities`. Each `Facility` has `(lon, lat, ordinal, name, icon, anchor?)`. `anchor` is resolved from `nodeid1` → the graph node's `(lon,lat,ordinal)`, enabling **route-to-facility** by reusing `route(origin, anchor)`.
+- `build_facilities(geojson, graph)` → `Facilities`. Each `Facility` has `(lon, lat, ordinal, name, icon, anchor?)` — position is the **verbatim GDB coordinate**, `icon` is the `image` basename. `anchor` is that same position used as the **route-to-facility** destination (the A\* router snaps it to the nearest node at query time), set only when the facility's floor carries a route-graph node; `None` otherwise.
 - WASM: `facilities(bundle)` decodes §7; viewer renders a floor-filtered GL symbol layer (icon by `image` basename, pin fallback) and offers **Route here** on tap.
 
 ## Gotchas
