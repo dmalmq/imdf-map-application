@@ -350,7 +350,7 @@ vi.mock("../map/IndoorMap", () => ({
           props.directions?.destination != null ? JSON.stringify(props.directions.destination) : ""
         }
         data-directions-route={
-          props.directions?.route != null ? JSON.stringify(props.directions.route.nodes) : ""
+          props.directions?.route != null ? JSON.stringify(props.directions.route.segments) : ""
         }
       >
         <button

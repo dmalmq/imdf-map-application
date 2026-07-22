@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoadedVenue, ViewerFeature } from "../imdf/types";
+import type { RouteResultDto } from "../bundle/wasm";
 import { kirikoTheme } from "../theme/presets";
 import { FACILITY_SOURCE_ID, INDOOR_SOURCE_ID, ROUTE_SOURCE_ID } from "./featureLayers";
 import { defaultLayerVisibility } from "./layerGroups";
@@ -551,14 +552,14 @@ describe("IndoorMap directions", () => {
     };
   }
 
-  const CROSS_FLOOR_ROUTE = {
-    nodes: [
-      { lon: 139.0, lat: 35.0, ordinal: 0 },
-      { lon: 139.001, lat: 35.0, ordinal: 0 },
-      { lon: 139.001, lat: 35.001, ordinal: 1 },
-      { lon: 139.002, lat: 35.002, ordinal: 1 },
+  const CROSS_FLOOR_ROUTE: RouteResultDto = {
+    segments: [
+      { ordinal: 0, coordinates: [[139.0, 35.0], [139.001, 35.0]] },
+      { ordinal: 1, coordinates: [[139.001, 35.001], [139.002, 35.002]] },
     ],
     totalWeight: 240,
+    originProjected: [139.0, 35.0, 0],
+    destProjected: [139.002, 35.002, 1],
   };
 
   function lastRouteData(map: FakeMap): GeoJSON.FeatureCollection {
@@ -620,9 +621,13 @@ describe("IndoorMap directions", () => {
         [139.001, 35.0],
       ],
     });
-    const points = fc.features.filter((f) => f.properties?.["kind"] !== "segment");
-    expect(points).toHaveLength(1);
-    expect(points[0]!.properties?.["kind"]).toBe("origin");
+    const nonSegments = fc.features
+      .filter((f) => f.properties?.["kind"] !== "segment")
+      .map((f) => f.properties?.["kind"])
+      .sort();
+    // Origin click is on this floor → its marker plus the dashed connector to
+    // the projected origin; the destination lives on another floor.
+    expect(nonSegments).toEqual(["connector", "origin"]);
   });
 
   it("re-segments the route source when the active floor changes", () => {

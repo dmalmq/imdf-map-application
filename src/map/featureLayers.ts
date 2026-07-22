@@ -57,6 +57,7 @@ export const LAYER_ISSUE_HIGHLIGHT_POINT = "indoor-issue-highlight-point";
 export const ROUTE_SOURCE_ID = "indoor-route";
 export const LAYER_ROUTE = "indoor-route-line";
 export const LAYER_ROUTE_ENDPOINT = "indoor-route-endpoint";
+export const LAYER_ROUTE_CONNECTOR = "indoor-route-connector";
 
 /** Separate GeoJSON source for the point-facility symbol overlay (§7). */
 export const FACILITY_SOURCE_ID = "indoor-facilities";
@@ -588,6 +589,18 @@ export function buildRouteLayers(theme: ViewerTheme): AnyLayer[] {
   const c = theme.colors;
   return [
     {
+      id: LAYER_ROUTE_CONNECTOR,
+      type: "line",
+      source: ROUTE_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "connector"],
+      paint: {
+        "line-color": c.accent,
+        "line-width": 2,
+        "line-opacity": 0.7,
+        "line-dasharray": [1.5, 1.5],
+      },
+    },
+    {
       id: LAYER_ROUTE,
       type: "line",
       source: ROUTE_SOURCE_ID,
@@ -686,6 +699,7 @@ export function applyThemePaintProperties(
   setPaintProperty(LAYER_ISSUE_HIGHLIGHT_POINT, "circle-stroke-color", c.warning);
 
   setPaintProperty(LAYER_ROUTE, "line-color", c.accent);
+  setPaintProperty(LAYER_ROUTE_CONNECTOR, "line-color", c.accent);
   setPaintProperty(LAYER_ROUTE_ENDPOINT, "circle-color", c.accent);
   setPaintProperty(LAYER_ROUTE_ENDPOINT, "circle-stroke-color", c.panel);
 

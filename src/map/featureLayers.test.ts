@@ -9,6 +9,7 @@ import {
   CLICKABLE_LAYER_IDS,
   LAYER_ROUTE,
   LAYER_ROUTE_ENDPOINT,
+  LAYER_ROUTE_CONNECTOR,
   ROUTE_SOURCE_ID,
   LAYER_ISSUE_HIGHLIGHT_OUTLINE,
   LAYER_ISSUE_HIGHLIGHT_POINT,
@@ -163,6 +164,13 @@ describe("route layers", () => {
   it("keeps route layers out of the clickable hit-test set", () => {
     expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_ROUTE);
     expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_ROUTE_ENDPOINT);
+  });
+
+  it("adds a dashed connector line filtered to connector features, kept out of hit-testing", () => {
+    const connector = buildRouteLayers(theme).find((l) => l.id === LAYER_ROUTE_CONNECTOR) as LineLayerSpecification;
+    expect(connector.filter).toEqual(["==", ["get", "kind"], "connector"]);
+    expect(connector.paint?.["line-dasharray"]).toEqual([1.5, 1.5]);
+    expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_ROUTE_CONNECTOR);
   });
 
   it("registers the route source and layers in the indoor style", () => {

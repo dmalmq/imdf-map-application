@@ -11,12 +11,12 @@ export interface RouteFeaturesInput {
 }
 
 /**
- * Projects the directions state into a GeoJSON overlay for one floor.
- * Route nodes are grouped into maximal runs of consecutive nodes on
- * `activeOrdinal`; each run of two or more becomes one `kind:"segment"`
- * LineString, so floor transitions never draw cross-floor chords and only
- * the active floor's segments render. Endpoints become `kind:"origin"` /
- * `kind:"destination"` Point features, each visible only on its own floor.
+ * Projects the directions state into a GeoJSON overlay for one floor. Each
+ * route `segment` on `activeOrdinal` becomes one `kind:"segment"` LineString
+ * tracing the real corridor polyline; a `kind:"connector"` LineString links
+ * each raw click to its projected point on the network, drawn on the
+ * projection's floor. Endpoints become `kind:"origin"` / `kind:"destination"`
+ * Point features at the raw click, each visible only on its own floor.
  */
 export function buildRouteFeatures(
   input: RouteFeaturesInput | null,
@@ -30,25 +30,38 @@ export function buildRouteFeatures(
   const { origin, destination, route } = input;
 
   if (route !== null) {
-    let run: [number, number][] = [];
-    const flush = (): void => {
-      if (run.length >= 2) {
+    for (const segment of route.segments) {
+      if (segment.ordinal === activeOrdinal && segment.coordinates.length >= 2) {
         features.push({
           type: "Feature",
           properties: { kind: "segment" },
-          geometry: { type: "LineString", coordinates: run },
+          geometry: { type: "LineString", coordinates: segment.coordinates },
         });
       }
-      run = [];
-    };
-    for (const node of route.nodes) {
-      if (node.ordinal === activeOrdinal) {
-        run.push([node.lon, node.lat]);
-      } else {
-        flush();
-      }
     }
-    flush();
+    // Connectors: raw click → projected point, on the projection's floor.
+    const [oLon, oLat, oOrd] = route.originProjected;
+    if (origin !== null && oOrd === activeOrdinal) {
+      features.push({
+        type: "Feature",
+        properties: { kind: "connector" },
+        geometry: {
+          type: "LineString",
+          coordinates: [[origin.longitude, origin.latitude], [oLon, oLat]],
+        },
+      });
+    }
+    const [dLon, dLat, dOrd] = route.destProjected;
+    if (destination !== null && dOrd === activeOrdinal) {
+      features.push({
+        type: "Feature",
+        properties: { kind: "connector" },
+        geometry: {
+          type: "LineString",
+          coordinates: [[destination.longitude, destination.latitude], [dLon, dLat]],
+        },
+      });
+    }
   }
 
   if (origin !== null && origin.ordinal === activeOrdinal) {
