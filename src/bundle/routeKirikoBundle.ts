@@ -8,12 +8,24 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function isRouteNode(value: unknown): boolean {
+function isLonLat(value: unknown): value is [number, number] {
+  return Array.isArray(value) && value.length === 2 && value.every(isFiniteNumber);
+}
+
+function isTriple(value: unknown): value is [number, number, number] {
+  return Array.isArray(value) && value.length === 3 && value.every(isFiniteNumber);
+}
+
+function isSegment(value: unknown): boolean {
   if (value === null || typeof value !== "object") {
     return false;
   }
-  const node = value as Record<string, unknown>;
-  return isFiniteNumber(node["lon"]) && isFiniteNumber(node["lat"]) && isFiniteNumber(node["ordinal"]);
+  const seg = value as Record<string, unknown>;
+  return (
+    isFiniteNumber(seg["ordinal"]) &&
+    Array.isArray(seg["coordinates"]) &&
+    seg["coordinates"].every(isLonLat)
+  );
 }
 
 function isRouteResult(value: unknown): value is RouteResultDto {
@@ -22,9 +34,11 @@ function isRouteResult(value: unknown): value is RouteResultDto {
   }
   const route = value as Record<string, unknown>;
   return (
-    Array.isArray(route["nodes"]) &&
-    route["nodes"].every(isRouteNode) &&
-    isFiniteNumber(route["totalWeight"])
+    Array.isArray(route["segments"]) &&
+    route["segments"].every(isSegment) &&
+    isFiniteNumber(route["totalWeight"]) &&
+    isTriple(route["originProjected"]) &&
+    isTriple(route["destProjected"])
   );
 }
 

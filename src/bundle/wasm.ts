@@ -103,11 +103,10 @@ export interface FacilityDto {
   anchor: FacilityAnchorDto | null;
 }
 
-/** One routed node as serialized by the wasm `routeBundle` binding. */
-export interface RouteNodeDto {
-  lon: number;
-  lat: number;
+/** One floor-grouped run of the route polyline. */
+export interface RouteSegmentDto {
   ordinal: number;
+  coordinates: [number, number][];
 }
 
 /** A routing endpoint: lon/lat plus the level ordinal the point was picked on. */
@@ -117,10 +116,13 @@ export interface RouteEndpoint {
   ordinal: number;
 }
 
-/** Computed route payload: ordered nodes plus the total edge weight (metres). */
+/** Computed route: corridor polyline segments, total edge weight, and the
+ *  origin/destination projected onto the network ([lon, lat, ordinal]). */
 export interface RouteResultDto {
-  nodes: RouteNodeDto[];
+  segments: RouteSegmentDto[];
   totalWeight: number;
+  originProjected: [number, number, number];
+  destProjected: [number, number, number];
 }
 
 let initPromise: Promise<void> | null = null;
