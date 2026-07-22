@@ -11,6 +11,7 @@ const inspectGdbFacilities = vi.fn();
 const createVenue = vi.fn();
 const publishGdb = vi.fn();
 const augmentGdb = vi.fn();
+const getGdbMapping = vi.fn();
 const waitForJob = vi.fn();
 const deleteVenue = vi.fn();
 vi.mock("./api", async (importOriginal) => {
@@ -27,6 +28,7 @@ vi.mock("./api", async (importOriginal) => {
       createVenue: (...args: unknown[]) => createVenue(...args),
       publishGdb: (...args: unknown[]) => publishGdb(...args),
       augmentGdb: (...args: unknown[]) => augmentGdb(...args),
+      getGdbMapping: (...args: unknown[]) => getGdbMapping(...args),
       waitForJob: (...args: unknown[]) => waitForJob(...args),
       deleteVenue: (...args: unknown[]) => deleteVenue(...args),
     },
@@ -46,6 +48,27 @@ const VENUE: VenueSummary = {
     stats: { levels: 4, features: 3204 },
     createdAt: "2026-07-17 00:00:00",
   },
+};
+
+const gdbInspection = {
+  sourceName: "Station.gdb",
+  databases: [{ id: "gdb-1", name: "Station.gdb" }],
+  layers: [{
+    key: { databaseId: "gdb-1", layerName: "Station_1_Floor" },
+    databaseName: "Station.gdb", featureCount: 3, geometryFamily: "polygon",
+    fields: [{ name: "id", type: "String" }],
+  }],
+  warnings: [],
+};
+const gdbPlan = {
+  venueName: "Station",
+  buildings: [{ id: "b1", name: "Station" }],
+  layers: [{
+    key: { databaseId: "gdb-1", layerName: "Station_1_Floor" },
+    included: true, targetType: "level", buildingId: "b1",
+    levelRule: { kind: "layer-name" }, idField: "id",
+    ordinalField: null, shortNameField: null, nameField: null, categoryField: null,
+  }],
 };
 
 afterEach(() => {
@@ -116,27 +139,6 @@ describe("GalleryPage", () => {
       expect(screen.getByText("データセットがありません")).toBeTruthy();
     });
   });
-
-  const gdbInspection = {
-    sourceName: "Station.gdb",
-    databases: [{ id: "gdb-1", name: "Station.gdb" }],
-    layers: [{
-      key: { databaseId: "gdb-1", layerName: "Station_1_Floor" },
-      databaseName: "Station.gdb", featureCount: 3, geometryFamily: "polygon",
-      fields: [{ name: "id", type: "String" }],
-    }],
-    warnings: [],
-  };
-  const gdbPlan = {
-    venueName: "Station",
-    buildings: [{ id: "b1", name: "Station" }],
-    layers: [{
-      key: { databaseId: "gdb-1", layerName: "Station_1_Floor" },
-      included: true, targetType: "level", buildingId: "b1",
-      levelRule: { kind: "layer-name" }, idField: "id",
-      ordinalField: null, shortNameField: null, nameField: null, categoryField: null,
-    }],
-  };
 
   it("imports a geodatabase: inspect, review, publish, reload", async () => {
     me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
@@ -401,5 +403,56 @@ describe("GalleryPage add routing/facilities", () => {
     expect(augmentGdb).toHaveBeenCalledWith(42, { networkBlobHash: "n".repeat(64) });
     expect(createVenue).not.toHaveBeenCalled();
     await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("GalleryPage edit mapping", () => {
+  it("re-opens the seeded mapping dialog and republishes without creating a venue", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 42,
+        slug: "existing-station",
+        name: "Existing Station",
+        createdAt: "2026-07-20 00:00:00",
+        latest: {
+          seq: 1,
+          status: "published",
+          stats: { levels: 2, features: 9 },
+          createdAt: "2026-07-20 00:00:00",
+        },
+        editableMapping: true,
+      },
+    ]);
+    getGdbMapping.mockResolvedValue({
+      blobHash: "b".repeat(64),
+      inspection: gdbInspection,
+      plan: { ...gdbPlan, venueName: "Existing Station" },
+    });
+    publishGdb.mockResolvedValue({ jobId: "j", versionId: 2, seq: 2, excludedLayers: [] });
+    waitForJob.mockResolvedValue({ status: "done" });
+
+    const user = userEvent.setup();
+    render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Existing Station")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+    await user.click(screen.getByRole("button", { name: "Edit mapping" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import" })).toBeTruthy());
+    const nameInput = screen.getByLabelText(/venue name/i) as HTMLInputElement;
+    expect(nameInput.value).toBe("Existing Station");
+    expect(nameInput.readOnly || nameInput.disabled).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(publishGdb).toHaveBeenCalledTimes(1));
+    expect(getGdbMapping).toHaveBeenCalledWith(42);
+    expect(publishGdb).toHaveBeenCalledWith(
+      42,
+      "b".repeat(64),
+      expect.objectContaining({ venueName: "Existing Station" }),
+      null,
+      null,
+    );
+    expect(createVenue).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import type { GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse, FacilitiesInspectResponse } from "../gdb/types";
+import type { GdbInspection, GdbInspectResponse, GdbMappingPlan, NetworkInspectResponse, FacilitiesInspectResponse } from "../gdb/types";
 import type { LocaleCode } from "../imdf/types";
 
 export type ApiUserRole = "viewer" | "member" | "admin";
@@ -23,6 +23,7 @@ export interface VenueSummary extends VenueRow {
     stats: { levels: number; features: number } | null;
     createdAt: string;
   } | null;
+  editableMapping?: boolean;
 }
 
 export class ApiError extends Error {
@@ -356,5 +357,13 @@ export const api = {
       throw parsed;
     }
     return (await res.json()) as { jobId: string; versionId: number; seq: number };
+  },
+
+  async getGdbMapping(
+    venueId: number,
+  ): Promise<{ blobHash: string; inspection: GdbInspection; plan: GdbMappingPlan }> {
+    return request<{ blobHash: string; inspection: GdbInspection; plan: GdbMappingPlan }>(
+      `/api/venues/${venueId}/gdb-mapping`,
+    );
   },
 };

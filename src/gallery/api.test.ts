@@ -162,3 +162,21 @@ describe("augmentGdb", () => {
     });
   });
 });
+
+describe("getGdbMapping", () => {
+  it("GETs the venue mapping endpoint and returns the parsed body", async () => {
+    const body = {
+      blobHash: "b".repeat(64),
+      inspection: { databases: [], warnings: [] },
+      plan: { venueName: "X", buildings: [], layers: [] },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((..._args: unknown[]) =>
+        Promise.resolve(new Response(JSON.stringify(body), { status: 200 })),
+      ),
+    );
+    const out = await api.getGdbMapping(42);
+    expect(out).toEqual(body);
+  });
+});

@@ -39,7 +39,8 @@ type GalleryState =
 
 type GdbTarget =
   | { mode: "create" }
-  | { mode: "version"; venueId: number; venueName: string };
+  | { mode: "version"; venueId: number; venueName: string }
+  | { mode: "edit-mapping"; venueId: number; venueName: string };
 
 type GdbFlow =
   | { phase: "idle" }
@@ -126,6 +127,32 @@ export function GalleryPage() {
     gdbInputRef.current?.click();
   };
 
+  const startEditMapping = (venue: VenueSummary) => {
+    setGdbNotice(null);
+    const target: GdbTarget = { mode: "edit-mapping", venueId: venue.id, venueName: venue.name };
+    setGdbFlow({ phase: "inspecting", target });
+    void (async () => {
+      try {
+        const mapping = await api.getGdbMapping(venue.id);
+        setGdbFlow({
+          phase: "review",
+          target,
+          data: {
+            blobHash: mapping.blobHash,
+            inspection: mapping.inspection,
+            suggestedPlan: mapping.plan,
+          },
+          network: null,
+          facilities: null,
+          busy: false,
+          error: null,
+        });
+      } catch (err) {
+        setGdbFlow({ phase: "error", target, message: gdbErrorMessage(err as GdbError, locale) });
+      }
+    })();
+  };
+
   const onGdbFile = (file: File | undefined) => {
     if (!file) return;
     const target = gdbTargetRef.current;
@@ -200,7 +227,7 @@ export function GalleryPage() {
       let createdVenueId: number | null = null;
       try {
         let venueId: number;
-        if (target.mode === "version") {
+        if (target.mode === "version" || target.mode === "edit-mapping") {
           venueId = target.venueId;
         } else {
           const venue = await api.createVenue(plan.venueName.trim());
@@ -471,6 +498,13 @@ export function GalleryPage() {
                 onAddData={() => {
                   openAddData(venue);
                 }}
+                {...(venue.editableMapping
+                  ? {
+                      onEditMapping: () => {
+                        startEditMapping(venue);
+                      },
+                    }
+                  : {})}
               />
             ))}
           </div>
@@ -522,7 +556,7 @@ export function GalleryPage() {
           onAddNetwork={onGdbNetworkFile}
           facilities={gdbFlow.facilities}
           onAddFacilities={onGdbFacilityFile}
-          venueNameLocked={gdbFlow.target.mode === "version"}
+          venueNameLocked={gdbFlow.target.mode !== "create"}
           onImport={publishGdbPlan}
           onCancel={cancelGdbImport}
         />

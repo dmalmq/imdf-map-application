@@ -14,6 +14,7 @@ export interface VenueRow {
 
 export interface VenueSummary extends VenueRow {
   latest: { seq: number; status: string; stats: VersionStats | null; createdAt: string } | null;
+  editableMapping: boolean;
 }
 
 /** ASCII-only slug; non-latin names fall back to "venue". */
@@ -62,6 +63,9 @@ export function listVenues(db: Database.Database, tenantId: number): VenueSummar
      FROM versions WHERE venue_id = ? AND status = 'published'
      ORDER BY seq DESC LIMIT 1`,
   );
+  const gdbStmt = db.prepare(
+    "SELECT 1 AS x FROM versions WHERE venue_id = ? AND gdb_source_blob_hash IS NOT NULL LIMIT 1",
+  );
   return venues.map((venue) => {
     const latest = latestStmt.get(venue.id) as
       | { seq: number; status: string; statsJson: string | null; createdAt: string }
@@ -76,6 +80,7 @@ export function listVenues(db: Database.Database, tenantId: number): VenueSummar
             createdAt: latest.createdAt,
           }
         : null,
+      editableMapping: gdbStmt.get(venue.id) !== undefined,
     };
   });
 }

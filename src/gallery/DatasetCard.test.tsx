@@ -108,4 +108,26 @@ describe("DatasetCard", () => {
     );
     expect(screen.queryByRole("button", { name: "Add routing / facilities" })).toBeNull();
   });
+
+  it("shows Edit mapping and calls onEditMapping when provided", () => {
+    const onEditMapping = vi.fn();
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="en"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onEditMapping={onEditMapping}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit mapping" }));
+    expect(onEditMapping).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Edit mapping when onEditMapping is omitted", () => {
+    render(
+      <DatasetCard venue={venue} locale="en" onOpen={() => {}} onDelete={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: "Edit mapping" })).toBeNull();
+  });
 });

@@ -557,3 +557,22 @@ describe("GET /api/venues/:id/gdb-mapping", () => {
     expect(res.json()).toMatchObject({ error: "no_editable_mapping" });
   });
 });
+
+describe("venue listing editableMapping", () => {
+  it("marks a gdb dataset as editableMapping in the venue listing", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId, blobHash, plan: PUBLISH_PLAN },
+    });
+    await app.queue.idle();
+    const res = await app.inject({ method: "GET", url: "/api/venues", headers: { cookie } });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { venues: Array<{ id: number; editableMapping: boolean }> };
+    const v = body.venues.find((x) => x.id === venueId);
+    expect(v?.editableMapping).toBe(true);
+  });
+});

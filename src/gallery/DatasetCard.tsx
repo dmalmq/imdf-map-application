@@ -7,6 +7,7 @@ const ui = {
   uploadImdf: { ja: "IMDF をアップロード", en: "Upload IMDF" },
   importGdb: { ja: "GDB を取り込む", en: "Import GDB" },
   addData: { ja: "経路・地点データを追加", en: "Add routing / facilities" },
+  editMapping: { ja: "マッピングを編集", en: "Edit mapping" },
   floors: { ja: "フロア", en: "floors" },
   features: { ja: "地物", en: "features" },
   processing: { ja: "処理中・未公開", en: "not published yet" },
@@ -19,6 +20,7 @@ export interface DatasetCardProps {
   onDelete: () => void;
   onImportGdb?: () => void;
   onAddData?: () => void;
+  onEditMapping?: () => void;
   onUploadImdf?: () => void;
 }
 
@@ -29,6 +31,7 @@ export function DatasetCard({
   onDelete,
   onImportGdb,
   onAddData,
+  onEditMapping,
   onUploadImdf,
 }: DatasetCardProps) {
   const stats = venue.latest?.stats ?? null;
@@ -65,6 +68,11 @@ export function DatasetCard({
         {onAddData ? (
           <button type="button" className="btn-ghost" onClick={onAddData}>
             {ui.addData[locale]}
+          </button>
+        ) : null}
+        {onEditMapping ? (
+          <button type="button" className="btn-ghost" onClick={onEditMapping}>
+            {ui.editMapping[locale]}
           </button>
         ) : null}
         <button type="button" className="btn-primary" onClick={onOpen}>
