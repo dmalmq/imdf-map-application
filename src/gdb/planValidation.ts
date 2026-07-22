@@ -190,7 +190,7 @@ const blockingText = {
 } as const;
 
 function fieldExists(descriptor: GdbLayerDescriptor | undefined, field: string | null): boolean {
-  if (field === null) return true;
+  if (field === null || field === "") return true;
   if (!descriptor) return false;
   return descriptor.fields.some((f) => f.name === field);
 }

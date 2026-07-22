@@ -298,6 +298,34 @@ describe("normalizeGdbPlan", () => {
     // Does not mutate input
     expect(plan.layers[0]!.buildingId).toBe("");
   });
+
+  it("coerces empty-string field selectors to null (ajv null->'' footgun)", () => {
+    const plan = {
+      venueName: "V",
+      buildings: [],
+      layers: [
+        {
+          key: { databaseId: "gdb-1", layerName: "A_1_Space" },
+          included: true,
+          targetType: "unit" as const,
+          buildingId: null,
+          levelRule: { kind: "layer-name" as const },
+          idField: "id",
+          ordinalField: "",
+          shortNameField: "",
+          nameField: "",
+          categoryField: "",
+        },
+      ],
+    };
+    const out = normalizeGdbPlan(plan);
+    const row = out.layers[0]!;
+    expect(row.ordinalField).toBeNull();
+    expect(row.shortNameField).toBeNull();
+    expect(row.nameField).toBeNull();
+    expect(row.categoryField).toBeNull();
+    expect(row.idField).toBe("id");
+  });
 });
 
 describe("resolveGdbImdfWithExclusions", () => {

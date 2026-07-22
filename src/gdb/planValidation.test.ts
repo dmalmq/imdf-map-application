@@ -125,4 +125,20 @@ describe("collectBlockingIssues", () => {
     const issues = collectBlockingIssues(plan, unitMap, "en");
     expect(issues.some((m) => m.includes("Space"))).toBe(true);
   });
+  it("treats empty-string field selectors as unset (not a missing field)", () => {
+    const plan = {
+      ...basePlan,
+      layers: [
+        {
+          ...basePlan.layers[0]!,
+          ordinalField: "",
+          shortNameField: "",
+          nameField: "",
+          categoryField: "",
+        },
+      ],
+    };
+    expect(collectBlockingIssues(plan, map, "en")).toEqual([]);
+  });
+
 });

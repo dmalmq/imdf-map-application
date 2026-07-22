@@ -435,6 +435,11 @@ export function normalizeGdbPlan(plan: GdbMappingPlan): GdbMappingPlan {
     layers: plan.layers.map((row) => ({
       ...row,
       buildingId: row.buildingId === "" ? null : row.buildingId,
+      idField: row.idField === "" ? null : row.idField,
+      ordinalField: row.ordinalField === "" ? null : row.ordinalField,
+      shortNameField: row.shortNameField === "" ? null : row.shortNameField,
+      nameField: row.nameField === "" ? null : row.nameField,
+      categoryField: row.categoryField === "" ? null : row.categoryField,
     })),
   };
 }

@@ -769,7 +769,7 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       } finally {
         removeStagedGdb(stagedPath);
       }
-      return reply.send({ blobHash: row.g, inspection, plan: JSON.parse(row.p) });
+      return reply.send({ blobHash: row.g, inspection, plan: normalizeGdbPlan(JSON.parse(row.p)) });
     },
   );
 }
