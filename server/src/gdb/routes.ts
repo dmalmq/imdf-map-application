@@ -524,6 +524,22 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         imdfHash,
         imdfSize,
       );
+      // Reprocess rule: supplied inputs override; omitted inputs inherit the
+      // venue's latest published version so re-publishing never silently drops
+      // routing/facilities. New venues have no prior → inherit nothing.
+      const prior = db
+        .prepare(
+          `SELECT net_junctions_blob_hash AS j, net_paths_blob_hash AS t, facilities_blob_hash AS f
+             FROM versions WHERE venue_id = ? AND status = 'published' ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(venueId) as { j: string | null; t: string | null; f: string | null } | undefined;
+      if (networkBlobHash === undefined && prior) {
+        networkJunctionsHash = prior.j ?? undefined;
+        networkPathsHash = prior.t ?? undefined;
+      }
+      if (facilitiesBlobHash === undefined && prior) {
+        facilitiesGeoJsonHash = prior.f ?? undefined;
+      }
       const nextSeq =
         ((db.prepare("SELECT MAX(seq) AS m FROM versions WHERE venue_id = ?").get(venueId) as {
           m: number | null;

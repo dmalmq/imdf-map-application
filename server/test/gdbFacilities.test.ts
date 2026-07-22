@@ -413,3 +413,40 @@ describe("GDB publish persists reprocess inputs", () => {
     expect(row.f).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+describe("GDB publish inherits prior bundle inputs when omitted", () => {
+  it("a re-publish without network reuses the prior published version's routing", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    const networkBlobHash = putBlob(app, await validGdbZipBytes("net.gdb"));
+
+    const first = await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId, blobHash, networkBlobHash, plan: PUBLISH_PLAN },
+    });
+    expect(first.statusCode, first.body).toBe(202);
+    await app.queue.idle();
+    const v1 = (first.json() as { versionId: number }).versionId;
+    const v1Refs = app.db
+      .prepare("SELECT net_junctions_blob_hash AS j, net_paths_blob_hash AS t FROM versions WHERE id = ?")
+      .get(v1) as { j: string; t: string };
+
+    fake.compileCalls.length = 0;
+    const second = await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId, blobHash, plan: PUBLISH_PLAN },
+    });
+    expect(second.statusCode, second.body).toBe(202);
+    await app.queue.idle();
+    const v2 = (second.json() as { versionId: number }).versionId;
+
+    const v2Refs = app.db
+      .prepare("SELECT net_junctions_blob_hash AS j, net_paths_blob_hash AS t FROM versions WHERE id = ?")
+      .get(v2) as { j: string; t: string };
+    expect(v2Refs.j).toBe(v1Refs.j);
+    expect(v2Refs.t).toBe(v1Refs.t);
+    expect(fake.compileCalls[0]!.metadata["networkJunctionsGeoJson"]).toBe(JUNCTIONS_GEOJSON);
+  });
+});
