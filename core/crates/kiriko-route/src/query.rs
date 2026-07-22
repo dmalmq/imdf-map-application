@@ -72,6 +72,74 @@ impl PartialOrd for Open {
     }
 }
 
+/// A click projected onto one edge's polyline.
+#[derive(Debug, Clone, Copy)]
+struct EdgeSnap {
+    edge_index: usize,
+    projected: [f64; 2],
+    /// Arc length (metres) from the edge's `from` endpoint to the projection.
+    along: f64,
+    /// Total arc length (metres) of the edge polyline.
+    total: f64,
+    ordinal: f64,
+}
+
+/// Project `(px,py)` onto a polyline. Returns `(projected, along, total)` where
+/// `along`/`total` are cumulative great-circle arc lengths in metres.
+fn project_point_on_polyline(poly: &[[f64; 2]], px: f64, py: f64) -> ([f64; 2], f64, f64) {
+    let mut best = ([px, py], 0.0, f64::INFINITY); // (proj, along, dist)
+    let mut acc = 0.0;
+    let mut total = 0.0;
+    for w in poly.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let seg = haversine_m(a[0], a[1], b[0], b[1]);
+        // Parameterize on the lon/lat plane (small spans → adequate), clamp t.
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 <= f64::EPSILON {
+            0.0
+        } else {
+            (((px - a[0]) * dx + (py - a[1]) * dy) / len2).clamp(0.0, 1.0)
+        };
+        let proj = [a[0] + t * dx, a[1] + t * dy];
+        let dist = haversine_m(px, py, proj[0], proj[1]);
+        if dist < best.2 {
+            best = (proj, acc + t * seg, dist);
+        }
+        acc += seg;
+        total = acc;
+    }
+    (best.0, best.1, total)
+}
+
+/// Nearest edge projection to `p`; same-ordinal edges beat closer off-floor
+/// edges (same rule as [`snap`]). `None` only when the graph has no edges.
+fn snap_to_edge(graph: &RouteGraph, p: &Point3) -> Option<EdgeSnap> {
+    let mut best: Option<(EdgeSnap, bool, f64)> = None; // (snap, same_floor, dist)
+    for (i, e) in graph.edges.iter().enumerate() {
+        let poly = graph.edge_polyline(e);
+        let (proj, along, total) = project_point_on_polyline(&poly, p.lon, p.lat);
+        let dist = haversine_m(p.lon, p.lat, proj[0], proj[1]);
+        let same = e.ordinal == p.ordinal;
+        let better = match &best {
+            None => true,
+            Some((_, bsame, bdist)) => {
+                // Prefer same-floor; within the same class, prefer nearer.
+                (same, -dist).partial_cmp(&(*bsame, -*bdist)).unwrap()
+                    == std::cmp::Ordering::Greater
+            }
+        };
+        if better {
+            best = Some((
+                EdgeSnap { edge_index: i, projected: proj, along, total, ordinal: e.ordinal },
+                same,
+                dist,
+            ));
+        }
+    }
+    best.map(|(s, _, _)| s)
+}
+
 /// Route from `origin` to `dest` over the graph: snap both endpoints to the
 /// nearest node, then A* (edges traversed in both directions). Returns `None`
 /// when the snapped endpoints are disconnected.
@@ -178,6 +246,47 @@ mod tests {
         .unwrap();
         assert_eq!(r.nodes.len(), 3); // 0→1→2 (cost 20) beats 0→2 (cost 100)
         assert!((r.total_weight - 20.0).abs() < 1e-3);
+    }
+
+    fn geom_graph() -> RouteGraph {
+        // One curved edge on ordinal 0 from (139.0,35.0) to (139.002,35.0)
+        // via a bend at (139.001, 35.001).
+        RouteGraph {
+            nodes: vec![
+                RouteNode { lon: 139.0, lat: 35.0, ordinal: 0.0 },
+                RouteNode { lon: 139.002, lat: 35.0, ordinal: 0.0 },
+            ],
+            edges: vec![RouteEdge {
+                from: 0,
+                to: 1,
+                weight: 100.0,
+                ordinal: 0.0,
+                interior: vec![[139.001, 35.001]],
+            }],
+        }
+    }
+
+    #[test]
+    fn snaps_click_onto_nearest_edge() {
+        let g = geom_graph();
+        // Click near the bend, slightly off it.
+        let s = snap_to_edge(&g, &Point3 { lon: 139.001, lat: 35.0009, ordinal: 0.0 })
+            .expect("snaps to the only edge");
+        assert_eq!(s.edge_index, 0);
+        // Projection lands at/near the bend vertex.
+        assert!((s.projected[0] - 139.001).abs() < 1e-4);
+        assert!(s.along > 0.0 && s.along < s.total);
+    }
+
+    #[test]
+    fn snap_prefers_same_ordinal_edge() {
+        let mut g = geom_graph();
+        g.nodes.push(RouteNode { lon: 139.001, lat: 35.0, ordinal: -1.0 });
+        g.nodes.push(RouteNode { lon: 139.0011, lat: 35.0, ordinal: -1.0 });
+        g.edges.push(RouteEdge { from: 2, to: 3, weight: 10.0, ordinal: -1.0, interior: vec![] });
+        // Click on ordinal 0 sitting right over the B1 edge still snaps to the F1 edge.
+        let s = snap_to_edge(&g, &Point3 { lon: 139.001, lat: 35.0, ordinal: 0.0 }).unwrap();
+        assert_eq!(g.edges[s.edge_index].ordinal, 0.0);
     }
 
     #[test]
