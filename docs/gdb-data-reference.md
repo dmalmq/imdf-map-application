@@ -80,16 +80,16 @@ Network and facility `FLOOR`/`floor` labels map to venue level ordinals via `kir
 
 **KVB bundle sections** (`kiriko-bundle`, `core/crates/kiriko-bundle/src/format.rs`):
 - `1 manifest`, `2 geometry`, `3 stores` — always (IMDF).
-- `5 graph` — routing graph, present when a network GDB was imported.
+- `5 graph` — routing graph, present when a network GDB was imported. §5 edges carry per-edge `interior` polyline geometry + `ordinal`.
 - `7 facilities` — point facilities, present when a point-facility GDB was imported.
 - `4 style`, `6 beacons` — reserved, not emitted.
 - Sections 5 and 7 are **optional and backward compatible**: older decoders read 1–3 and ignore unknown ids. Directory rows are id-ascending.
 
 **Routing (`kiriko-route`):**
-- `build_route_graph(junctions_geojson, paths_geojson, level_ordinals)` → `RouteGraphBuild { graph, warnings, node_ids }`. Nodes carry `(lon, lat, ordinal)`; edges carry `(from, to, weight = net_path.cost)`. `node_ids[i]` is the source NODEID of `graph.nodes[i]`.
+- `build_route_graph(junctions_geojson, paths_geojson, level_ordinals)` → `RouteGraphBuild { graph, warnings, node_ids }`. Nodes carry `(lon, lat, ordinal)`; edges carry `(from, to, weight = net_path.cost, ordinal, interior)` where `interior` is the `net_path` polyline's bend points with the two endpoint vertices stripped (empty for the ~97% straight edges). Full edge polyline = `[from node, …interior…, to node]`. `node_ids[i]` is the source NODEID of `graph.nodes[i]`.
 - Edges are traversed **bidirectionally** this phase (`direction`/one-way/barriers/time-windows deferred).
-- `route(graph, origin, dest)` → A\*: snaps origin/dest to nearest node, heuristic = `k × haversine` (k = min cost-per-metre; keeps the heuristic admissible against abstract cost units).
-- WASM: `routeBundle(bundle, oLon,oLat,oOrd, dLon,dLat,dOrd)` decodes §5 and runs A\*.
+- `route(graph, origin, dest)` **projects** each endpoint onto the nearest same-floor edge (`snap_to_edge`, not just the nearest node), runs A\* between the four virtual endpoints (partial-edge cost proportioned by polyline length; same-edge case shortcut), and returns `Route { segments, total_weight, origin_projected, dest_projected }`. `segments` are the reconstructed corridor polyline split into maximal same-ordinal runs, so the route **traces the real `net_path` geometry** instead of straight node-to-node chords.
+- WASM: `routeBundle(bundle, oLon,oLat,oOrd, dLon,dLat,dOrd)` decodes §5 and returns the floor-grouped `segments` + projected endpoints. The viewer draws each segment's polyline (floor-filtered) plus a dashed **connector** from each raw click to its projected point.
 
 **Facilities (`kiriko-facilities`):**
 - `build_facilities(geojson, graph)` → `Facilities`. Each `Facility` has `(lon, lat, ordinal, name, icon, anchor?)` — position is the **verbatim GDB coordinate**, `icon` is the `image` basename. `anchor` is that same position used as the **route-to-facility** destination (the A\* router snaps it to the nearest node at query time), set only when the facility's floor carries a route-graph node; `None` otherwise.
