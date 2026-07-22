@@ -530,3 +530,30 @@ describe("POST /api/gdb/augment", () => {
     expect(res.json()).toMatchObject({ error: "no_base_version" });
   });
 });
+
+describe("GET /api/venues/:id/gdb-mapping", () => {
+  it("returns the stored raw-GDB inspection and plan for a gdb dataset", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    await app.inject({ method: "POST", url: "/api/gdb/publish", headers: { cookie }, payload: { venueId, blobHash, plan: PUBLISH_PLAN } });
+    await app.queue.idle();
+
+    const res = await app.inject({ method: "GET", url: `/api/venues/${venueId}/gdb-mapping`, headers: { cookie } });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { blobHash: string; inspection: unknown; plan: { layers: unknown[] } };
+    expect(body.blobHash).toBe(blobHash);
+    expect(Array.isArray(body.plan.layers)).toBe(true);
+    expect(body.inspection).toBeTruthy();
+  });
+
+  it("404 no_editable_mapping when the venue has no gdb version", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const res = await app.inject({ method: "GET", url: `/api/venues/${venueId}/gdb-mapping`, headers: { cookie } });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "no_editable_mapping" });
+  });
+});

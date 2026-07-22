@@ -706,4 +706,70 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       return reply.code(202).send({ jobId, versionId, seq: nextSeq });
     },
   );
+
+  app.get(
+    "/api/venues/:id/gdb-mapping",
+    {
+      preHandler: requireSession,
+      schema: {
+        params: Type.Object({ id: Type.Integer({ minimum: 1 }) }),
+        response: {
+          200: Type.Object({
+            blobHash: Type.String(),
+            inspection: Type.Unknown(),
+            plan: Type.Unknown(),
+          }),
+          400: ErrorSchema,
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: number };
+      const db = request.server.db;
+      const venue = db
+        .prepare("SELECT id FROM venues WHERE id = ? AND tenant_id = ?")
+        .get(id, TENANT_ID);
+      if (!venue) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      const row = db
+        .prepare(
+          `SELECT gdb_source_blob_hash AS g, gdb_plan_json AS p
+             FROM versions WHERE venue_id = ? AND gdb_source_blob_hash IS NOT NULL
+             ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(id) as { g: string; p: string } | undefined;
+      if (!row || !request.server.blobs.has(row.g)) {
+        return reply.code(404).send({ error: "no_editable_mapping" });
+      }
+      let rootName: string;
+      try {
+        const validated = await validateGdbArchive(request.server.blobs.read(row.g));
+        rootName = validated.rootName;
+      } catch (error) {
+        request.log.error({ err: error }, "gdb mapping validation failed");
+        return reply.code(404).send({ error: "no_editable_mapping" });
+      }
+      const stagedPath = stageGdbBlobForGdal(request.server.blobs.path(row.g), row.g);
+      let inspection: GdbInspection;
+      try {
+        inspection = await withTimeout(
+          inspectGdbArchive(stagedPath, rootName),
+          INSPECT_TIMEOUT_MS,
+          "gdb mapping inspect",
+        );
+      } catch (error) {
+        request.log.warn({ err: error }, "gdb mapping inspect failed");
+        return reply.code(400).send(
+          errorBody("gdb_inspection_failed", "gdb_inspection_failed", {
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      } finally {
+        removeStagedGdb(stagedPath);
+      }
+      return reply.send({ blobHash: row.g, inspection, plan: JSON.parse(row.p) });
+    },
+  );
 }
