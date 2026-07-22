@@ -269,34 +269,36 @@ pub fn decode_bundle_js(bytes: &[u8]) -> JsValue {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct NodeDto {
-    lon: f64,
-    lat: f64,
+pub(crate) struct RouteSegmentDto {
     ordinal: f64,
+    coordinates: Vec<[f64; 2]>,
 }
 
-/// Computed route payload: ordered `{lon, lat, ordinal}` nodes plus the
-/// total edge weight, serialized as `{ nodes, totalWeight }`.
+/// Computed route serialized as
+/// `{ segments:[{ordinal,coordinates}], totalWeight, originProjected, destProjected }`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RouteDto {
-    nodes: Vec<NodeDto>,
-    total_weight: f32,
+pub(crate) struct RouteDto {
+    pub(crate) segments: Vec<RouteSegmentDto>,
+    pub(crate) total_weight: f32,
+    pub(crate) origin_projected: [f64; 3],
+    pub(crate) dest_projected: [f64; 3],
 }
 
 impl From<Route> for RouteDto {
     fn from(route: Route) -> Self {
         RouteDto {
-            nodes: route
-                .nodes
-                .iter()
-                .map(|n| NodeDto {
-                    lon: n.lon,
-                    lat: n.lat,
-                    ordinal: n.ordinal,
+            segments: route
+                .segments
+                .into_iter()
+                .map(|s| RouteSegmentDto {
+                    ordinal: s.ordinal,
+                    coordinates: s.coordinates,
                 })
                 .collect(),
             total_weight: route.total_weight,
+            origin_projected: route.origin_projected,
+            dest_projected: route.dest_projected,
         }
     }
 }
@@ -503,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn route_between_two_node_points_returns_some() {
+    fn route_returns_floor_grouped_segments() {
         let bundle = compile_with_graph();
         let document = decode_bundle(&bundle).expect("bundle decodes");
         let route = route_in_document(
@@ -520,7 +522,10 @@ mod tests {
             },
         )
         .expect("node 1 to node 2 must route");
-        assert_eq!(route.nodes.len(), 2);
+        assert!(!route.segments.is_empty());
+        assert_eq!(route.segments[0].ordinal, 0.0);
+        assert!(route.segments[0].coordinates.len() >= 2);
+        assert_eq!(route.origin_projected.len(), 3);
         assert_eq!(route.total_weight, 100.0);
     }
 
