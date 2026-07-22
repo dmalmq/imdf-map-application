@@ -136,6 +136,52 @@ function isGdbConversionError(error: unknown): error is GdbConversionError {
 }
 
 /**
+ * Stage a network `.gdb.zip` blob, extract `net_junction`/`net_path` to
+ * GeoJSON, store both as content-addressed blobs, and return their hashes.
+ * Throws (GdbSourceError or the raw extraction error) on a bad archive.
+ */
+async function extractAndStoreNetwork(
+  server: FastifyInstance,
+  networkBlobHash: string,
+): Promise<{ junctionsHash: string; pathsHash: string }> {
+  const staged = stageGdbBlobForGdal(server.blobs.path(networkBlobHash), networkBlobHash);
+  let network: NetworkExtraction;
+  try {
+    network = await extractNetworkGeoJson(staged);
+  } finally {
+    removeStagedGdb(staged);
+  }
+  const junctionsBlob = server.blobs.put(Buffer.from(network.junctions, "utf8"));
+  const pathsBlob = server.blobs.put(Buffer.from(network.paths, "utf8"));
+  const insertBlob = server.db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)");
+  insertBlob.run(junctionsBlob.hash, junctionsBlob.size);
+  insertBlob.run(pathsBlob.hash, pathsBlob.size);
+  return { junctionsHash: junctionsBlob.hash, pathsHash: pathsBlob.hash };
+}
+
+/**
+ * Stage a facilities `.gdb.zip` blob, extract the facilities GeoJSON, store
+ * it as a content-addressed blob, and return its hash. Throws on a bad archive.
+ */
+async function extractAndStoreFacilities(
+  server: FastifyInstance,
+  facilitiesBlobHash: string,
+): Promise<string> {
+  const staged = stageGdbBlobForGdal(server.blobs.path(facilitiesBlobHash), facilitiesBlobHash);
+  let facilities: FacilitiesExtraction;
+  try {
+    facilities = await extractFacilitiesGeoJson(staged);
+  } finally {
+    removeStagedGdb(staged);
+  }
+  const facilitiesBlob = server.blobs.put(Buffer.from(facilities.geojson, "utf8"));
+  server.db
+    .prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)")
+    .run(facilitiesBlob.hash, facilitiesBlob.size);
+  return facilitiesBlob.hash;
+}
+
+/**
  * Register the inspect + publish endpoints. The shared blob store and job
  * queue are reached through the Fastify server decorations installed in
  * `buildApp`.
@@ -409,18 +455,13 @@ export function registerGdbRoutes(app: FastifyInstance): void {
       let networkJunctionsHash: string | undefined;
       let networkPathsHash: string | undefined;
       if (networkBlobHash !== undefined) {
-        const stagedNetworkPath = stageGdbBlobForGdal(
-          request.server.blobs.path(networkBlobHash),
-          networkBlobHash,
-        );
-        let network: NetworkExtraction;
         try {
-          network = await extractNetworkGeoJson(stagedNetworkPath);
+          const extracted = await extractAndStoreNetwork(request.server, networkBlobHash);
+          networkJunctionsHash = extracted.junctionsHash;
+          networkPathsHash = extracted.pathsHash;
         } catch (error) {
           if (isGdbSourceError(error)) {
-            return reply
-              .code(400)
-              .send(errorBody(error.code, error.message, error.details));
+            return reply.code(400).send(errorBody(error.code, error.message, error.details));
           }
           request.log.error({ err: error }, "gdb network extract failed");
           return reply.code(400).send(
@@ -428,55 +469,24 @@ export function registerGdbRoutes(app: FastifyInstance): void {
               detail: error instanceof Error ? error.message : String(error),
             }),
           );
-        } finally {
-          removeStagedGdb(stagedNetworkPath);
         }
-        const junctionsBlob = request.server.blobs.put(Buffer.from(network.junctions, "utf8"));
-        const pathsBlob = request.server.blobs.put(Buffer.from(network.paths, "utf8"));
-        const insertBlob = request.server.db.prepare(
-          "INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)",
-        );
-        insertBlob.run(junctionsBlob.hash, junctionsBlob.size);
-        insertBlob.run(pathsBlob.hash, pathsBlob.size);
-        networkJunctionsHash = junctionsBlob.hash;
-        networkPathsHash = pathsBlob.hash;
       }
 
       let facilitiesGeoJsonHash: string | undefined;
       if (facilitiesBlobHash !== undefined) {
-        const stagedFacilitiesPath = stageGdbBlobForGdal(
-          request.server.blobs.path(facilitiesBlobHash),
-          facilitiesBlobHash,
-        );
-        let facilities: FacilitiesExtraction;
         try {
-          facilities = await extractFacilitiesGeoJson(stagedFacilitiesPath);
+          facilitiesGeoJsonHash = await extractAndStoreFacilities(request.server, facilitiesBlobHash);
         } catch (error) {
           if (isGdbSourceError(error)) {
-            return reply
-              .code(400)
-              .send(errorBody(error.code, error.message, error.details));
+            return reply.code(400).send(errorBody(error.code, error.message, error.details));
           }
           request.log.error({ err: error }, "gdb facilities extract failed");
           return reply.code(400).send(
-            errorBody(
-              "gdb_facilities_extraction_failed",
-              "gdb_facilities_extraction_failed",
-              {
-                detail: error instanceof Error ? error.message : String(error),
-              },
-            ),
+            errorBody("gdb_facilities_extraction_failed", "gdb_facilities_extraction_failed", {
+              detail: error instanceof Error ? error.message : String(error),
+            }),
           );
-        } finally {
-          removeStagedGdb(stagedFacilitiesPath);
         }
-        const facilitiesBlob = request.server.blobs.put(
-          Buffer.from(facilities.geojson, "utf8"),
-        );
-        request.server.db
-          .prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)")
-          .run(facilitiesBlob.hash, facilitiesBlob.size);
-        facilitiesGeoJsonHash = facilitiesBlob.hash;
       }
 
       let conversion;
@@ -571,6 +581,129 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         facilitiesGeoJsonHash,
       });
       return reply.code(202).send({ jobId, versionId, seq: nextSeq, excludedLayers });
+    },
+  );
+
+  app.post(
+    "/api/gdb/augment",
+    {
+      preHandler: requireSession,
+      schema: {
+        body: Type.Object({
+          venueId: Type.Integer({ minimum: 1 }),
+          networkBlobHash: Type.Optional(Type.String({ pattern: "^[0-9a-f]{64}$" })),
+          facilitiesBlobHash: Type.Optional(Type.String({ pattern: "^[0-9a-f]{64}$" })),
+        }),
+        response: {
+          202: Type.Object({ jobId: Type.String(), versionId: Type.Number(), seq: Type.Number() }),
+          400: ErrorSchema,
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { venueId, networkBlobHash, facilitiesBlobHash } = request.body as {
+        venueId: number;
+        networkBlobHash?: string;
+        facilitiesBlobHash?: string;
+      };
+      const db = request.server.db;
+      const venue = db
+        .prepare("SELECT id FROM venues WHERE id = ? AND tenant_id = ?")
+        .get(venueId, TENANT_ID);
+      if (!venue) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      if (networkBlobHash === undefined && facilitiesBlobHash === undefined) {
+        return reply.code(400).send(errorBody("no_augment_data", "no_augment_data"));
+      }
+      if (networkBlobHash !== undefined && !request.server.blobs.has(networkBlobHash)) {
+        return reply.code(404).send({ error: "network_blob_not_found" });
+      }
+      if (facilitiesBlobHash !== undefined && !request.server.blobs.has(facilitiesBlobHash)) {
+        return reply.code(404).send({ error: "facilities_blob_not_found" });
+      }
+      const base = db
+        .prepare(
+          `SELECT source_blob_hash AS s, source_kind AS k, gdb_source_blob_hash AS g, gdb_plan_json AS p,
+                  net_junctions_blob_hash AS j, net_paths_blob_hash AS t, facilities_blob_hash AS f
+             FROM versions WHERE venue_id = ? AND status = 'published' ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(venueId) as
+        | { s: string; k: string; g: string | null; p: string | null; j: string | null; t: string | null; f: string | null }
+        | undefined;
+      if (!base) {
+        return reply.code(404).send({ error: "no_base_version" });
+      }
+
+      let networkJunctionsHash = base.j ?? undefined;
+      let networkPathsHash = base.t ?? undefined;
+      if (networkBlobHash !== undefined) {
+        try {
+          const extracted = await extractAndStoreNetwork(request.server, networkBlobHash);
+          networkJunctionsHash = extracted.junctionsHash;
+          networkPathsHash = extracted.pathsHash;
+        } catch (error) {
+          if (isGdbSourceError(error)) {
+            return reply.code(400).send(errorBody(error.code, error.message, error.details));
+          }
+          request.log.error({ err: error }, "gdb augment network extract failed");
+          return reply.code(400).send(
+            errorBody("gdb_network_extraction_failed", "gdb_network_extraction_failed", {
+              detail: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+      }
+      let facilitiesGeoJsonHash = base.f ?? undefined;
+      if (facilitiesBlobHash !== undefined) {
+        try {
+          facilitiesGeoJsonHash = await extractAndStoreFacilities(request.server, facilitiesBlobHash);
+        } catch (error) {
+          if (isGdbSourceError(error)) {
+            return reply.code(400).send(errorBody(error.code, error.message, error.details));
+          }
+          request.log.error({ err: error }, "gdb augment facilities extract failed");
+          return reply.code(400).send(
+            errorBody("gdb_facilities_extraction_failed", "gdb_facilities_extraction_failed", {
+              detail: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+      }
+
+      const maxRow = db
+        .prepare("SELECT MAX(seq) AS m FROM versions WHERE venue_id = ?")
+        .get(venueId) as { m: number | null };
+      const nextSeq = (maxRow.m ?? 0) + 1;
+      const info = db
+        .prepare(
+          `INSERT INTO versions
+             (venue_id, seq, public_id, source_blob_hash, source_kind,
+              gdb_source_blob_hash, gdb_plan_json,
+              net_junctions_blob_hash, net_paths_blob_hash, facilities_blob_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          venueId,
+          nextSeq,
+          newPublicVersionId(),
+          base.s,
+          base.k,
+          base.g,
+          base.p,
+          networkJunctionsHash ?? null,
+          networkPathsHash ?? null,
+          facilitiesGeoJsonHash ?? null,
+        );
+      const versionId = Number(info.lastInsertRowid);
+      const jobId = request.server.queue.enqueue("publish_imdf", {
+        versionId,
+        networkJunctionsHash,
+        networkPathsHash,
+        facilitiesGeoJsonHash,
+      });
+      return reply.code(202).send({ jobId, versionId, seq: nextSeq });
     },
   );
 }

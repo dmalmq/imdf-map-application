@@ -450,3 +450,83 @@ describe("GDB publish inherits prior bundle inputs when omitted", () => {
     expect(fake.compileCalls[0]!.metadata["networkJunctionsGeoJson"]).toBe(JUNCTIONS_GEOJSON);
   });
 });
+
+describe("POST /api/gdb/augment", () => {
+  async function publishBase(
+    app: FastifyInstance,
+    cookie: string,
+  ): Promise<{ venueId: number; baseImdf: string }> {
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    const r = await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId, blobHash, plan: PUBLISH_PLAN },
+    });
+    expect(r.statusCode, r.body).toBe(202);
+    await app.queue.idle();
+    const vid = (r.json() as { versionId: number }).versionId;
+    const row = app.db.prepare("SELECT source_blob_hash AS s FROM versions WHERE id = ?").get(vid) as { s: string };
+    return { venueId, baseImdf: row.s };
+  }
+
+  it("adds routing to an existing dataset as a new version reusing the base IMDF", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const { venueId, baseImdf } = await publishBase(app, cookie);
+    const networkBlobHash = putBlob(app, await validGdbZipBytes("net.gdb"));
+    fake.compileCalls.length = 0;
+
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/augment", headers: { cookie },
+      payload: { venueId, networkBlobHash },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const { versionId, seq } = res.json() as { versionId: number; seq: number };
+    expect(seq).toBe(2);
+    await app.queue.idle();
+
+    const row = app.db
+      .prepare("SELECT source_blob_hash AS s, net_junctions_blob_hash AS j FROM versions WHERE id = ?")
+      .get(versionId) as { s: string; j: string };
+    expect(row.s).toBe(baseImdf);
+    expect(row.j).toMatch(/^[0-9a-f]{64}$/);
+    expect(fake.compileCalls[0]!.metadata["networkJunctionsGeoJson"]).toBe(JUNCTIONS_GEOJSON);
+  });
+
+  it("carries forward prior facilities when only routing is added", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    const facilitiesBlobHash = putBlob(app, await validGdbZipBytes("facilities.gdb"));
+    await app.inject({ method: "POST", url: "/api/gdb/publish", headers: { cookie }, payload: { venueId, blobHash, facilitiesBlobHash, plan: PUBLISH_PLAN } });
+    await app.queue.idle();
+    const networkBlobHash = putBlob(app, await validGdbZipBytes("net.gdb"));
+    fake.compileCalls.length = 0;
+
+    const res = await app.inject({ method: "POST", url: "/api/gdb/augment", headers: { cookie }, payload: { venueId, networkBlobHash } });
+    expect(res.statusCode, res.body).toBe(202);
+    await app.queue.idle();
+    expect(fake.compileCalls[0]!.metadata["facilitiesGeoJson"]).toBe(FACILITIES_GEOJSON);
+    expect(fake.compileCalls[0]!.metadata["networkJunctionsGeoJson"]).toBe(JUNCTIONS_GEOJSON);
+  });
+
+  it("400 when neither network nor facilities is provided", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const { venueId } = await publishBase(app, cookie);
+    const res = await app.inject({ method: "POST", url: "/api/gdb/augment", headers: { cookie }, payload: { venueId } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ code: "no_augment_data" });
+  });
+
+  it("404 when the venue has no published base version", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const networkBlobHash = putBlob(app, await validGdbZipBytes("net.gdb"));
+    const res = await app.inject({ method: "POST", url: "/api/gdb/augment", headers: { cookie }, payload: { venueId, networkBlobHash } });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "no_base_version" });
+  });
+});
