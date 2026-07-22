@@ -14,7 +14,7 @@ import {
   LAYER_ISSUE_HIGHLIGHT_OUTLINE,
   LAYER_ISSUE_HIGHLIGHT_POINT,
   LAYER_SELECTED_OUTLINE,
-  LAYER_BUILDING_FILL,
+  LAYER_SELECTABLE_CONTEXT_FILL,
   LAYER_CONTEXT_FILL,
   LAYER_NONPUBLIC_FILL,
   LAYER_NONPUBLIC_OUTLINE,
@@ -122,18 +122,23 @@ describe("buildFeatureLayers category coloring", () => {
     expect(CLICKABLE_LAYER_IDS).toContain(LAYER_OPENING_LINE);
   });
 
-  it("hides building polygons by default, tinting only the selected building", () => {
-    // Buildings dropped from the always-on context layer.
-    expect(JSON.stringify(findLayer(LAYER_CONTEXT_FILL).filter)).not.toContain("building");
+  it("hides venue/building/level polygons by default, tinting only the selected one", () => {
+    // Venue dropped from the always-on context layer (footprint stays).
+    expect(JSON.stringify(findLayer(LAYER_CONTEXT_FILL).filter)).not.toContain("venue");
+    // Level no longer paints the walkway floor plate.
+    expect(JSON.stringify(findLayer(LAYER_WALKWAY_FILL).filter)).not.toContain("level");
 
-    const building = findLayer(LAYER_BUILDING_FILL);
-    expect(building.type).toBe("fill");
-    expect(building.filter).toEqual(["==", ["get", "__feature_type"], "building"]);
-    // Fill is transparent until the building is the selected feature.
-    const opacity = (building as FillLayerSpecification).paint?.["fill-opacity"];
+    const sel = findLayer(LAYER_SELECTABLE_CONTEXT_FILL);
+    expect(sel.type).toBe("fill");
+    const filterJson = JSON.stringify(sel.filter);
+    expect(filterJson).toContain("building");
+    expect(filterJson).toContain("venue");
+    expect(filterJson).toContain("level");
+    // Fill is transparent until the feature is the selected one.
+    const opacity = (sel as FillLayerSpecification).paint?.["fill-opacity"];
     expect(JSON.stringify(opacity)).toContain("selected");
-    // Search-only: the building fill is never part of the map hit-test set.
-    expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_BUILDING_FILL);
+    // Search-only: never part of the map hit-test set.
+    expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_SELECTABLE_CONTEXT_FILL);
   });
 });
 

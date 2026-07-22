@@ -23,7 +23,7 @@ export const BACKGROUND_LAYER_ID = "indoor-background";
 
 export const LAYER_CONTEXT_FILL = "indoor-context-fill";
 export const LAYER_CONTEXT_OUTLINE = "indoor-context-outline";
-export const LAYER_BUILDING_FILL = "indoor-building-fill";
+export const LAYER_SELECTABLE_CONTEXT_FILL = "indoor-selectable-context-fill";
 export const LAYER_WALKWAY_FILL = "indoor-walkway-fill";
 export const LAYER_WALKWAY_OUTLINE = "indoor-walkway-outline";
 export const LAYER_ROOM_FILL = "indoor-room-fill";
@@ -197,19 +197,13 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
     ["==", ["get", "__restricted"], true],
   ];
 
-  const matchLevelFloor: FilterSpecification = [
-    "==",
-    ["get", "__feature_type"],
-    "level",
-  ];
-
   const layers: AnyLayer[] = [
     // 1. Context
     {
       id: LAYER_CONTEXT_FILL,
       type: "fill",
       source: INDOOR_SOURCE_ID,
-      filter: matchFeatureType("venue", "footprint"),
+      filter: matchFeatureType("footprint"),
       paint: {
         "fill-color": c.unit,
         "fill-opacity": 0.55,
@@ -219,21 +213,21 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       id: LAYER_CONTEXT_OUTLINE,
       type: "line",
       source: INDOOR_SOURCE_ID,
-      filter: matchFeatureType("venue", "footprint"),
+      filter: matchFeatureType("footprint"),
       paint: {
         "line-color": c.unitOutline,
         "line-width": 1.5,
       },
     },
-    // Building footprints are hidden by default (search-only). The polygon
-    // tints only while its building is the selected feature; its outline comes
-    // from LAYER_SELECTED_OUTLINE (feature-state driven, unfiltered). Not in
-    // CLICKABLE_LAYER_IDS — buildings are reached via search, not map taps.
+    // Venue/building/level polygons are hidden by default (search-only). Each
+    // tints only while it is the selected feature; its outline comes from
+    // LAYER_SELECTED_OUTLINE (feature-state driven, unfiltered). Not in
+    // CLICKABLE_LAYER_IDS — these are reached via search, not map taps.
     {
-      id: LAYER_BUILDING_FILL,
+      id: LAYER_SELECTABLE_CONTEXT_FILL,
       type: "fill",
       source: INDOOR_SOURCE_ID,
-      filter: matchFeatureType("building"),
+      filter: matchFeatureType("building", "venue", "level"),
       paint: {
         "fill-color": c.selected,
         "fill-opacity": [
@@ -245,12 +239,12 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       },
     },
 
-    // 2. Walkable units / level floor / rooms
+    // 2. Walkable units / rooms
     {
       id: LAYER_WALKWAY_FILL,
       type: "fill",
       source: INDOOR_SOURCE_ID,
-      filter: ["any", matchLevelFloor, matchWalkwayUnit],
+      filter: matchWalkwayUnit,
       paint: {
         "fill-color": unitFillColor(c.walkway),
         "fill-opacity": 1,
@@ -260,7 +254,7 @@ export function buildFeatureLayers(theme: ViewerTheme): AnyLayer[] {
       id: LAYER_WALKWAY_OUTLINE,
       type: "line",
       source: INDOOR_SOURCE_ID,
-      filter: ["any", matchLevelFloor, matchWalkwayUnit],
+      filter: matchWalkwayUnit,
       paint: {
         "line-color": c.unitOutline,
         "line-width": 0.75,
@@ -693,7 +687,7 @@ export function applyThemePaintProperties(
 
   setPaintProperty(LAYER_HOVER_OUTLINE, "line-color", c.accent);
   setPaintProperty(LAYER_SELECTED_OUTLINE, "line-color", c.selected);
-  setPaintProperty(LAYER_BUILDING_FILL, "fill-color", c.selected);
+  setPaintProperty(LAYER_SELECTABLE_CONTEXT_FILL, "fill-color", c.selected);
   setPaintProperty(LAYER_ISSUE_HIGHLIGHT_OUTLINE, "line-color", c.warning);
   setPaintProperty(LAYER_ISSUE_HIGHLIGHT_POINT, "circle-color", c.warning);
   setPaintProperty(LAYER_ISSUE_HIGHLIGHT_POINT, "circle-stroke-color", c.warning);
