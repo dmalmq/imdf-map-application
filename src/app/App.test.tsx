@@ -1454,10 +1454,15 @@ describe("App review issue integration", () => {
 });
 
 describe("App directions mode", () => {
-  const ROUTE_NODES = [
-    { lon: 139.7671, lat: 35.6811, ordinal: 0 },
-    { lon: 139.7674, lat: 35.6813, ordinal: 0 },
+  const ROUTE_SEGMENTS = [
+    { ordinal: 0, coordinates: [[139.7671, 35.6811], [139.7674, 35.6813]] },
   ];
+  const ROUTE_RESULT = {
+    segments: ROUTE_SEGMENTS,
+    totalWeight: 120,
+    originProjected: [139.7671, 35.6811, 0],
+    destProjected: [139.7674, 35.6813, 0],
+  };
 
   function mapStub() {
     return screen.getByTestId("indoor-map-stub");
@@ -1499,7 +1504,7 @@ describe("App directions mode", () => {
 
   it("routes after two taps: worker route called and polyline reaches the map", async () => {
     const user = userEvent.setup();
-    routeKirikoBundleMock.mockResolvedValue({ nodes: ROUTE_NODES, totalWeight: 120 });
+    routeKirikoBundleMock.mockResolvedValue(ROUTE_RESULT);
     await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
 
     await user.click(screen.getByRole("button", { name: "Directions" }));
@@ -1523,7 +1528,7 @@ describe("App directions mode", () => {
     });
 
     await waitFor(() => {
-      expect(JSON.parse(mapStub().getAttribute("data-directions-route")!)).toEqual(ROUTE_NODES);
+      expect(JSON.parse(mapStub().getAttribute("data-directions-route")!)).toEqual(ROUTE_SEGMENTS);
     });
     expect(screen.getByText(/120\s*m/)).toBeTruthy();
   });
@@ -1543,7 +1548,7 @@ describe("App directions mode", () => {
 
   it("clear resets origin, destination, and the route layer data", async () => {
     const user = userEvent.setup();
-    routeKirikoBundleMock.mockResolvedValue({ nodes: ROUTE_NODES, totalWeight: 120 });
+    routeKirikoBundleMock.mockResolvedValue(ROUTE_RESULT);
     await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
 
     await user.click(screen.getByRole("button", { name: "Directions" }));
