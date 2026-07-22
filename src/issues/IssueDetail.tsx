@@ -499,7 +499,8 @@ export function IssueDetail({
   }
 
   return (
-    <div className="issue-detail">
+    <div className="issue-detail issue-detail--two-pane">
+      <div className="issue-detail__main">
       <button type="button" className="btn-ghost issue-detail__back" onClick={onBack}>
         {ui.back[locale]}
       </button>
@@ -723,6 +724,8 @@ export function IssueDetail({
         ) : null}
       </dl>
 
+      </div>
+      <div className="issue-detail__thread-pane">
       <section className="issue-detail__thread" aria-label={ui.replies[locale]}>
         <h3 className="panel-caption">
           {ui.replies[locale]} ({issue.replies.length})
@@ -768,6 +771,7 @@ export function IssueDetail({
           />
         ) : null}
       </section>
+      </div>
     </div>
   );
 }

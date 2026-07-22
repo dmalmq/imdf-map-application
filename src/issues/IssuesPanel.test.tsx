@@ -1046,6 +1046,19 @@ describe("detail navigation", () => {
     expect(screen.queryByRole("button", { name: "New issue" })).toBeNull();
     expect(screen.getByRole("button", { name: "Reply" })).toBeTruthy();
   });
+
+  it("renders the detail as two panes: main content and the reply thread", () => {
+    const issue = makeIssue({ id: "i1", pinNumber: 1 });
+    renderDetail(issue, VIEWER);
+    const twoPane = document.querySelector(".issue-detail--two-pane");
+    expect(twoPane).not.toBeNull();
+    const main = twoPane!.querySelector(".issue-detail__main");
+    const threadPane = twoPane!.querySelector(".issue-detail__thread-pane");
+    expect(main).not.toBeNull();
+    expect(threadPane).not.toBeNull();
+    expect(main!.querySelector(".issue-detail__meta")).not.toBeNull();
+    expect(threadPane!.querySelector(".issue-detail__thread")).not.toBeNull();
+  });
 });
 
 describe("localized copy", () => {

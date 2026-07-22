@@ -149,6 +149,7 @@ export function IssuesPanel({
     && !state.refetchInFlight
     && !state.refetchRequested;
 
+  const showingDetail = state.draft === null && selected !== undefined;
   let body: ReactNode;
   if (state.draft !== null) {
     body = (
@@ -268,7 +269,7 @@ export function IssuesPanel({
   }
 
   return (
-    <div className="issues-panel">
+    <div className={showingDetail ? "issues-panel issues-panel--detail" : "issues-panel"}>
       {state.reconnecting ? (
         <p className="issues-panel__line" role="status">
           {ui.reconnecting[locale]}

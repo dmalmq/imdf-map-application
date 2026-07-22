@@ -1243,6 +1243,31 @@ button {
   width: 100%;
 }
 
+.issue-detail--two-pane {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.issue-detail__main,
+.issue-detail__thread-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.floating-panel--issues:has(.issues-panel--detail) {
+  width: min(720px, 92vw);
+}
+
+.issue-detail--two-pane .issue-detail__thread {
+  max-height: 60vh;
+  flex: 1;
+}
+
 .issues-panel__empty,
 .issues-panel__count,
 .issues-panel__hint {
@@ -1719,6 +1744,14 @@ button {
 @media (max-width: 899px) {
   .floating-panel--issues {
     max-height: 72vh;
+  }
+
+  .floating-panel--issues:has(.issues-panel--detail) {
+    width: 100%;
+  }
+
+  .issue-detail--two-pane {
+    grid-template-columns: 1fr;
   }
 
   .floating-panel--issues .floating-panel__body {
