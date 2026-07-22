@@ -575,6 +575,8 @@ pub(crate) struct GraphEdgeDto {
     from: u32,
     to: u32,
     weight: f32,
+    ordinal: f64,
+    interior: Vec<[f64; 2]>,
 }
 
 /// Section 5 (graph): the routing graph. Optional — `encode_bundle` emits
@@ -589,7 +591,14 @@ pub(crate) struct GraphSectionDto {
 /// the weight must be finite. Shared by the encode and decode paths so a
 /// hand-crafted section is held to exactly the same rules as a freshly
 /// encoded one.
-fn validate_graph_edge(from: u32, to: u32, weight: f32, node_count: usize) -> Result<(), BundleError> {
+fn validate_graph_edge(
+    from: u32,
+    to: u32,
+    weight: f32,
+    ordinal: f64,
+    interior: &[[f64; 2]],
+    node_count: usize,
+) -> Result<(), BundleError> {
     if from as usize >= node_count || to as usize >= node_count {
         return Err(BundleError::new(
             BundleErrorCode::InvalidBundle,
@@ -598,10 +607,16 @@ fn validate_graph_edge(from: u32, to: u32, weight: f32, node_count: usize) -> Re
             ),
         ));
     }
-    if !weight.is_finite() {
+    if !weight.is_finite() || !ordinal.is_finite() {
         return Err(BundleError::new(
             BundleErrorCode::InvalidBundle,
-            "graph edge weight must be finite",
+            "graph edge weight and ordinal must be finite",
+        ));
+    }
+    if interior.iter().any(|c| !c[0].is_finite() || !c[1].is_finite()) {
+        return Err(BundleError::new(
+            BundleErrorCode::InvalidBundle,
+            "graph edge interior coordinate must be finite",
         ));
     }
     Ok(())
@@ -619,11 +634,17 @@ pub(crate) fn encode_graph(graph: &kiriko_route::RouteGraph) -> Result<Vec<u8>, 
     }
     let mut edges = Vec::with_capacity(graph.edges.len());
     for edge in &graph.edges {
-        validate_graph_edge(edge.from, edge.to, edge.weight, node_count)?;
+        validate_graph_edge(edge.from, edge.to, edge.weight, edge.ordinal, &edge.interior, node_count)?;
+        let mut interior = Vec::with_capacity(edge.interior.len());
+        for c in &edge.interior {
+            interior.push([canonical_f64(c[0])?, canonical_f64(c[1])?]);
+        }
         edges.push(GraphEdgeDto {
             from: edge.from,
             to: edge.to,
             weight: edge.weight,
+            ordinal: canonical_f64(edge.ordinal)?,
+            interior,
         });
     }
     postcard::to_allocvec(&GraphSectionDto { nodes, edges }).map_err(|e| {
@@ -648,13 +669,17 @@ pub(crate) fn decode_graph(bytes: &[u8]) -> Result<kiriko_route::RouteGraph, Bun
     }
     let mut edges = Vec::with_capacity(dto.edges.len());
     for edge in &dto.edges {
-        validate_graph_edge(edge.from, edge.to, edge.weight, node_count)?;
+        validate_graph_edge(edge.from, edge.to, edge.weight, edge.ordinal, &edge.interior, node_count)?;
+        let mut interior = Vec::with_capacity(edge.interior.len());
+        for c in &edge.interior {
+            interior.push([canonical_f64(c[0])?, canonical_f64(c[1])?]);
+        }
         edges.push(kiriko_route::RouteEdge {
             from: edge.from,
             to: edge.to,
             weight: edge.weight,
-            ordinal: 0.0,
-            interior: vec![],
+            ordinal: canonical_f64(edge.ordinal)?,
+            interior,
         });
     }
     Ok(kiriko_route::RouteGraph { nodes, edges })
@@ -962,6 +987,28 @@ mod tests {
         let back = crate::decode_bundle(&bytes).expect("a graph bundle decodes");
         assert_eq!(back.graph, doc.graph);
     }
+    #[test]
+    fn graph_section_round_trips_edge_geometry() {
+        use kiriko_route::{RouteEdge, RouteGraph, RouteNode};
+        let mut doc = minimal_document();
+        doc.graph = Some(RouteGraph {
+            nodes: vec![
+                RouteNode { lon: 139.0, lat: 35.0, ordinal: 0.0 },
+                RouteNode { lon: 139.002, lat: 35.0, ordinal: 0.0 },
+            ],
+            edges: vec![RouteEdge {
+                from: 0,
+                to: 1,
+                weight: 12.5,
+                ordinal: 0.0,
+                interior: vec![[139.001, 35.001]],
+            }],
+        });
+        let bytes = crate::encode_bundle(&doc).expect("encodes");
+        let back = crate::decode_bundle(&bytes).expect("decodes");
+        assert_eq!(back.graph, doc.graph);
+    }
+
 
     #[test]
     fn no_graph_section_when_absent() {
@@ -1178,6 +1225,8 @@ mod tests {
                 from: 0,
                 to: 7, // only one node exists; endpoint 7 is out of bounds
                 weight: 1.0,
+                ordinal: 0.0,
+                interior: vec![],
             }],
         })
         .expect("an out-of-bounds edge still postcard-encodes");
