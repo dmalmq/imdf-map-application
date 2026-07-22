@@ -7,6 +7,7 @@ const INDEXED_TYPES: Partial<Record<FeatureType, true>> = {
   unit: true,
   opening: true,
   kiosk: true,
+  building: true,
 };
 
 function normalizedValues(labels: Record<string, string>): string[] {

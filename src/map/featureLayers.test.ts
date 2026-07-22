@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CircleLayerSpecification, LineLayerSpecification } from "maplibre-gl";
+import type { CircleLayerSpecification, FillLayerSpecification, LineLayerSpecification } from "maplibre-gl";
 import { themes } from "../theme/presets";
 import { buildIndoorStyle } from "./buildIndoorStyle";
 import {
@@ -13,6 +13,8 @@ import {
   LAYER_ISSUE_HIGHLIGHT_OUTLINE,
   LAYER_ISSUE_HIGHLIGHT_POINT,
   LAYER_SELECTED_OUTLINE,
+  LAYER_BUILDING_FILL,
+  LAYER_CONTEXT_FILL,
   LAYER_NONPUBLIC_FILL,
   LAYER_NONPUBLIC_OUTLINE,
   LAYER_OPENING_LINE,
@@ -117,6 +119,20 @@ describe("buildFeatureLayers category coloring", () => {
     expect(openingLayers.map((layer) => layer.type)).toEqual(["line"]);
     expect(openingLayers[0]!.id).toBe(LAYER_OPENING_LINE);
     expect(CLICKABLE_LAYER_IDS).toContain(LAYER_OPENING_LINE);
+  });
+
+  it("hides building polygons by default, tinting only the selected building", () => {
+    // Buildings dropped from the always-on context layer.
+    expect(JSON.stringify(findLayer(LAYER_CONTEXT_FILL).filter)).not.toContain("building");
+
+    const building = findLayer(LAYER_BUILDING_FILL);
+    expect(building.type).toBe("fill");
+    expect(building.filter).toEqual(["==", ["get", "__feature_type"], "building"]);
+    // Fill is transparent until the building is the selected feature.
+    const opacity = (building as FillLayerSpecification).paint?.["fill-opacity"];
+    expect(JSON.stringify(opacity)).toContain("selected");
+    // Search-only: the building fill is never part of the map hit-test set.
+    expect(CLICKABLE_LAYER_IDS).not.toContain(LAYER_BUILDING_FILL);
   });
 });
 

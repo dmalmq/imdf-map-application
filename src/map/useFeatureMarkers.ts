@@ -22,6 +22,8 @@ const MARKER_FEATURE_TYPES: Record<FeatureType, true | undefined> = {
   kiosk: true,
   address: undefined,
   anchor: undefined,
+  // building: intentionally no marker — buildings are search-only for now.
+  // Future hook: flip to `true` to drop a clickable centroid icon per building.
   building: undefined,
   detail: undefined,
   fixture: undefined,

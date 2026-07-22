@@ -29,7 +29,7 @@ function feature(partial: {
 }
 
 describe("buildSearchEntries", () => {
-  it("indexes occupant, amenity, unit, opening, and kiosk only", () => {
+  it("indexes occupant, amenity, unit, opening, kiosk, and building only", () => {
     const features = [
       feature({ id: "occ", featureType: "occupant", labels: { en: "Shop" } }),
       feature({ id: "ame", featureType: "amenity", labels: { en: "Restroom" } }),
@@ -44,7 +44,7 @@ describe("buildSearchEntries", () => {
 
     const entries = buildSearchEntries(features);
     const ids = entries.map((e) => e.featureId).sort();
-    expect(ids).toEqual(["ame", "kiosk", "occ", "open", "unit"]);
+    expect(ids).toEqual(["ame", "building", "kiosk", "occ", "open", "unit"]);
     expect(entries.some((e) => e.featureType === "anchor")).toBe(false);
   });
 
