@@ -653,6 +653,8 @@ pub(crate) fn decode_graph(bytes: &[u8]) -> Result<kiriko_route::RouteGraph, Bun
             from: edge.from,
             to: edge.to,
             weight: edge.weight,
+            ordinal: 0.0,
+            interior: vec![],
         });
     }
     Ok(kiriko_route::RouteGraph { nodes, edges })
@@ -952,6 +954,8 @@ mod tests {
                 from: 0,
                 to: 1,
                 weight: 12.5,
+                ordinal: 0.0,
+                interior: vec![],
             }],
         });
         let bytes = crate::encode_bundle(&doc).expect("a document with a graph encodes");

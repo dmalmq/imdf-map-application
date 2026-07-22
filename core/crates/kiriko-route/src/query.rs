@@ -161,9 +161,9 @@ mod tests {
                 RouteNode { lon: 139.002, lat: 35.0, ordinal: 0.0 }, // 2
             ],
             edges: vec![
-                RouteEdge { from: 0, to: 1, weight: 10.0 },
-                RouteEdge { from: 1, to: 2, weight: 10.0 },
-                RouteEdge { from: 0, to: 2, weight: 100.0 }, // direct but expensive
+                RouteEdge { from: 0, to: 1, weight: 10.0, ordinal: 0.0, interior: vec![] },
+                RouteEdge { from: 1, to: 2, weight: 10.0, ordinal: 0.0, interior: vec![] },
+                RouteEdge { from: 0, to: 2, weight: 100.0, ordinal: 0.0, interior: vec![] }, // direct but expensive
             ],
         }
     }

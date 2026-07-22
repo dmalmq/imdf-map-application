@@ -80,6 +80,9 @@ pub fn build_route_graph(
         .map(|(i, &id)| (id, i as u32))
         .collect();
 
+    // Nodes in index order, for edge-ordinal fallback while edges are built.
+    let nodes_by_idx: Vec<RouteNode> = by_id.values().cloned().collect();
+
     let mut edges = Vec::new();
     for feature in &paths.features {
         let (Some(from), Some(to), Some(cost)) = (
@@ -96,10 +99,19 @@ pub fn build_route_graph(
             });
             continue;
         };
+        // Edge ordinal: its own FLOOR, else the `from` node's ordinal.
+        let ordinal = prop(&feature.properties, "FLOOR")
+            .and_then(|v| v.as_str())
+            .and_then(floor_to_ordinal)
+            .unwrap_or(nodes_by_idx[from_idx as usize].ordinal);
+        // Interior = the polyline vertices with the two endpoints stripped.
+        let interior = interior_vertices(feature.geometry.as_ref().map(|g| &g.value));
         edges.push(RouteEdge {
             from: from_idx,
             to: to_idx,
             weight: cost as f32,
+            ordinal,
+            interior,
         });
     }
     edges.sort_by(|a, b| {
@@ -123,6 +135,28 @@ pub fn build_route_graph(
         warnings,
         node_ids,
     })
+}
+
+/// Flatten a `MultiLineString`/`LineString` to its vertex list, then drop the
+/// first and last vertices (they equal the endpoint node coordinates). Returns
+/// the interior bend points, or empty for missing/degenerate geometry.
+fn interior_vertices(value: Option<&Value>) -> Vec<[f64; 2]> {
+    let verts: Vec<[f64; 2]> = match value {
+        Some(Value::MultiLineString(lines)) => lines
+            .iter()
+            .flatten()
+            .filter_map(|c| Some([*c.first()?, *c.get(1)?]))
+            .collect(),
+        Some(Value::LineString(line)) => line
+            .iter()
+            .filter_map(|c| Some([*c.first()?, *c.get(1)?]))
+            .collect(),
+        _ => Vec::new(),
+    };
+    if verts.len() <= 2 {
+        return Vec::new();
+    }
+    verts[1..verts.len() - 1].to_vec()
 }
 
 fn parse_collection(src: &str, what: &str) -> Result<FeatureCollection, RouteBuildError> {
@@ -175,6 +209,32 @@ mod tests {
         let a = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap().graph;
         let b = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap().graph;
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn keeps_edge_interior_vertices_and_ordinal() {
+        const J: &str = r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"NODEID":1,"FLOOR":"F1"},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+          {"type":"Feature","properties":{"NODEID":2,"FLOOR":"F1"},"geometry":{"type":"Point","coordinates":[139.002,35.0]}}]}"#;
+        // A curved edge: endpoints match the nodes, one interior bend point.
+        const P: &str = r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"FNODEID":1,"TNODEID":2,"cost":200,"FLOOR":"F1"},
+           "geometry":{"type":"MultiLineString","coordinates":[[[139.0,35.0],[139.001,35.0005],[139.002,35.0]]]}}]}"#;
+        let b = build_route_graph(J, P, &[0.0]).unwrap();
+        assert_eq!(b.graph.edges.len(), 1);
+        let e = &b.graph.edges[0];
+        assert_eq!(e.ordinal, 0.0);
+        assert_eq!(e.interior, vec![[139.001, 35.0005]]); // endpoints stripped
+        assert_eq!(
+            b.graph.edge_polyline(e),
+            vec![[139.0, 35.0], [139.001, 35.0005], [139.002, 35.0]]
+        );
+    }
+
+    #[test]
+    fn straight_edge_has_empty_interior() {
+        let b = build_route_graph(JUNCTIONS, PATHS, &[0.0, 1.0]).unwrap();
+        assert!(b.graph.edges.iter().all(|e| e.interior.is_empty()));
     }
 
     #[test]
