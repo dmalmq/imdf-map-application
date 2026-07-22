@@ -43,7 +43,17 @@ export async function extractLayerGeoJson(
   return new TextDecoder().decode(bytes);
 }
 
-/** Count features and collect distinct `FLOOR` property values from a converted layer. */
+/** Read a feature's floor label case-insensitively, tolerating either `FLOOR`
+ * (network `net_junction`/`net_path`) or `floor` (facility
+ * `point_facility_network`) field casing. */
+function floorLabel(properties: Record<string, unknown>): unknown {
+  for (const [key, value] of Object.entries(properties)) {
+    if (key.toLowerCase() === "floor") return value;
+  }
+  return undefined;
+}
+
+/** Count features and collect distinct floor property values from a converted layer. */
 export function summarizeLayer(geojson: string, layerName: string): {
   featureCount: number;
   floors: string[];
@@ -61,7 +71,7 @@ export function summarizeLayer(geojson: string, layerName: string): {
   const features = asArray(record.features);
   const floors: string[] = [];
   for (const feature of features) {
-    const floor = asRecord(asRecord(feature).properties)["FLOOR"];
+    const floor = floorLabel(asRecord(asRecord(feature).properties));
     if (typeof floor === "string" && floor.trim().length > 0) {
       floors.push(floor);
     }

@@ -116,11 +116,9 @@ pub fn compile_imdf_with_network(
         facilities: None,
     };
 
-    let mut route_node_ids: Option<Vec<u64>> = None;
     if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
         let ordinals: Vec<f64> = document.levels.iter().map(|l| l.ordinal).collect();
         let build = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
-        route_node_ids = Some(build.node_ids);
         if !build.graph.is_empty() {
             document.graph = Some(build.graph);
         }
@@ -135,8 +133,7 @@ pub fn compile_imdf_with_network(
     }
 
     if let Some(facilities_geojson) = facilities_geojson {
-        let has_graph = document.graph.is_some() && route_node_ids.is_some();
-        if !has_graph {
+        if document.graph.is_none() {
             document.warnings.push(ViewerWarning {
                 code: WarningCode::FacilityBuild,
                 message: "facilities GeoJSON built with no route graph: all \
@@ -150,16 +147,9 @@ pub fn compile_imdf_with_network(
             nodes: Vec::new(),
             edges: Vec::new(),
         };
-        let (graph, node_ids): (&RouteGraph, &[u64]) = if has_graph {
-            (
-                document.graph.as_ref().expect("checked above"),
-                route_node_ids.as_deref().expect("checked above"),
-            )
-        } else {
-            (&empty_graph, &[])
-        };
+        let graph = document.graph.as_ref().unwrap_or(&empty_graph);
         let (facilities, build_warnings) =
-            kiriko_facilities::build_facilities(facilities_geojson, graph, node_ids)?;
+            kiriko_facilities::build_facilities(facilities_geojson, graph)?;
         if !facilities.items.is_empty() {
             document.facilities = Some(facilities);
         }

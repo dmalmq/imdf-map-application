@@ -481,12 +481,13 @@ mod tests {
         .bytes
     }
 
-    // Task 2 (kiriko-facilities) GeoJSON, mirrored from kiriko-bundle's
-    // facilities-embedding test: Store A anchored to NODEID 1 (icon derived
-    // from `image`), Store B with `nodeid1: -1` (silently unanchored).
+    // Task 2 (kiriko-facilities) GeoJSON: Store A on F1, Store B on F2. Both
+    // floors carry network nodes, so each facility anchors to its OWN position
+    // (icon derived from `image`; the router snaps to the nearest node at
+    // query time).
     const FACILITIES: &str = r#"{"type":"FeatureCollection","features":[
-      {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png","nodeid1":1},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
-      {"type":"Feature","properties":{"name":"Store B","floor":"F2","image":"","nodeid1":-1},"geometry":{"type":"Point","coordinates":[139.001,35.0]}}]}"#;
+      {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png"},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+      {"type":"Feature","properties":{"name":"Store B","floor":"F2","image":""},"geometry":{"type":"Point","coordinates":[139.001,35.0]}}]}"#;
 
     fn compile_with_facilities() -> Vec<u8> {
         let source = build_minimal_imdf_zip();
@@ -542,7 +543,7 @@ mod tests {
         let anchor = store_a
             .anchor
             .as_ref()
-            .expect("nodeid1 1 must resolve to graph node NODEID 1");
+            .expect("F1 carries network, so Store A anchors to its own position");
         assert_eq!(anchor.lon, 139.0);
         assert_eq!(anchor.lat, 35.0);
         assert_eq!(anchor.ordinal, 0.0);
@@ -550,7 +551,13 @@ mod tests {
         let store_b = &items[1];
         assert_eq!(store_b.name, "Store B");
         assert_eq!(store_b.ordinal, 1.0);
-        assert!(store_b.anchor.is_none(), "nodeid1 -1 stays unanchored");
+        let anchor_b = store_b
+            .anchor
+            .as_ref()
+            .expect("F2 carries a network node, so Store B anchors to its own position");
+        assert_eq!(anchor_b.lon, 139.001);
+        assert_eq!(anchor_b.lat, 35.0);
+        assert_eq!(anchor_b.ordinal, 1.0);
     }
 
     #[test]

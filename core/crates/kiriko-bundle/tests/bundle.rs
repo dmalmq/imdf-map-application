@@ -106,13 +106,14 @@ fn compile_with_malformed_network_is_a_route_error() {
 
 // -- Facilities embedding (point-facility-poi Task 4) ----------------------
 
-// One facility anchored to NODEID 1 (icon derived from `image`), one with
-// `nodeid1: -1` (silently unanchored), and one on an unmappable floor that
-// must be dropped with a `facility_build` warning.
+// One facility on F1 (icon derived from `image`), one on F2, and one on an
+// unmappable floor that must be dropped with a `facility_build` warning. F1 and
+// F2 both carry network nodes, so each mapped facility anchors to its OWN
+// position (the router snaps to the nearest node at query time).
 const FACILITIES: &str = r#"{"type":"FeatureCollection","features":[
-  {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png","nodeid1":1},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
-  {"type":"Feature","properties":{"name":"Store B","floor":"F2","image":"","nodeid1":-1},"geometry":{"type":"Point","coordinates":[139.001,35.0]}},
-  {"type":"Feature","properties":{"name":"Bad","floor":"garbage","image":"","nodeid1":1},"geometry":{"type":"Point","coordinates":[139.0,35.0]}}]}"#;
+  {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png"},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+  {"type":"Feature","properties":{"name":"Store B","floor":"F2","image":""},"geometry":{"type":"Point","coordinates":[139.001,35.0]}},
+  {"type":"Feature","properties":{"name":"Bad","floor":"garbage","image":""},"geometry":{"type":"Point","coordinates":[139.0,35.0]}}]}"#;
 
 #[test]
 fn compile_with_facilities_embeds_facilities_section() {
@@ -144,14 +145,22 @@ fn compile_with_facilities_embeds_facilities_section() {
             lat: 35.0,
             ordinal: 0.0,
         }),
-        "nodeid1 1 must resolve to graph node NODEID 1"
+        "F1 carries network, so Store A anchors to its own position"
     );
     let store_b = facilities
         .items
         .iter()
         .find(|f| f.name == "Store B")
         .expect("Store B must be present");
-    assert_eq!(store_b.anchor, None, "nodeid1 -1 stays unanchored");
+    assert_eq!(
+        store_b.anchor,
+        Some(kiriko_facilities::FacilityAnchor {
+            lon: 139.001,
+            lat: 35.0,
+            ordinal: 1.0,
+        }),
+        "F2 carries a network node, so Store B anchors to its own position"
+    );
     assert!(
         compiled
             .warnings

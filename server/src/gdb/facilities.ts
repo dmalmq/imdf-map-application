@@ -1,8 +1,8 @@
 /**
- * Server-side point-facility extraction: pulls the
- * `point_facility_network` layer out of a staged facilities `.gdb.zip` as
- * WGS84 RFC7946 GeoJSON text, plus the facility/floor summary shown in the
- * import review dialog.
+ * Server-side point-facility extraction: pulls the `Facility_Merge` layer
+ * (the icon-bearing POI layer: `name`/`category`/`floor`/`image`) out of a
+ * staged facilities `.gdb.zip` as WGS84 RFC7946 GeoJSON text, plus the
+ * facility/floor summary shown in the import review dialog.
  *
  * GDAL stays in TypeScript and the server never interprets the facilities:
  * parsing the GeoJSON into the facility index lives in the Rust compiler.
@@ -15,7 +15,7 @@ import { extractLayerGeoJson, summarizeLayer } from "./network";
 import { GDB_MAX_GENERATED_BYTES, GdbSourceError } from "./sourceValidation";
 import type { FacilitiesExtraction } from "./types";
 
-export const FACILITY_LAYER = "point_facility_network";
+export const FACILITY_LAYER = "Facility_Merge";
 
 async function extractFacilitiesGeoJsonUnlocked(path: string): Promise<FacilitiesExtraction> {
   const gdal = await getGdal();
@@ -28,7 +28,7 @@ async function extractFacilitiesGeoJsonUnlocked(path: string): Promise<Facilitie
     if (!layerNames.has(FACILITY_LAYER)) {
       throw new GdbSourceError(
         "missing_facility_layer",
-        "Archive is missing the point-facility layer (point_facility_network).",
+        "Archive is missing the point-facility layer (Facility_Merge).",
         { missing: [FACILITY_LAYER] },
       );
     }
@@ -37,7 +37,7 @@ async function extractFacilitiesGeoJsonUnlocked(path: string): Promise<Facilitie
       gdal,
       dataset,
       FACILITY_LAYER,
-      "facilities_point_facility_network",
+      "facilities_facility_merge",
     );
     const generatedBytes = Buffer.byteLength(geojson, "utf8");
     if (generatedBytes > GDB_MAX_GENERATED_BYTES) {

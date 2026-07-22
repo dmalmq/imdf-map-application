@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt;
 
 use geojson::{FeatureCollection, GeoJson, Value};
@@ -26,27 +26,30 @@ impl fmt::Display for FacilityBuildError {
 
 impl std::error::Error for FacilityBuildError {}
 
-/// Build a deterministic facility list from point-facility network GeoJSON.
+/// Build a deterministic facility list from `Facility_Merge` GeoJSON.
 ///
-/// Features carry `name`/`floor`/`image`/`nodeid1` properties and a Point
-/// geometry. `floor` maps via [`kiriko_route::floor_to_ordinal`]; facilities on
-/// unmappable floors are dropped with an `unmapped_floor` warning. `icon` is the
-/// basename of `image` without extension. `nodeid1` (i64, >= 0) resolves through
-/// `node_ids` (NODEID→index, parallel to `graph.nodes`) to a [`FacilityAnchor`];
-/// otherwise the anchor is `None` with an `unresolved_anchor` warning.
+/// Features carry `name`/`floor`/`image` properties and a Point geometry.
+/// `floor` maps via [`kiriko_route::floor_to_ordinal`]; facilities on
+/// unmappable floors are dropped with an `unmapped_floor` warning. `icon` is
+/// the basename of `image` without extension (empty when absent).
+///
+/// Each facility keeps its real GDB position. `anchor` is that same position
+/// used as the "Route here" destination — the A\* router snaps it to the
+/// nearest node at query time — and is set only when the facility's floor
+/// carries at least one route-graph node. Facilities on a floor with no
+/// network get `anchor = None`, so no routing is offered there.
 pub fn build_facilities(
     facilities_geojson: &str,
     graph: &kiriko_route::RouteGraph,
-    node_ids: &[u64],
 ) -> Result<(Facilities, Vec<FacilityBuildWarning>), FacilityBuildError> {
     let collection = parse_collection(facilities_geojson)?;
     let mut warnings = Vec::new();
 
-    let index: BTreeMap<u64, u32> = node_ids
-        .iter()
-        .enumerate()
-        .map(|(i, &id)| (id, i as u32))
-        .collect();
+    // Ordinals (by bit pattern, since f64 is not `Ord`) that carry at least
+    // one routing node. `floor_to_ordinal` produces both these node ordinals
+    // and each facility's ordinal, so identical floors share exact bits.
+    let routable_ordinals: BTreeSet<u64> =
+        graph.nodes.iter().map(|n| n.ordinal.to_bits()).collect();
 
     let mut items = Vec::new();
     for feature in &collection.features {
@@ -75,29 +78,9 @@ pub fn build_facilities(
             .and_then(|v| v.as_str())
             .map(icon_of)
             .unwrap_or_default();
-        // `nodeid1` absent or -1 is the expected "no routing anchor" case
-        // (most named stores) and is silent. A non-negative id that fails to
-        // resolve to a graph node is a genuine mismatch and warns.
-        let nodeid1 = prop(&feature.properties, "nodeid1").and_then(|v| v.as_i64());
-        let anchor = match nodeid1 {
-            Some(id) if id >= 0 => {
-                let resolved = index.get(&(id as u64)).and_then(|&i| {
-                    graph.nodes.get(i as usize).map(|n| FacilityAnchor {
-                        lon: n.lon,
-                        lat: n.lat,
-                        ordinal: n.ordinal,
-                    })
-                });
-                if resolved.is_none() {
-                    warnings.push(FacilityBuildWarning {
-                        code: "unresolved_anchor".into(),
-                        detail: format!("facility {name:?} nodeid1 {id} not in route graph"),
-                    });
-                }
-                resolved
-            }
-            _ => None,
-        };
+        let anchor = routable_ordinals
+            .contains(&ordinal.to_bits())
+            .then_some(FacilityAnchor { lon, lat, ordinal });
         items.push(Facility {
             lon,
             lat,
@@ -145,64 +128,75 @@ fn prop<'a>(
 mod tests {
     use super::*;
 
+    // Facility_Merge-shaped features: `name`/`floor`/`image`, no `nodeid1`.
+    // Store A + Store B are on F1 (ordinal 0, which the graph covers);
+    // Upstairs is on F2 (ordinal 1, no node); Bad has an unmappable floor.
     const FAC: &str = r#"{"type":"FeatureCollection","features":[
- {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png","nodeid1":10},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
- {"type":"Feature","properties":{"name":"Store B","floor":"F1","image":"","nodeid1":-1},"geometry":{"type":"Point","coordinates":[139.001,35.0]}},
- {"type":"Feature","properties":{"name":"Bad","floor":"garbage","image":"","nodeid1":10},"geometry":{"type":"Point","coordinates":[139.0,35.0]}}]}"#;
+ {"type":"Feature","properties":{"name":"Store A","floor":"F1","image":"/marker/ticket.png"},"geometry":{"type":"Point","coordinates":[139.0,35.0]}},
+ {"type":"Feature","properties":{"name":"Store B","floor":"F1","image":""},"geometry":{"type":"Point","coordinates":[139.001,35.0]}},
+ {"type":"Feature","properties":{"name":"Upstairs","floor":"F2","image":"/marker/escalator.png"},"geometry":{"type":"Point","coordinates":[139.002,35.0]}},
+ {"type":"Feature","properties":{"name":"Bad","floor":"garbage","image":""},"geometry":{"type":"Point","coordinates":[139.0,35.0]}}]}"#;
 
-    fn graph() -> (kiriko_route::RouteGraph, Vec<u64>) {
-        (
-            kiriko_route::RouteGraph {
-                nodes: vec![kiriko_route::RouteNode {
-                    lon: 139.5,
-                    lat: 35.5,
-                    ordinal: 0.0,
-                }],
-                edges: vec![],
-            },
-            vec![10],
-        )
+    fn graph() -> kiriko_route::RouteGraph {
+        kiriko_route::RouteGraph {
+            nodes: vec![kiriko_route::RouteNode {
+                lon: 139.5,
+                lat: 35.5,
+                ordinal: 0.0,
+            }],
+            edges: vec![],
+        }
     }
 
     #[test]
-    fn builds_with_icon_and_anchor() {
-        let (g, ids) = graph();
-        let (f, warns) = build_facilities(FAC, &g, &ids).unwrap();
-        assert_eq!(f.items.len(), 2); // "Bad" dropped (unmapped floor)
+    fn builds_icon_and_real_position_anchor() {
+        let (f, warns) = build_facilities(FAC, &graph()).unwrap();
+        assert_eq!(f.items.len(), 3); // "Bad" dropped (unmapped floor)
         let a = f.items.iter().find(|x| x.name == "Store A").unwrap();
         assert_eq!(a.icon, "ticket");
+        // Anchor is the facility's OWN position, never the node's — the router
+        // snaps to the nearest node at query time.
         assert_eq!(
             a.anchor,
             Some(FacilityAnchor {
-                lon: 139.5,
-                lat: 35.5,
+                lon: 139.0,
+                lat: 35.0,
                 ordinal: 0.0
             })
         );
         let b = f.items.iter().find(|x| x.name == "Store B").unwrap();
-        assert_eq!(b.icon, "");
-        assert_eq!(b.anchor, None); // nodeid1 = -1
+        assert_eq!(b.icon, ""); // empty image -> pin fallback downstream
+        assert_eq!(
+            b.anchor,
+            Some(FacilityAnchor {
+                lon: 139.001,
+                lat: 35.0,
+                ordinal: 0.0
+            })
+        );
         assert!(warns.iter().any(|w| w.code == "unmapped_floor"));
-        // nodeid1 = -1 is the expected "no anchor" case and must stay silent.
-        assert!(!warns.iter().any(|w| w.code == "unresolved_anchor"));
     }
 
     #[test]
-    fn warns_when_nonnegative_nodeid_missing_from_graph() {
-        let (g, ids) = graph(); // graph only knows NODEID 10
-        const MISS: &str = r#"{"type":"FeatureCollection","features":[
- {"type":"Feature","properties":{"name":"Orphan","floor":"F1","image":"","nodeid1":999},"geometry":{"type":"Point","coordinates":[139.0,35.0]}}]}"#;
-        let (f, warns) = build_facilities(MISS, &g, &ids).unwrap();
-        assert_eq!(f.items[0].anchor, None);
-        assert!(warns.iter().any(|w| w.code == "unresolved_anchor"));
+    fn marker_positions_are_verbatim_gdb_coordinates() {
+        let (f, _) = build_facilities(FAC, &graph()).unwrap();
+        let a = f.items.iter().find(|x| x.name == "Store A").unwrap();
+        assert_eq!((a.lon, a.lat), (139.0, 35.0)); // not snapped to 139.5/35.5
+    }
+
+    #[test]
+    fn anchor_none_on_floor_without_network() {
+        let (f, _) = build_facilities(FAC, &graph()).unwrap();
+        let up = f.items.iter().find(|x| x.name == "Upstairs").unwrap();
+        assert_eq!(up.icon, "escalator");
+        assert_eq!(up.anchor, None); // F2 (ordinal 1) has no graph node
     }
 
     #[test]
     fn deterministic() {
-        let (g, ids) = graph();
         assert_eq!(
-            build_facilities(FAC, &g, &ids).unwrap().0,
-            build_facilities(FAC, &g, &ids).unwrap().0
+            build_facilities(FAC, &graph()).unwrap().0,
+            build_facilities(FAC, &graph()).unwrap().0
         );
     }
 }

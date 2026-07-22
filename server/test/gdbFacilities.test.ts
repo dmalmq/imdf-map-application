@@ -79,10 +79,10 @@ function featureCollection(features: unknown[]): string {
 }
 
 const FACILITIES_GEOJSON = featureCollection([
-  { type: "Feature", properties: { FLOOR: "1" }, geometry: { type: "Point", coordinates: [139.0, 35.0] } },
-  { type: "Feature", properties: { FLOOR: "2" }, geometry: { type: "Point", coordinates: [139.0005, 35.0] } },
-  { type: "Feature", properties: { FLOOR: "1" }, geometry: { type: "Point", coordinates: [139.0, 35.0005] } },
-  { type: "Feature", properties: { FLOOR: "2" }, geometry: { type: "Point", coordinates: [139.0005, 35.0005] } },
+  { type: "Feature", properties: { floor: "1" }, geometry: { type: "Point", coordinates: [139.0, 35.0] } },
+  { type: "Feature", properties: { floor: "2" }, geometry: { type: "Point", coordinates: [139.0005, 35.0] } },
+  { type: "Feature", properties: { floor: "1" }, geometry: { type: "Point", coordinates: [139.0, 35.0005] } },
+  { type: "Feature", properties: { floor: "2" }, geometry: { type: "Point", coordinates: [139.0005, 35.0005] } },
 ]);
 
 const JUNCTIONS_GEOJSON = featureCollection([
@@ -109,7 +109,7 @@ const LEVELS_GEOJSON = featureCollection([
 ]);
 
 const FACILITY_LAYERS = [
-  { name: "point_facility_network" },
+  { name: "Facility_Merge" },
   { name: "net_junction" },
   { name: "net_path" },
 ];
@@ -186,7 +186,7 @@ beforeEach(() => {
   fake.layerOutputs.clear();
   fake.files.clear();
   fake.compileCalls.length = 0;
-  fake.layerOutputs.set("point_facility_network", FACILITIES_GEOJSON);
+  fake.layerOutputs.set("Facility_Merge", FACILITIES_GEOJSON);
   fake.layerOutputs.set("net_junction", JUNCTIONS_GEOJSON);
   fake.layerOutputs.set("net_path", PATHS_GEOJSON);
   fake.layerOutputs.set("Levels", LEVELS_GEOJSON);
