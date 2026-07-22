@@ -25,7 +25,7 @@ import type { FastifyInstance } from "fastify";
 import { requireSession } from "../auth/guard";
 import { inspectGdbArchive, convertGdbLayers } from "./convert";
 import { extractFacilitiesGeoJson } from "./facilities";
-import { GdbConversionError, resolveGdbImdfWithExclusions, suggestGdbMapping } from "./mapping";
+import { GdbConversionError, normalizeGdbPlan, resolveGdbImdfWithExclusions, suggestGdbMapping } from "./mapping";
 import { extractNetworkGeoJson } from "./network";
 import { writeImdfZip } from "./imdfZip";
 import { GdbSourceError, validateGdbArchive } from "./sourceValidation";
@@ -530,9 +530,23 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         }).m ?? 0) + 1;
       const info = db
         .prepare(
-          "INSERT INTO versions (venue_id, seq, public_id, source_blob_hash, source_kind) VALUES (?, ?, ?, ?, 'gdb')",
+          `INSERT INTO versions
+             (venue_id, seq, public_id, source_blob_hash, source_kind,
+              gdb_source_blob_hash, gdb_plan_json,
+              net_junctions_blob_hash, net_paths_blob_hash, facilities_blob_hash)
+           VALUES (?, ?, ?, ?, 'gdb', ?, ?, ?, ?, ?)`,
         )
-        .run(venueId, nextSeq, newPublicVersionId(), imdfHash);
+        .run(
+          venueId,
+          nextSeq,
+          newPublicVersionId(),
+          imdfHash,
+          blobHash,
+          JSON.stringify(normalizeGdbPlan(plan)),
+          networkJunctionsHash ?? null,
+          networkPathsHash ?? null,
+          facilitiesGeoJsonHash ?? null,
+        );
       const versionId = Number(info.lastInsertRowid);
       const jobId = request.server.queue.enqueue("publish_imdf", {
         versionId,

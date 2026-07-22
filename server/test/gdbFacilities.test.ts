@@ -381,3 +381,35 @@ describe("POST /api/gdb/publish with facilitiesBlobHash", () => {
     expect(versionCount.n).toBe(0);
   });
 });
+
+describe("GDB publish persists reprocess inputs", () => {
+  it("stores raw GDB blob, plan, and bundle-input refs on the version row", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    const networkBlobHash = putBlob(app, await validGdbZipBytes("net.gdb"));
+    const facilitiesBlobHash = putBlob(app, await validGdbZipBytes("facilities.gdb"));
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/gdb/publish",
+      headers: { cookie },
+      payload: { venueId, blobHash, networkBlobHash, facilitiesBlobHash, plan: PUBLISH_PLAN },
+    });
+    expect(response.statusCode, response.body).toBe(202);
+    const { versionId } = response.json() as { versionId: number };
+    await app.queue.idle();
+
+    const row = app.db
+      .prepare(
+        "SELECT gdb_source_blob_hash AS g, gdb_plan_json AS p, net_junctions_blob_hash AS j, net_paths_blob_hash AS t, facilities_blob_hash AS f FROM versions WHERE id = ?",
+      )
+      .get(versionId) as { g: string; p: string; j: string; t: string; f: string };
+    expect(row.g).toBe(blobHash);
+    expect(JSON.parse(row.p).layers.length).toBeGreaterThan(0);
+    expect(row.j).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.t).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.f).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
