@@ -151,8 +151,10 @@ describe("hydrateVenue", () => {
     const level2Render = venue.renderFeaturesByLevel.get(LEVEL_2F);
     expect(level2Render?.features.map((f) => f.properties?.["__feature_id"])).toEqual([LEVEL_2F]);
 
-    // searchEntries: reused buildSearchEntries, indexes occupant + unit
-    expect(venue.searchEntries.map((e) => e.featureId).sort()).toEqual([OCCUPANT_ID, UNIT_ID].sort());
+    // searchEntries: reused buildSearchEntries, now indexes venue, level, unit, occupant
+    expect(venue.searchEntries.map((e) => e.featureId).sort()).toEqual(
+      [VENUE_ID, LEVEL_1F, LEVEL_2F, UNIT_ID, OCCUPANT_ID].sort(),
+    );
 
     // boundsByLevel converted from DTO tuples into a Map
     expect(venue.boundsByLevel).toBeInstanceOf(Map);
