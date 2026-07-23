@@ -8,6 +8,9 @@ const ui = {
   importGdb: { ja: "GDB を取り込む", en: "Import GDB" },
   addData: { ja: "経路・地点データを追加", en: "Add routing / facilities" },
   editMapping: { ja: "マッピングを編集", en: "Edit mapping" },
+  generateRouting: { ja: "経路を生成", en: "Generate routing" },
+  exportNetwork: { ja: "ネットワークを書き出し", en: "Export network" },
+  reviewNetwork: { ja: "ネットワークを確認", en: "Review network" },
   floors: { ja: "フロア", en: "floors" },
   features: { ja: "地物", en: "features" },
   processing: { ja: "処理中・未公開", en: "not published yet" },
@@ -21,6 +24,9 @@ export interface DatasetCardProps {
   onImportGdb?: () => void;
   onAddData?: () => void;
   onEditMapping?: () => void;
+  onGenerateRouting?: () => void;
+  onExportNetwork?: () => void;
+  onReviewNetwork?: () => void;
   onUploadImdf?: () => void;
 }
 
@@ -32,6 +38,9 @@ export function DatasetCard({
   onImportGdb,
   onAddData,
   onEditMapping,
+  onGenerateRouting,
+  onExportNetwork,
+  onReviewNetwork,
   onUploadImdf,
 }: DatasetCardProps) {
   const stats = venue.latest?.stats ?? null;
@@ -73,6 +82,21 @@ export function DatasetCard({
         {onEditMapping ? (
           <button type="button" className="btn-ghost" onClick={onEditMapping}>
             {ui.editMapping[locale]}
+          </button>
+        ) : null}
+        {onGenerateRouting ? (
+          <button type="button" className="btn-ghost" onClick={onGenerateRouting}>
+            {ui.generateRouting[locale]}
+          </button>
+        ) : null}
+        {onExportNetwork ? (
+          <button type="button" className="btn-ghost" onClick={onExportNetwork}>
+            {ui.exportNetwork[locale]}
+          </button>
+        ) : null}
+        {onReviewNetwork ? (
+          <button type="button" className="btn-ghost" onClick={onReviewNetwork}>
+            {ui.reviewNetwork[locale]}
           </button>
         ) : null}
         <button type="button" className="btn-primary" onClick={onOpen}>

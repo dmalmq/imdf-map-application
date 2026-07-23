@@ -412,6 +412,25 @@ pub fn facilities_js(bundle: &[u8]) -> Result<JsValue, JsError> {
         .map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Export the bundle's §5 routing graph as `{ junctions, paths }` — each a
+/// `net_junction` / `net_path` GeoJSON `FeatureCollection` string (see
+/// `kiriko_bundle::export_network`). Lets the viewer render the generated
+/// network floor by floor. Throws on decode failure or when the bundle
+/// carries no graph.
+#[wasm_bindgen(js_name = "exportNetwork")]
+pub fn export_network_js(bundle: &[u8]) -> Result<JsValue, JsError> {
+    let network = kiriko_bundle::export_network(bundle).map_err(|e| JsError::new(&e.message()))?;
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct NetworkDto {
+        junctions: String,
+        paths: String,
+    }
+    NetworkDto { junctions: network.junctions, paths: network.paths }
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -478,6 +497,7 @@ mod tests {
             Some(NETWORK_JUNCTIONS),
             Some(NETWORK_PATHS),
             None,
+            false,
         )
         .expect("fixture + network compiles")
         .bytes
@@ -499,6 +519,7 @@ mod tests {
             Some(NETWORK_JUNCTIONS),
             Some(NETWORK_PATHS),
             Some(FACILITIES),
+            false,
         )
         .expect("fixture + network + facilities compiles")
         .bytes

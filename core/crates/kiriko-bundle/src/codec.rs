@@ -70,7 +70,7 @@ pub fn compile_imdf(
     source: &[u8],
     metadata: BundleMetadata,
 ) -> Result<CompiledBundle, CompileError> {
-    compile_imdf_with_network(source, metadata, None, None, None)
+    compile_imdf_with_network(source, metadata, None, None, None, false)
 }
 
 /// Import `source` (a raw IMDF `.zip`) with `kiriko-model`, optionally build
@@ -81,8 +81,10 @@ pub fn compile_imdf(
 /// [`kiriko_route::build_route_graph`] builds the graph against the venue's
 /// level ordinals; a non-empty graph is embedded as section 5 and the build
 /// warnings fold into the compile warning channel (code `route_build`). A
-/// malformed network is fatal ([`CompileError::Route`]). When either input
-/// is `None`, no graph is embedded.
+/// malformed network is fatal ([`CompileError::Route`]). When no network is
+/// supplied but `synthesize_network` is set, [`crate::synth::synthesize_network`]
+/// derives a graph from the venue's own geometry instead (its warnings also
+/// fold in under `route_build`); otherwise no graph is embedded.
 ///
 /// When `facilities_geojson` is `Some`,
 /// [`kiriko_facilities::build_facilities`] builds the point-facility list
@@ -97,6 +99,7 @@ pub fn compile_imdf_with_network(
     junctions_geojson: Option<&str>,
     paths_geojson: Option<&str>,
     facilities_geojson: Option<&str>,
+    synthesize_network: bool,
 ) -> Result<CompiledBundle, CompileError> {
     let venue = import_imdf(source)?;
     let stats = BundleStats {
@@ -119,6 +122,22 @@ pub fn compile_imdf_with_network(
     if let (Some(junctions), Some(paths)) = (junctions_geojson, paths_geojson) {
         let ordinals: Vec<f64> = document.levels.iter().map(|l| l.ordinal).collect();
         let build = kiriko_route::build_route_graph(junctions, paths, &ordinals)?;
+        if !build.graph.is_empty() {
+            document.graph = Some(build.graph);
+        }
+        document
+            .warnings
+            .extend(build.warnings.into_iter().map(|w| ViewerWarning {
+                code: WarningCode::RouteBuild,
+                message: format!("{}: {}", w.code, w.detail),
+                feature_id: None,
+                archive_entry: None,
+            }));
+    } else if synthesize_network {
+        #[cfg(feature = "netgen")]
+        let build = crate::synth_medial::synthesize_network_medial(&document);
+        #[cfg(not(feature = "netgen"))]
+        let build = crate::synth::synthesize_network(&document);
         if !build.graph.is_empty() {
             document.graph = Some(build.graph);
         }

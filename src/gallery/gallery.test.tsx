@@ -14,6 +14,8 @@ const augmentGdb = vi.fn();
 const getGdbMapping = vi.fn();
 const waitForJob = vi.fn();
 const deleteVenue = vi.fn();
+const generateNetwork = vi.fn();
+const exportNetwork = vi.fn();
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
   return {
@@ -31,6 +33,8 @@ vi.mock("./api", async (importOriginal) => {
       getGdbMapping: (...args: unknown[]) => getGdbMapping(...args),
       waitForJob: (...args: unknown[]) => waitForJob(...args),
       deleteVenue: (...args: unknown[]) => deleteVenue(...args),
+      generateNetwork: (...args: unknown[]) => generateNetwork(...args),
+      exportNetwork: (...args: unknown[]) => exportNetwork(...args),
     },
   };
 });
@@ -454,5 +458,122 @@ describe("GalleryPage edit mapping", () => {
       null,
     );
     expect(createVenue).not.toHaveBeenCalled();
+  });
+});
+
+describe("GalleryPage generate routing", () => {
+  it("shows Generate routing on a venue-only dataset and calls generateNetwork on click", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 42,
+        slug: "venue-only",
+        name: "Venue Only",
+        createdAt: "2026-07-20 00:00:00",
+        latest: {
+          seq: 1,
+          status: "published",
+          stats: { levels: 2, features: 9 },
+          createdAt: "2026-07-20 00:00:00",
+        },
+        hasNetwork: false,
+      },
+    ]);
+    generateNetwork.mockResolvedValue({ jobId: "j", versionId: 2, seq: 2 });
+    waitForJob.mockResolvedValue({ status: "done" });
+
+    const user = userEvent.setup();
+    render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Venue Only")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+    await user.click(screen.getByRole("button", { name: "Generate routing" }));
+
+    await waitFor(() => expect(generateNetwork).toHaveBeenCalledTimes(1));
+    expect(generateNetwork).toHaveBeenCalledWith(42);
+    await waitFor(() => expect(listVenues).toHaveBeenCalledTimes(2));
+  });
+
+  it("hides Generate routing on a dataset that already has a real network", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 43,
+        slug: "with-network",
+        name: "With Network",
+        createdAt: "2026-07-20 00:00:00",
+        latest: {
+          seq: 1,
+          status: "published",
+          stats: { levels: 2, features: 9 },
+          createdAt: "2026-07-20 00:00:00",
+        },
+        hasNetwork: true,
+      },
+    ]);
+    render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("With Network")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Generate routing" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "経路を生成" })).toBeNull();
+  });
+});
+
+describe("GalleryPage export network", () => {
+  it("shows Export network on a dataset with a graph and downloads on click", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 51,
+        slug: "generated-station",
+        name: "Generated Station",
+        createdAt: "2026-07-20 00:00:00",
+        latest: {
+          seq: 2,
+          status: "published",
+          stats: { levels: 3, features: 12 },
+          createdAt: "2026-07-20 00:00:00",
+        },
+        hasGraph: true,
+      },
+    ]);
+    exportNetwork.mockResolvedValue({
+      blob: new Blob([new Uint8Array([1, 2, 3])], { type: "application/zip" }),
+      filename: "generated-station-network.gdb.zip",
+    });
+    const createObjectURL = vi.fn(() => "blob:mock");
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+
+    const user = userEvent.setup();
+    render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Generated Station")).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: "EN" }));
+    await user.click(screen.getByRole("button", { name: "Export network" }));
+
+    await waitFor(() => expect(exportNetwork).toHaveBeenCalledTimes(1));
+    expect(exportNetwork).toHaveBeenCalledWith(51);
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+  });
+
+  it("hides Export network on a dataset without a graph", async () => {
+    me.mockResolvedValue({ id: 1, username: "daniel", role: "admin" });
+    listVenues.mockResolvedValue([
+      {
+        id: 52,
+        slug: "plain-station",
+        name: "Plain Station",
+        createdAt: "2026-07-20 00:00:00",
+        latest: {
+          seq: 1,
+          status: "published",
+          stats: { levels: 1, features: 3 },
+          createdAt: "2026-07-20 00:00:00",
+        },
+        hasGraph: false,
+      },
+    ]);
+    render(<GalleryPage />);
+    await waitFor(() => expect(screen.getByText("Plain Station")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Export network" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "ネットワークを書き出し" })).toBeNull();
   });
 });

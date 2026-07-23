@@ -1,4 +1,4 @@
-import { compileImdf, inspectBundle } from "@kiriko/node";
+import { compileImdf, exportNetwork, inspectBundle } from "@kiriko/node";
 
 /** Bundle statistics, API-compatible with the existing `stats_json` shape. */
 export interface ImdfStats {
@@ -39,6 +39,13 @@ export interface CompileVenueMetadata {
    * 7; when absent facility compilation is unchanged.
    */
   facilitiesGeoJson?: string;
+  /**
+   * When `true` and no network GeoJSON is supplied, the compiler derives a
+   * routing graph from the venue's own geometry (walkway/opening/transit
+   * adjacency) and embeds it as section 5. Ignored when a real network is
+   * supplied.
+   */
+  synthesizeNetwork?: boolean;
 }
 
 /**
@@ -68,6 +75,7 @@ export type NativeCompileFn = (
   networkJunctionsGeoJson?: string,
   networkPathsGeoJson?: string,
   facilitiesGeoJson?: string,
+  synthesizeNetwork?: boolean,
 ) => Promise<unknown>;
 
 const WARNING_CODES: Record<ViewerWarningCode, true> = {
@@ -249,6 +257,7 @@ export async function compileVenueBundle(
         metadata.networkJunctionsGeoJson,
         metadata.networkPathsGeoJson,
         metadata.facilitiesGeoJson,
+        metadata.synthesizeNetwork,
       ),
     );
     if (response.ok) {
@@ -493,5 +502,84 @@ export async function inspectVenueBundle(
     }
     const message = error instanceof Error ? error.message : String(error);
     throw new CoreInspectError("bridge_error", `native inspect bridge failed: ${message}`);
+  }
+}
+
+/**
+ * `@kiriko/node`'s raw network-export bridge contract. Treated as untrusted
+ * FFI output — validated before use.
+ */
+export type NativeExportFn = (bundle: Buffer) => Promise<unknown>;
+
+/**
+ * A network-export failure. `code` is a stable `kiriko-bundle` code
+ * (`no_graph`, the four codec codes, or `export_serialize_failed`), or
+ * `"bridge_error"` when the native response itself was malformed.
+ */
+export class CoreExportError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CoreExportError";
+  }
+}
+
+type ValidatedExportResponse =
+  | { ok: true; junctionsJson: string; pathsJson: string }
+  | { ok: false; errorJson: string };
+
+function validateNativeExportResponse(raw: unknown): ValidatedExportResponse {
+  if (!isRecord(raw) || typeof raw.ok !== "boolean") {
+    throw new CoreExportError("bridge_error", "native export response is malformed");
+  }
+  if (raw.ok) {
+    if (typeof raw.junctionsJson !== "string" || typeof raw.pathsJson !== "string") {
+      throw new CoreExportError("bridge_error", "native export response is missing GeoJSON strings");
+    }
+    return { ok: true, junctionsJson: raw.junctionsJson, pathsJson: raw.pathsJson };
+  }
+  if (typeof raw.errorJson !== "string") {
+    throw new CoreExportError("bridge_error", "native export errorJson is not a string");
+  }
+  return { ok: false, errorJson: raw.errorJson };
+}
+
+function parseExportError(json: string): CoreExportError {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new CoreExportError("bridge_error", "native export errorJson is not valid JSON");
+  }
+  if (!isRecord(parsed) || typeof parsed.code !== "string" || typeof parsed.message !== "string") {
+    throw new CoreExportError("bridge_error", "native export errorJson has an unexpected shape");
+  }
+  return new CoreExportError(parsed.code, parsed.message);
+}
+
+/**
+ * Export a compiled `kvb1` bundle's §5 routing graph as `net_junction` /
+ * `net_path` GeoJSON via the native `@kiriko/node` addon. Throws
+ * `CoreExportError("no_graph", …)` when the bundle carries no graph; any
+ * malformed native output normalizes to `CoreExportError("bridge_error", …)`.
+ */
+export async function exportVenueNetwork(
+  bundle: Buffer,
+  nativeExport: NativeExportFn = exportNetwork,
+): Promise<{ junctions: string; paths: string }> {
+  try {
+    const response = validateNativeExportResponse(await nativeExport(bundle));
+    if (!response.ok) {
+      throw parseExportError(response.errorJson);
+    }
+    return { junctions: response.junctionsJson, paths: response.pathsJson };
+  } catch (error) {
+    if (error instanceof CoreExportError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CoreExportError("bridge_error", `native export bridge failed: ${message}`);
   }
 }

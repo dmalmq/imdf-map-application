@@ -23,6 +23,14 @@ const ui = {
   loadError: { ja: "読み込みに失敗しました", en: "Could not load datasets" },
   importGdb: { ja: "Geodatabase を取り込む", en: "Import Geodatabase" },
   inspecting: { ja: "検査中…", en: "Inspecting…" },
+  generatingRouting: { ja: "経路を生成中…", en: "Generating routing…" },
+  routingGenerated: { ja: "経路を生成しました", en: "Routing generated" },
+  exportingNetwork: { ja: "ネットワークを書き出し中…", en: "Exporting network…" },
+  networkExported: { ja: "ネットワークを書き出しました", en: "Network exported" },
+  noGraphToExport: {
+    ja: "書き出せる経路ネットワークがありません。先に生成してください。",
+    en: "No routing network to export — generate one first.",
+  },
   publishedWithSkips: {
     ja: (n: number, sample: string) =>
       `公開しました（${n} レイヤーをスキップ: 例 ${sample}）`,
@@ -78,6 +86,7 @@ export function GalleryPage() {
   const [gdbFlow, setGdbFlow] = useState<GdbFlow>({ phase: "idle" });
   const [gdbNotice, setGdbNotice] = useState<string | null>(null);
   const [addData, setAddData] = useState<AddDataFlow>({ phase: "idle" });
+  const [generatingId, setGeneratingId] = useState<number | null>(null);
   const gdbInputRef = useRef<HTMLInputElement>(null);
   const gdbTargetRef = useRef<GdbTarget>({ mode: "create" });
 
@@ -100,6 +109,10 @@ export function GalleryPage() {
 
   const openVenue = (slug: string) => {
     window.location.assign(`/?dataset=${encodeURIComponent(slug)}`);
+  };
+
+  const openReview = (slug: string) => {
+    window.location.assign(`/?dataset=${encodeURIComponent(slug)}&review=1`);
   };
 
   const openCreateUpload = () => {
@@ -354,6 +367,55 @@ export function GalleryPage() {
     setAddData({ phase: "idle" });
   };
 
+  const generateRouting = (venue: VenueSummary) => {
+    if (generatingId !== null) return;
+    setGeneratingId(venue.id);
+    setGdbNotice(ui.generatingRouting[locale]);
+    void (async () => {
+      try {
+        const res = await api.generateNetwork(venue.id);
+        const job = await api.waitForJob(res.jobId);
+        if (job.status === "done") {
+          setGdbNotice(ui.routingGenerated[locale]);
+          await reload();
+        } else {
+          setGdbNotice(gdbErrorMessage({ code: "gdb_conversion_failed", message: job.error }, locale));
+        }
+      } catch (err) {
+        setGdbNotice(gdbErrorMessage(err as GdbError, locale));
+      } finally {
+        setGeneratingId(null);
+      }
+    })();
+  };
+
+  const exportNetwork = (venue: VenueSummary) => {
+    setGdbNotice(ui.exportingNetwork[locale]);
+    void (async () => {
+      try {
+        const { blob, filename } = await api.exportNetwork(venue.id);
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        setGdbNotice(ui.networkExported[locale]);
+      } catch (err) {
+        const code =
+          (err as { code?: string; error?: string }).code ??
+          (err as { error?: string }).error;
+        setGdbNotice(
+          code === "no_graph"
+            ? ui.noGraphToExport[locale]
+            : gdbErrorMessage(err as GdbError, locale),
+        );
+      }
+    })();
+  };
+
   const header = (
     <header className="gallery-header">
       <div className="gallery-header__brand">
@@ -502,6 +564,23 @@ export function GalleryPage() {
                   ? {
                       onEditMapping: () => {
                         startEditMapping(venue);
+                      },
+                    }
+                  : {})}
+                {...(venue.hasNetwork === false
+                  ? {
+                      onGenerateRouting: () => {
+                        generateRouting(venue);
+                      },
+                    }
+                  : {})}
+                {...(venue.hasGraph === true
+                  ? {
+                      onExportNetwork: () => {
+                        exportNetwork(venue);
+                      },
+                      onReviewNetwork: () => {
+                        openReview(venue.slug);
                       },
                     }
                   : {})}
