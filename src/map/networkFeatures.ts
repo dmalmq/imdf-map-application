@@ -190,3 +190,86 @@ export function networkConnectivity(net: ParsedNetwork): NetworkConnectivity {
     isolated: degree.filter((d) => d === 0).length,
   };
 }
+
+/**
+ * Inverse of {@link floorLabelToOrdinal} matching the Rust `ordinal_to_floor_label`
+ * (`0 → "F1"`, `n ≥ 0 → "F{n+1}"`, `n < 0 → "B{-n}"`) so an edited graph
+ * re-imports to the same ordinals.
+ */
+export function ordinalToFloorLabel(ordinal: number): string {
+  const n = Math.trunc(ordinal);
+  return n < 0 ? `B${-n}` : `F${n + 1}`;
+}
+
+const EARTH_RADIUS_M = 6_371_000;
+/** Great-circle distance in metres between two lon/lat points. */
+function haversineM(lon1: number, lat1: number, lon2: number, lat2: number): number {
+  const toRad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRad;
+  const dLon = (lon2 - lon1) * toRad;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * Append a straight forward+reverse `net_path` pair between two existing
+ * junctions (cost = great-circle mm). No-op if either id is unknown, they are
+ * the same, or an undirected edge already joins them.
+ */
+export function addEdge(net: ParsedNetwork, fromId: number, toId: number): ParsedNetwork {
+  if (fromId === toId) return net;
+  const exists = net.paths.some((p) => {
+    const f = p.properties.FNODEID;
+    const t = p.properties.TNODEID;
+    return (f === fromId && t === toId) || (f === toId && t === fromId);
+  });
+  if (exists) return net;
+  const from = net.junctions.find((j) => j.properties.NODEID === fromId);
+  const to = net.junctions.find((j) => j.properties.NODEID === toId);
+  if (from == null || to == null || from.geometry.type !== "Point" || to.geometry.type !== "Point") {
+    return net;
+  }
+  const a = from.geometry.coordinates;
+  const b = to.geometry.coordinates;
+  const cost = Math.round(haversineM(a[0]!, a[1]!, b[0]!, b[1]!) * 1000);
+  const ordinal = from.ordinal;
+  const floor =
+    typeof from.properties.FLOOR === "string" ? from.properties.FLOOR : ordinalToFloorLabel(ordinal ?? 0);
+  const mk = (f: number, t: number, coords: [number, number][]): NetworkFeature => ({
+    ordinal,
+    geometry: { type: "LineString", coordinates: coords },
+    properties: { FNODEID: f, TNODEID: t, cost, FLOOR: floor },
+  });
+  const pa: [number, number] = [a[0]!, a[1]!];
+  const pb: [number, number] = [b[0]!, b[1]!];
+  return {
+    junctions: net.junctions,
+    paths: [...net.paths, mk(fromId, toId, [pa, pb]), mk(toId, fromId, [pb, pa])],
+  };
+}
+
+/** Remove both directed `net_path` features for an undirected pair. */
+export function deleteEdge(net: ParsedNetwork, aId: number, bId: number): ParsedNetwork {
+  const paths = net.paths.filter((p) => {
+    const f = p.properties.FNODEID;
+    const t = p.properties.TNODEID;
+    return !((f === aId && t === bId) || (f === bId && t === aId));
+  });
+  return { junctions: net.junctions, paths };
+}
+
+/** Reconstruct the two named GeoJSON FeatureCollections for re-import. */
+export function serializeNetwork(net: ParsedNetwork): { junctions: string; paths: string } {
+  const collection = (name: string, feats: NetworkFeature[]): string =>
+    JSON.stringify({
+      type: "FeatureCollection",
+      name,
+      features: feats.map((f) => ({ type: "Feature", properties: f.properties, geometry: f.geometry })),
+    });
+  return {
+    junctions: collection("net_junction", net.junctions),
+    paths: collection("net_path", net.paths),
+  };
+}

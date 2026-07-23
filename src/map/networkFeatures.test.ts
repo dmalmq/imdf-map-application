@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildNetworkFeatures, floorLabelToOrdinal, parseNetworkOverlay } from "./networkFeatures";
+import {
+  addEdge,
+  buildNetworkFeatures,
+  deleteEdge,
+  floorLabelToOrdinal,
+  ordinalToFloorLabel,
+  parseNetworkOverlay,
+  serializeNetwork,
+  type ParsedNetwork,
+} from "./networkFeatures";
 
 describe("floorLabelToOrdinal", () => {
   it("inverts the exported floor labels", () => {
@@ -53,5 +62,61 @@ describe("parseNetworkOverlay + buildNetworkFeatures", () => {
 
   it("returns an empty collection for a null network", () => {
     expect(buildNetworkFeatures(null, 0).features).toHaveLength(0);
+  });
+});
+
+function jn(id: number, lon: number, lat: number, ordinal: number): ParsedNetwork["junctions"][number] {
+  return {
+    ordinal,
+    geometry: { type: "Point", coordinates: [lon, lat] },
+    properties: { NODEID: id, FLOOR: ordinalToFloorLabel(ordinal) },
+  };
+}
+
+describe("ordinalToFloorLabel", () => {
+  it("round-trips through floorLabelToOrdinal", () => {
+    for (const o of [-3, -1, 0, 1, 5]) {
+      expect(floorLabelToOrdinal(ordinalToFloorLabel(o))).toBe(o);
+    }
+  });
+});
+
+describe("network editing", () => {
+  const base = (): ParsedNetwork => ({
+    junctions: [jn(0, 139.7, 35.6, 0), jn(1, 139.7005, 35.6, 0)],
+    paths: [],
+  });
+
+  it("addEdge appends a forward + reverse path with a positive cost", () => {
+    const net = addEdge(base(), 0, 1);
+    expect(net.paths).toHaveLength(2);
+    const [fwd, rev] = net.paths;
+    expect(fwd!.properties.FNODEID).toBe(0);
+    expect(fwd!.properties.TNODEID).toBe(1);
+    expect(rev!.properties.FNODEID).toBe(1);
+    expect(rev!.properties.TNODEID).toBe(0);
+    expect(Number(fwd!.properties.cost)).toBeGreaterThan(0);
+    expect(fwd!.ordinal).toBe(0);
+  });
+
+  it("addEdge is idempotent for an existing undirected pair", () => {
+    const net = addEdge(addEdge(base(), 0, 1), 1, 0);
+    expect(net.paths).toHaveLength(2);
+  });
+
+  it("deleteEdge removes both directions", () => {
+    const net = deleteEdge(addEdge(base(), 0, 1), 0, 1);
+    expect(net.paths).toHaveLength(0);
+  });
+
+  it("serializeNetwork emits named FeatureCollections that re-parse", () => {
+    const net = addEdge(base(), 0, 1);
+    const { junctions, paths } = serializeNetwork(net);
+    const j = JSON.parse(junctions) as { name: string; features: unknown[] };
+    const p = JSON.parse(paths) as { name: string; features: unknown[] };
+    expect(j.name).toBe("net_junction");
+    expect(j.features).toHaveLength(2);
+    expect(p.name).toBe("net_path");
+    expect(p.features).toHaveLength(2);
   });
 });
