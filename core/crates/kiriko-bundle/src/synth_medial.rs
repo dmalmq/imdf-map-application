@@ -25,6 +25,8 @@ use geo::algorithm::bool_ops::BooleanOps;
 use geo::algorithm::orient::{Direction, Orient};
 use geo::{Coord, LineString, MultiPolygon, Polygon};
 use geo::algorithm::contains::Contains;
+use geo::algorithm::area::Area;
+use geo::algorithm::intersects::Intersects;
 use geo::Point;
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use std::collections::HashMap;
@@ -275,6 +277,18 @@ fn floor_cost(category: &str) -> f64 {
     }
 }
 
+/// Largest-area `geo` polygon of a canonical transit-unit geometry, if any.
+fn largest_polygon(geom: &Value) -> Option<Polygon<f64>> {
+    geo_polygons(geom)
+        .into_iter()
+        .max_by(|a, b| a.unsigned_area().total_cmp(&b.unsigned_area()))
+}
+
+/// Two transit footprints connect vertically when their polygons intersect.
+fn footprints_overlap(a: &Option<Polygon<f64>>, b: &Option<Polygon<f64>>) -> bool {
+    matches!((a, b), (Some(a), Some(b)) if a.intersects(b))
+}
+
 fn ring_perimeter(ring: &LineString<f64>) -> f64 {
     ring.coords()
         .collect::<Vec<_>>()
@@ -347,12 +361,12 @@ pub fn synthesize_network_medial(document: &BundleDocument) -> RouteGraphBuild {
     let mut nodes: Vec<RouteNode> = Vec::new();
     let mut edges: Vec<RouteEdge> = Vec::new();
     let mut warnings: Vec<RouteBuildWarning> = Vec::new();
-    let mut transit_all: Vec<(u32, [f64; 2], String, f64)> = Vec::new();
+    let mut transit_all: Vec<(u32, [f64; 2], String, f64, Option<Polygon<f64>>)> = Vec::new();
 
     for &ord in &ordinals {
         let mut walk: Vec<&Value> = Vec::new();
         let mut openings: Vec<[f64; 2]> = Vec::new();
-        let mut transit: Vec<([f64; 2], String)> = Vec::new();
+        let mut transit: Vec<([f64; 2], String, Option<Polygon<f64>>)> = Vec::new();
         for f in &document.features {
             let Some(level_id) = f.level_id.as_deref() else { continue };
             if level_ordinal.get(level_id).copied() != Some(ord) {
@@ -366,7 +380,7 @@ pub fn synthesize_network_medial(document: &BundleDocument) -> RouteGraphBuild {
                         walk.push(geom);
                     } else if is_transit(category) {
                         if let Some(c) = polygon_centroid(geom) {
-                            transit.push((c, category.to_string()));
+                            transit.push((c, category.to_string(), largest_polygon(geom)));
                         }
                     }
                 }
@@ -453,7 +467,7 @@ pub fn synthesize_network_medial(document: &BundleDocument) -> RouteGraphBuild {
         }
 
         // Transit units: snap onto the centerline and record for vertical links.
-        for (tp, category) in &transit {
+        for (tp, category, footprint) in &transit {
             let idx = nodes.len();
             nodes.push(RouteNode { lon: tp[0], lat: tp[1], ordinal: ord });
             if let Some(near) = nearest_node(&nodes, skeleton_range.clone(), *tp, SNAP_MAX_M) {
@@ -465,7 +479,7 @@ pub fn synthesize_network_medial(document: &BundleDocument) -> RouteGraphBuild {
                     interior: Vec::new(),
                 });
             }
-            transit_all.push((idx as u32, *tp, category.clone(), ord));
+            transit_all.push((idx as u32, *tp, category.clone(), ord, footprint.clone()));
         }
     }
 
@@ -476,24 +490,25 @@ pub fn synthesize_network_medial(document: &BundleDocument) -> RouteGraphBuild {
         let pos = ordinals.iter().position(|&x| x == o)?;
         ordinals.get(pos + 1).copied()
     };
-    for &(idx, pt, ref category, ord) in &transit_all {
-        let Some(next) = next_ordinal(ord) else { continue };
+    for (idx, pt, category, ord, footprint) in transit_all.iter() {
+        let Some(next) = next_ordinal(*ord) else { continue };
         let mut best: Option<(u32, f64)> = None;
-        for &(cidx, cpt, ref ccat, cord) in &transit_all {
-            if cord != next || ccat != category {
+        for (cidx, cpt, ccat, cord, cfoot) in transit_all.iter() {
+            if *cord != next || ccat != category {
                 continue;
             }
-            let d = haversine_m(pt, cpt);
-            if d <= VERTICAL_MATCH_M && best.is_none_or(|(bi, bd)| d < bd || (d == bd && cidx < bi)) {
-                best = Some((cidx, d));
+            let d = haversine_m(*pt, *cpt);
+            let linkable = d <= VERTICAL_MATCH_M || footprints_overlap(footprint, cfoot);
+            if linkable && best.is_none_or(|(bi, bd)| d < bd || (d == bd && *cidx < bi)) {
+                best = Some((*cidx, d));
             }
         }
         if let Some((cidx, d)) = best {
             edges.push(RouteEdge {
-                from: idx,
+                from: *idx,
                 to: cidx,
                 weight: (d + floor_cost(category)) as f32,
-                ordinal: ord,
+                ordinal: *ord,
                 interior: Vec::new(),
             });
         }
@@ -668,5 +683,56 @@ mod tests {
             build.graph.nodes[e.from as usize].ordinal != build.graph.nodes[e.to as usize].ordinal
         });
         assert!(vertical, "a vertical transit edge links the floors");
+    }
+
+    /// Canonical axis-aligned rectangle `Polygon` centered at `(cx, cy)`.
+    fn rect(cx: f64, cy: f64, w: f64, h: f64) -> Value {
+        let (hw, hh) = (w / 2.0, h / 2.0);
+        let ring = [
+            [cx - hw, cy - hh],
+            [cx + hw, cy - hh],
+            [cx + hw, cy + hh],
+            [cx - hw, cy + hh],
+            [cx - hw, cy - hh],
+        ];
+        let coords = Value::Array(
+            ring.iter()
+                .map(|p| Value::Array(vec![Value::Number(p[0]), Value::Number(p[1])]))
+                .collect(),
+        );
+        Value::Object(BTreeMap::from([
+            ("type".to_string(), Value::String("Polygon".to_string())),
+            ("coordinates".to_string(), Value::Array(vec![coords])),
+        ]))
+    }
+
+    #[test]
+    fn switchback_stairs_link_by_footprint_overlap() {
+        // Two floors; each has a walkway blob and a stairs unit whose footprint
+        // OVERLAPS the floor above but whose centroid is > VERTICAL_MATCH_M away
+        // (a switchback: same shaft, shifted centroid).
+        let mut features = Vec::new();
+        for (lvl, dx) in [("l0", 0.0), ("l1", 0.00012)] {
+            features.push(feature(
+                "w",
+                FeatureType::Unit,
+                lvl,
+                Some("walkway"),
+                square(139.7000, 35.6000, 0.0004),
+            ));
+            features.push(feature(
+                "s",
+                FeatureType::Unit,
+                lvl,
+                Some("stairs"),
+                rect(139.7005 + dx, 35.6000, 0.0006, 0.0001),
+            ));
+        }
+        let doc = document(&[("l0", 0.0), ("l1", 1.0)], features);
+        let build = synthesize_network_medial(&doc);
+        let vertical = build.graph.edges.iter().any(|e| {
+            build.graph.nodes[e.from as usize].ordinal != build.graph.nodes[e.to as usize].ordinal
+        });
+        assert!(vertical, "overlapping stair footprints link the floors");
     }
 }
