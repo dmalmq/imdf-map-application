@@ -16,6 +16,7 @@ import type {
 import { VenueLoadError, venueLoadErrorCopy } from "../errors/VenueLoadError";
 import type { KirikoBundleLoadResult } from "../bundle/loadKirikoBundle";
 import type { ApiUser } from "../gallery/api";
+import { api } from "../gallery/api";
 import { IssueApiError } from "../issues/api";
 import type {
   CreateIssueInput,
@@ -175,9 +176,14 @@ vi.mock("../imdf/loadImdfArchive", () => ({
 }));
 
 const loadKirikoBundleMock = vi.fn();
+const loadNetworkOverlayMock = vi.fn();
 
 vi.mock("../bundle/loadKirikoBundle", () => ({
   loadKirikoBundle: (...args: unknown[]) => loadKirikoBundleMock(...args),
+}));
+
+vi.mock("../bundle/loadNetworkOverlay", () => ({
+  loadNetworkOverlay: (...args: unknown[]) => loadNetworkOverlayMock(...args),
 }));
 
 const routeKirikoBundleMock = vi.fn();
@@ -352,6 +358,7 @@ vi.mock("../map/IndoorMap", () => ({
         data-directions-route={
           props.directions?.route != null ? JSON.stringify(props.directions.route.segments) : ""
         }
+        data-network-present={String(props.network != null)}
       >
         <button
           type="button"
@@ -421,6 +428,20 @@ vi.mock("../map/IndoorMap", () => ({
             </button>
           </>
         ) : null}
+        {(props.network?.junctions ?? []).map((j) => {
+          const id = j.properties.NODEID;
+          if (typeof id !== "number") return null;
+          return (
+            <button
+              key={`net-pick-${id}`}
+              type="button"
+              data-testid={`net-pick-${id}`}
+              onClick={() => props.onNetworkPick?.({ junctionId: id })}
+            >
+              {`pick ${id}`}
+            </button>
+          );
+        })}
       </div>
     );
   },
@@ -1473,6 +1494,7 @@ describe("App directions mode", () => {
     loadKirikoBundleMock.mockReset();
     fetchImdfFileMock.mockReset();
     routeKirikoBundleMock.mockReset();
+    loadNetworkOverlayMock.mockReset();
     resetIssueMocks();
   });
 
@@ -1531,6 +1553,61 @@ describe("App directions mode", () => {
       expect(JSON.parse(mapStub().getAttribute("data-directions-route")!)).toEqual(ROUTE_SEGMENTS);
     });
     expect(screen.getByText(/120\s*m/)).toBeTruthy();
+  });
+
+  it("hides Review network when the bundle has no graph", async () => {
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), false);
+    expect(screen.queryByRole("button", { name: "Review network" })).toBeNull();
+  });
+
+  it("overlays the generated network per floor when Review network is toggled", async () => {
+    const user = userEvent.setup();
+    loadNetworkOverlayMock.mockResolvedValue({
+      junctions: [
+        { ordinal: 0, geometry: { type: "Point", coordinates: [139.7, 35.68] }, properties: { NODEID: 0, FLOOR: "F1" } },
+      ],
+      paths: [
+        {
+          ordinal: 0,
+          geometry: { type: "LineString", coordinates: [[139.7, 35.68], [139.701, 35.68]] },
+          properties: { FNODEID: 0, TNODEID: 0, FLOOR: "F1" },
+        },
+      ],
+    });
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+    expect(mapStub().getAttribute("data-network-present")).toBe("false");
+
+    await user.click(screen.getByRole("button", { name: "Review network" }));
+    await waitFor(() => {
+      expect(loadNetworkOverlayMock).toHaveBeenCalledWith("/v/default/tokyo-station/bundle");
+      expect(mapStub().getAttribute("data-network-present")).toBe("true");
+    });
+  });
+
+  it("edits the review network and saves it through importNetwork", async () => {
+    const user = userEvent.setup();
+    loadNetworkOverlayMock.mockResolvedValue({
+      junctions: [
+        { ordinal: 0, geometry: { type: "Point", coordinates: [139.7, 35.68] }, properties: { NODEID: 0, FLOOR: "F1" } },
+        { ordinal: 0, geometry: { type: "Point", coordinates: [139.7005, 35.68] }, properties: { NODEID: 1, FLOOR: "F1" } },
+      ],
+      paths: [],
+    });
+    const importSpy = vi.spyOn(api, "importNetwork").mockResolvedValue({ jobId: "j", versionId: 9, seq: 3 });
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+
+    await user.click(screen.getByRole("button", { name: "Review network" }));
+    await user.click(await screen.findByRole("button", { name: "Edit network" }));
+    await user.click(await screen.findByTestId("net-pick-0"));
+    await user.click(await screen.findByTestId("net-pick-1"));
+    await user.click(screen.getByRole("button", { name: "Save network" }));
+
+    await waitFor(() => expect(importSpy).toHaveBeenCalledTimes(1));
+    const [slug, junctions, paths] = importSpy.mock.calls[0]!;
+    expect(slug).toBe("tokyo-station");
+    expect(JSON.parse(junctions).features).toHaveLength(2);
+    expect(JSON.parse(paths).features).toHaveLength(2);
+    importSpy.mockRestore();
   });
 
   it("shows a no-path message when the worker resolves null", async () => {

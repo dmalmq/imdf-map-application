@@ -40,6 +40,8 @@ import type {
   NetworkInspectResponse,
 } from "./types";
 import { newPublicVersionId } from "../venues/uploadRoute";
+import { exportVenueNetwork, CoreExportError } from "../core/native";
+import { packageNetworkGdbZip } from "./exportGdb";
 
 const TENANT_ID = 1;
 const INSPECT_TIMEOUT_MS = 60_000;
@@ -702,6 +704,232 @@ export function registerGdbRoutes(app: FastifyInstance): void {
         networkJunctionsHash,
         networkPathsHash,
         facilitiesGeoJsonHash,
+      });
+      return reply.code(202).send({ jobId, versionId, seq: nextSeq });
+    },
+  );
+
+  app.post(
+    "/api/gdb/generate-network",
+    {
+      preHandler: requireSession,
+      schema: {
+        body: Type.Object({
+          venueId: Type.Integer({ minimum: 1 }),
+        }),
+        response: {
+          202: Type.Object({ jobId: Type.String(), versionId: Type.Number(), seq: Type.Number() }),
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { venueId } = request.body as { venueId: number };
+      const db = request.server.db;
+      const venue = db
+        .prepare("SELECT id FROM venues WHERE id = ? AND tenant_id = ?")
+        .get(venueId, TENANT_ID);
+      if (!venue) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      // Reuse the latest published IMDF; synthesis derives the graph from it.
+      // Facilities (§7) carry forward; the real network hashes deliberately do
+      // not (synthesis replaces them, so the new row leaves them NULL).
+      const base = db
+        .prepare(
+          `SELECT source_blob_hash AS s, source_kind AS k, gdb_source_blob_hash AS g, gdb_plan_json AS p,
+                  facilities_blob_hash AS f
+             FROM versions WHERE venue_id = ? AND status = 'published' ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(venueId) as
+        | { s: string; k: string; g: string | null; p: string | null; f: string | null }
+        | undefined;
+      if (!base) {
+        return reply.code(404).send({ error: "no_base_version" });
+      }
+
+      const maxRow = db
+        .prepare("SELECT MAX(seq) AS m FROM versions WHERE venue_id = ?")
+        .get(venueId) as { m: number | null };
+      const nextSeq = (maxRow.m ?? 0) + 1;
+      const info = db
+        .prepare(
+          `INSERT INTO versions
+             (venue_id, seq, public_id, source_blob_hash, source_kind,
+              gdb_source_blob_hash, gdb_plan_json,
+              net_junctions_blob_hash, net_paths_blob_hash, facilities_blob_hash, synthesized)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1)`,
+        )
+        .run(
+          venueId,
+          nextSeq,
+          newPublicVersionId(),
+          base.s,
+          base.k,
+          base.g,
+          base.p,
+          base.f ?? null,
+        );
+      const versionId = Number(info.lastInsertRowid);
+      const jobId = request.server.queue.enqueue("publish_imdf", {
+        versionId,
+        facilitiesGeoJsonHash: base.f ?? undefined,
+        synthesizeNetwork: true,
+      });
+      return reply.code(202).send({ jobId, versionId, seq: nextSeq });
+    },
+  );
+
+  app.post(
+    "/api/gdb/export-network",
+    {
+      preHandler: requireSession,
+      schema: {
+        body: Type.Object({ venueId: Type.Integer({ minimum: 1 }) }),
+        response: {
+          400: ErrorSchema,
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { venueId } = request.body as { venueId: number };
+      const db = request.server.db;
+      const venue = db
+        .prepare("SELECT slug FROM venues WHERE id = ? AND tenant_id = ?")
+        .get(venueId, TENANT_ID) as { slug: string } | undefined;
+      if (!venue) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      const version = db
+        .prepare(
+          `SELECT bundle_hash AS h FROM versions
+             WHERE venue_id = ? AND status = 'published' AND bundle_hash IS NOT NULL
+             ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(venueId) as { h: string } | undefined;
+      if (!version || !request.server.blobs.has(version.h)) {
+        return reply.code(404).send({ error: "no_base_version" });
+      }
+      let network: { junctions: string; paths: string };
+      try {
+        network = await exportVenueNetwork(request.server.blobs.read(version.h));
+      } catch (error) {
+        if (error instanceof CoreExportError && error.code === "no_graph") {
+          return reply.code(404).send({ error: "no_graph" });
+        }
+        request.log.error({ err: error }, "network export failed");
+        return reply.code(400).send(
+          errorBody("gdb_export_failed", "gdb_export_failed", {
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+      let zip: Uint8Array;
+      try {
+        zip = await withTimeout(
+          packageNetworkGdbZip(network.junctions, network.paths),
+          INSPECT_TIMEOUT_MS,
+          "gdb network export",
+        );
+      } catch (error) {
+        request.log.error({ err: error }, "gdb export packaging failed");
+        return reply.code(400).send(
+          errorBody("gdb_export_failed", "gdb_export_failed", {
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+      return reply
+        .header("content-disposition", `attachment; filename="${venue.slug}-network.gdb.zip"`)
+        .type("application/zip")
+        .send(Buffer.from(zip));
+    },
+  );
+
+  app.post(
+    "/api/gdb/import-network",
+    {
+      preHandler: requireSession,
+      // Edited graphs can be large; raise the body limit for this route only.
+      bodyLimit: 64 * 1024 * 1024,
+      schema: {
+        body: Type.Object({
+          slug: Type.String({ minLength: 1 }),
+          junctions: Type.String(),
+          paths: Type.String(),
+        }),
+        response: {
+          202: Type.Object({ jobId: Type.String(), versionId: Type.Number(), seq: Type.Number() }),
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { slug, junctions, paths } = request.body as {
+        slug: string;
+        junctions: string;
+        paths: string;
+      };
+      const db = request.server.db;
+      const venue = db
+        .prepare("SELECT id FROM venues WHERE slug = ? AND tenant_id = ?")
+        .get(slug, TENANT_ID) as { id: number } | undefined;
+      if (!venue) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      const venueId = venue.id;
+      // Reuse the latest published IMDF + carry-forward metadata, exactly like
+      // /augment; the edited graph replaces the network hashes.
+      const base = db
+        .prepare(
+          `SELECT source_blob_hash AS s, source_kind AS k, gdb_source_blob_hash AS g, gdb_plan_json AS p,
+                  facilities_blob_hash AS f
+             FROM versions WHERE venue_id = ? AND status = 'published' ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(venueId) as
+        | { s: string; k: string; g: string | null; p: string | null; f: string | null }
+        | undefined;
+      if (!base) {
+        return reply.code(404).send({ error: "no_base_version" });
+      }
+
+      const junctionsBlob = request.server.blobs.put(Buffer.from(junctions, "utf8"));
+      const pathsBlob = request.server.blobs.put(Buffer.from(paths, "utf8"));
+      const insertBlob = db.prepare("INSERT OR IGNORE INTO blobs (hash, size) VALUES (?, ?)");
+      insertBlob.run(junctionsBlob.hash, junctionsBlob.size);
+      insertBlob.run(pathsBlob.hash, pathsBlob.size);
+
+      const maxRow = db
+        .prepare("SELECT MAX(seq) AS m FROM versions WHERE venue_id = ?")
+        .get(venueId) as { m: number | null };
+      const nextSeq = (maxRow.m ?? 0) + 1;
+      const info = db
+        .prepare(
+          `INSERT INTO versions
+             (venue_id, seq, public_id, source_blob_hash, source_kind,
+              gdb_source_blob_hash, gdb_plan_json,
+              net_junctions_blob_hash, net_paths_blob_hash, facilities_blob_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          venueId,
+          nextSeq,
+          newPublicVersionId(),
+          base.s,
+          base.k,
+          base.g,
+          base.p,
+          junctionsBlob.hash,
+          pathsBlob.hash,
+          base.f ?? null,
+        );
+      const versionId = Number(info.lastInsertRowid);
+      const jobId = request.server.queue.enqueue("publish_imdf", {
+        versionId,
+        networkJunctionsHash: junctionsBlob.hash,
+        networkPathsHash: pathsBlob.hash,
+        facilitiesGeoJsonHash: base.f ?? undefined,
       });
       return reply.code(202).send({ jobId, versionId, seq: nextSeq });
     },

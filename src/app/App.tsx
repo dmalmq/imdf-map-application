@@ -22,6 +22,14 @@ import { WarningsPanel } from "../components/WarningsPanel";
 import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
 import { routeKirikoBundle } from "../bundle/routeKirikoBundle";
 import type { FacilityDto, RouteEndpoint, RouteResultDto } from "../bundle/wasm";
+import { loadNetworkOverlay } from "../bundle/loadNetworkOverlay";
+import {
+  addEdge,
+  deleteEdge,
+  networkConnectivity,
+  serializeNetwork,
+  type ParsedNetwork,
+} from "../map/networkFeatures";
 import { ZoomCluster } from "../components/ZoomCluster";
 import { SignInModal } from "../gallery/SignInModal";
 import { VenueLoadError } from "../errors/VenueLoadError";
@@ -72,6 +80,12 @@ const ui = {
   attribution: { ja: "IMDF venue data © Company", en: "IMDF venue data © Company" },
   openInKiriko: { ja: "Kiriko で開く", en: "Open in Kiriko" },
   directions: { ja: "経路案内", en: "Directions" },
+  reviewNetwork: { ja: "ネットワークを確認", en: "Review network" },
+  reviewConnected: { ja: "接続率", en: "connected" },
+  reviewIslands: { ja: "分割数", en: "islands" },
+  reviewFloors: { ja: "接続フロア", en: "floors linked" },
+  editNetwork: { ja: "ネットワークを編集", en: "Edit network" },
+  saveNetwork: { ja: "ネットワークを保存", en: "Save network" },
   directionsPickOrigin: { ja: "地図をタップして出発地を指定", en: "Tap the map to set the origin" },
   directionsPickDestination: { ja: "地図をタップして目的地を指定", en: "Tap the map to set the destination" },
   directionsSearching: { ja: "経路を計算中", en: "Computing the route" },
@@ -237,6 +251,19 @@ export function App() {
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [bundleProvenance, setBundleProvenance] = useState<BundleProvenance | null>(null);
   const [directions, setDirections] = useState<DirectionsState>(INITIAL_DIRECTIONS);
+  const [reviewActive, setReviewActive] = useState(false);
+  const [reviewNetwork, setReviewNetwork] = useState<ParsedNetwork | null>(null);
+  const reviewReport = useMemo(
+    () => (reviewNetwork ? networkConnectivity(reviewNetwork) : null),
+    [reviewNetwork],
+  );
+  const [editNetwork, setEditNetwork] = useState(false);
+  const [selectedJunction, setSelectedJunction] = useState<number | null>(null);
+  const [savingNetwork, setSavingNetwork] = useState(false);
+  const selectedJunctionSet = useMemo(
+    () => (selectedJunction === null ? undefined : new Set([selectedJunction])),
+    [selectedJunction],
+  );
   const directionsTokenRef = useRef(0);
   const issueMode: IssueMode = params.embed
     ? { kind: "hidden" as const }
@@ -334,7 +361,38 @@ export function App() {
     directionsTokenRef.current += 1;
     setDirections(INITIAL_DIRECTIONS);
     setSelectedFacility(null);
+    setReviewActive(false);
+    setReviewNetwork(null);
   }, [bundleProvenance]);
+
+  // Network-review overlay: load the generated network on demand the first
+  // time review is switched on for this dataset (main-thread wasm export).
+  useEffect(() => {
+    if (!reviewActive || reviewNetwork !== null) {
+      return;
+    }
+    const dataset = params.dataset;
+    if (dataset === null) {
+      return;
+    }
+    let cancelled = false;
+    void loadNetworkOverlay(datasetBundleUrl(dataset)).then(
+      (parsed) => {
+        if (!cancelled) setReviewNetwork(parsed);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewActive, reviewNetwork, params.dataset]);
+
+  // Deep-link `?review=1` from the gallery opens straight into the overlay.
+  useEffect(() => {
+    if (params.review && !embed && bundleProvenance?.hasGraph === true) {
+      setReviewActive(true);
+    }
+  }, [bundleProvenance, embed]);
 
   const fireRoute = useCallback(
     (origin: RouteEndpoint, destination: RouteEndpoint) => {
@@ -403,6 +461,43 @@ export function App() {
     directionsTokenRef.current += 1;
     setDirections((current) => ({ ...INITIAL_DIRECTIONS, active: !current.active }));
   }, []);
+
+  const toggleReview = useCallback(() => {
+    setReviewActive((current) => !current);
+  }, []);
+
+  const onNetworkPick = useCallback(
+    (pick: { junctionId: number } | { edge: [number, number] }) => {
+      if ("edge" in pick) {
+        setSelectedJunction(null);
+        setReviewNetwork((net) => (net === null ? net : deleteEdge(net, pick.edge[0], pick.edge[1])));
+        return;
+      }
+      if (selectedJunction === null) {
+        setSelectedJunction(pick.junctionId);
+        return;
+      }
+      const first = selectedJunction;
+      setSelectedJunction(null);
+      setReviewNetwork((net) => (net === null ? net : addEdge(net, first, pick.junctionId)));
+    },
+    [selectedJunction],
+  );
+
+  const saveNetwork = useCallback(async () => {
+    const dataset = params.dataset;
+    if (reviewNetwork === null || dataset === null || savingNetwork) {
+      return;
+    }
+    setSavingNetwork(true);
+    try {
+      const { junctions, paths } = serializeNetwork(reviewNetwork);
+      await api.importNetwork(dataset, junctions, paths);
+      window.location.assign(`/?dataset=${encodeURIComponent(dataset)}&review=1`);
+    } catch {
+      setSavingNetwork(false);
+    }
+  }, [params.dataset, reviewNetwork, savingNetwork]);
 
   const routeToFacility = useCallback((facility: FacilityDto) => {
     setSelectedFacility(null);
@@ -1003,6 +1098,9 @@ export function App() {
             onControls={onControls}
             facilities={bundleProvenance?.facilities ?? []}
             onSelectFacility={setSelectedFacility}
+            network={reviewActive ? reviewNetwork : null}
+            selectedJunctions={selectedJunctionSet}
+            onNetworkPick={reviewActive && editNetwork ? onNetworkPick : undefined}
           />
         ) : null}
 
@@ -1187,6 +1285,46 @@ export function App() {
                 >
                   {ui.directions[locale]}
                 </button>
+                <button
+                  type="button"
+                  className={reviewActive ? "chip chip--selected" : "chip"}
+                  aria-pressed={reviewActive}
+                  onClick={toggleReview}
+                >
+                  {ui.reviewNetwork[locale]}
+                </button>
+                {reviewActive && reviewReport ? (
+                  <span className="review-report" role="status">
+                    {ui.reviewConnected[locale]} {Math.round(reviewReport.largestFraction * 100)}% ·{" "}
+                    {reviewReport.components} {ui.reviewIslands[locale]} ·{" "}
+                    {reviewReport.floorsInLargest} {ui.reviewFloors[locale]}
+                  </span>
+                ) : null}
+                {reviewActive ? (
+                  <button
+                    type="button"
+                    className={editNetwork ? "chip chip--selected" : "chip"}
+                    aria-pressed={editNetwork}
+                    onClick={() => {
+                      setEditNetwork((v) => !v);
+                      setSelectedJunction(null);
+                    }}
+                  >
+                    {ui.editNetwork[locale]}
+                  </button>
+                ) : null}
+                {reviewActive && editNetwork ? (
+                  <button
+                    type="button"
+                    className="chip"
+                    disabled={savingNetwork}
+                    onClick={() => {
+                      void saveNetwork();
+                    }}
+                  >
+                    {ui.saveNetwork[locale]}
+                  </button>
+                ) : null}
                 {directions.active ? (
                   <>
                     <span className="directions-bar__status">

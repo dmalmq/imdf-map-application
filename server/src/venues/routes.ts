@@ -22,6 +22,8 @@ const VenueSummarySchema = Type.Object({
     Type.Null(),
   ]),
   editableMapping: Type.Boolean(),
+  hasNetwork: Type.Boolean(),
+  hasGraph: Type.Boolean(),
 });
 
 export function registerVenueRoutes(app: FastifyInstance, issueHub: IssueEventHub): void {

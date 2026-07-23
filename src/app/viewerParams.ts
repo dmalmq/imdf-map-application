@@ -7,6 +7,7 @@ export interface ViewerParams {
   locale: LocaleCode | null;
   dataset: string | null;
   forceViewer: boolean;
+  review: boolean;
 }
 
 function safeSrc(raw: string | null, base?: string): string | null {
@@ -42,5 +43,8 @@ export function parseViewerParams(search: string, base?: string): ViewerParams {
   const forceViewer =
     viewerRaw !== null && (viewerRaw === "" || /^(1|true)$/i.test(viewerRaw));
 
-  return { src: safeSrc(params.get("src"), base), level, embed, locale, dataset, forceViewer };
+  const reviewRaw = params.get("review");
+  const review = reviewRaw !== null && (reviewRaw === "" || /^(1|true)$/i.test(reviewRaw));
+
+  return { src: safeSrc(params.get("src"), base), level, embed, locale, dataset, forceViewer, review };
 }

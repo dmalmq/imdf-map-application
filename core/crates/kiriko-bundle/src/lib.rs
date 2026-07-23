@@ -17,11 +17,16 @@
 
 mod codec;
 mod error;
+mod export;
 mod format;
 mod sections;
+mod synth;
+#[cfg(feature = "netgen")]
+mod synth_medial;
 
 pub use codec::{
     BundleDocument, BundleInspection, BundleMetadata, BundleStats, CompiledBundle, compile_imdf,
     compile_imdf_with_network, decode_bundle, encode_bundle, inspect_bundle,
 };
 pub use error::{BundleError, BundleErrorCode, CompileError};
+pub use export::{ExportError, NetworkGeoJson, export_network, ordinal_to_floor_label};

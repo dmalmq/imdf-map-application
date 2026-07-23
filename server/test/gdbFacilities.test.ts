@@ -30,6 +30,8 @@ const fake = vi.hoisted(() => ({
   files: new Map<string, string>(),
   /** `(source, metadata)` seen by the fake `compileVenueBundle`. */
   compileCalls: [] as Array<{ source: unknown; metadata: Record<string, unknown> }>,
+  /** When set, the fake `exportVenueNetwork` throws a no_graph CoreExportError. */
+  exportThrowsNoGraph: false,
 }));
 
 vi.mock("../src/gdb/gdal", async (importOriginal) => {
@@ -71,8 +73,21 @@ vi.mock("../src/core/native", async (importOriginal) => {
         warnings: [],
       };
     },
+    exportVenueNetwork: async () => {
+      if (fake.exportThrowsNoGraph) {
+        throw new actual.CoreExportError("no_graph", "bundle carries no routing graph");
+      }
+      return {
+        junctions: '{"type":"FeatureCollection","name":"net_junction","features":[]}',
+        paths: '{"type":"FeatureCollection","name":"net_path","features":[]}',
+      };
+    },
   };
 });
+
+vi.mock("../src/gdb/exportGdb", () => ({
+  packageNetworkGdbZip: async () => new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]),
+}));
 
 function featureCollection(features: unknown[]): string {
   return JSON.stringify({ type: "FeatureCollection", features });
@@ -186,6 +201,7 @@ beforeEach(() => {
   fake.layerOutputs.clear();
   fake.files.clear();
   fake.compileCalls.length = 0;
+  fake.exportThrowsNoGraph = false;
   fake.layerOutputs.set("Facility_Merge", FACILITIES_GEOJSON);
   fake.layerOutputs.set("net_junction", JUNCTIONS_GEOJSON);
   fake.layerOutputs.set("net_path", PATHS_GEOJSON);
@@ -574,5 +590,241 @@ describe("venue listing editableMapping", () => {
     const body = res.json() as { venues: Array<{ id: number; editableMapping: boolean }> };
     const v = body.venues.find((x) => x.id === venueId);
     expect(v?.editableMapping).toBe(true);
+  });
+});
+
+describe("POST /api/gdb/generate-network", () => {
+  async function publishBaseWithFacilities(app: FastifyInstance, cookie: string): Promise<number> {
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    const facilitiesBlobHash = putBlob(app, await validGdbZipBytes("facilities.gdb"));
+    const r = await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId, blobHash, facilitiesBlobHash, plan: PUBLISH_PLAN },
+    });
+    expect(r.statusCode, r.body).toBe(202);
+    await app.queue.idle();
+    return venueId;
+  }
+
+  it("synthesizes routing as a new version reusing the base IMDF and carrying facilities", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await publishBaseWithFacilities(app, cookie);
+    const base = app.db
+      .prepare("SELECT source_blob_hash AS s, facilities_blob_hash AS f FROM versions WHERE venue_id = ? ORDER BY seq DESC LIMIT 1")
+      .get(venueId) as { s: string; f: string };
+    fake.compileCalls.length = 0;
+
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/generate-network", headers: { cookie },
+      payload: { venueId },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const { versionId, seq } = res.json() as { versionId: number; seq: number };
+    expect(seq).toBe(2);
+    await app.queue.idle();
+
+    const row = app.db
+      .prepare("SELECT source_blob_hash AS s, net_junctions_blob_hash AS j, net_paths_blob_hash AS t, facilities_blob_hash AS f FROM versions WHERE id = ?")
+      .get(versionId) as { s: string; j: string | null; t: string | null; f: string | null };
+    expect(row.s).toBe(base.s);
+    expect(row.j).toBeNull();
+    expect(row.t).toBeNull();
+    expect(row.f).toBe(base.f);
+    expect(fake.compileCalls[0]!.metadata["synthesizeNetwork"]).toBe(true);
+    expect(fake.compileCalls[0]!.metadata["networkJunctionsGeoJson"]).toBeUndefined();
+    expect(fake.compileCalls[0]!.metadata["facilitiesGeoJson"]).toBe(FACILITIES_GEOJSON);
+  });
+
+  it("404 no_base_version when the venue has no published version", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/generate-network", headers: { cookie },
+      payload: { venueId },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "no_base_version" });
+  });
+});
+
+describe("POST /api/gdb/import-network", () => {
+  async function publishBase(
+    app: FastifyInstance,
+    cookie: string,
+    name: string,
+  ): Promise<{ venueId: number; slug: string }> {
+    const venueId = await createVenue(app, cookie, name);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    const r = await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId, blobHash, plan: PUBLISH_PLAN },
+    });
+    expect(r.statusCode).toBe(202);
+    await app.queue.idle();
+    const row = app.db.prepare("SELECT slug FROM venues WHERE id = ?").get(venueId) as { slug: string };
+    return { venueId, slug: row.slug };
+  }
+
+  it("publishes an edited graph as a new real-network version", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const { slug } = await publishBase(app, cookie, "Editable Venue");
+
+    const junctions = JSON.stringify({ type: "FeatureCollection", name: "net_junction", features: [] });
+    const paths = JSON.stringify({ type: "FeatureCollection", name: "net_path", features: [] });
+    fake.compileCalls.length = 0;
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/import-network", headers: { cookie },
+      payload: { slug, junctions, paths },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const body = res.json() as { jobId: string; versionId: number; seq: number };
+    await app.queue.idle();
+
+    const row = app.db
+      .prepare("SELECT net_junctions_blob_hash AS j, synthesized AS syn FROM versions WHERE id = ?")
+      .get(body.versionId) as { j: string | null; syn: number };
+    expect(row.j).not.toBeNull();
+    expect(row.syn).toBe(0);
+    expect(fake.compileCalls[0]!.metadata["networkJunctionsGeoJson"]).toBe(junctions);
+    expect(fake.compileCalls[0]!.metadata["synthesizeNetwork"]).toBeUndefined();
+  });
+
+  it("404 no_base_version when the venue has no published version", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie, "Bare Venue");
+    const row = app.db.prepare("SELECT slug FROM venues WHERE id = ?").get(venueId) as { slug: string };
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/import-network", headers: { cookie },
+      payload: { slug: row.slug, junctions: "{}", paths: "{}" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "no_base_version" });
+  });
+});
+
+describe("venue listing hasNetwork", () => {
+  it("marks a network dataset hasNetwork:true and a venue-only one false", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const plainId = await createVenue(app, cookie, "Plain Venue");
+    const plainBlob = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId: plainId, blobHash: plainBlob, plan: PUBLISH_PLAN },
+    });
+    await app.queue.idle();
+
+    const netId = await createVenue(app, cookie, "Network Venue");
+    const netVenueBlob = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId: netId, blobHash: netVenueBlob, plan: PUBLISH_PLAN },
+    });
+    await app.queue.idle();
+    const networkBlobHash = putBlob(app, await validGdbZipBytes("net.gdb"));
+    const aug = await app.inject({
+      method: "POST", url: "/api/gdb/augment", headers: { cookie },
+      payload: { venueId: netId, networkBlobHash },
+    });
+    expect(aug.statusCode, aug.body).toBe(202);
+    await app.queue.idle();
+
+    const res = await app.inject({ method: "GET", url: "/api/venues", headers: { cookie } });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { venues: Array<{ id: number; hasNetwork: boolean }> };
+    expect(body.venues.find((v) => v.id === netId)?.hasNetwork).toBe(true);
+    expect(body.venues.find((v) => v.id === plainId)?.hasNetwork).toBe(false);
+  });
+});
+
+describe("POST /api/gdb/export-network", () => {
+  async function publishBase(app: FastifyInstance, cookie: string): Promise<number> {
+    const venueId = await createVenue(app, cookie);
+    const blobHash = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    const r = await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId, blobHash, plan: PUBLISH_PLAN },
+    });
+    expect(r.statusCode, r.body).toBe(202);
+    await app.queue.idle();
+    return venueId;
+  }
+
+  it("streams the latest published network as an attachment .gdb.zip", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await publishBase(app, cookie);
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/export-network", headers: { cookie },
+      payload: { venueId },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/zip");
+    expect(String(res.headers["content-disposition"])).toContain(".gdb.zip");
+    expect(res.rawPayload.length).toBeGreaterThan(0);
+  });
+
+  it("404 no_base_version when the venue has no published version", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await createVenue(app, cookie);
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/export-network", headers: { cookie },
+      payload: { venueId },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "no_base_version" });
+  });
+
+  it("404 no_graph when the published bundle carries no routing graph", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const venueId = await publishBase(app, cookie);
+    fake.exportThrowsNoGraph = true;
+    const res = await app.inject({
+      method: "POST", url: "/api/gdb/export-network", headers: { cookie },
+      payload: { venueId },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "no_graph" });
+  });
+});
+
+describe("venue listing hasGraph", () => {
+  it("marks a synthesized dataset hasGraph:true and a plain IMDF one false", async () => {
+    const { app } = await makeTestApp();
+    const cookie = await loginCookie(app);
+    const plainId = await createVenue(app, cookie, "Plain Venue");
+    const plainBlob = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId: plainId, blobHash: plainBlob, plan: PUBLISH_PLAN },
+    });
+    await app.queue.idle();
+
+    const genId = await createVenue(app, cookie, "Generated Venue");
+    const genBlob = putBlob(app, await validGdbZipBytes("venue.gdb"));
+    await app.inject({
+      method: "POST", url: "/api/gdb/publish", headers: { cookie },
+      payload: { venueId: genId, blobHash: genBlob, plan: PUBLISH_PLAN },
+    });
+    await app.queue.idle();
+    const gen = await app.inject({
+      method: "POST", url: "/api/gdb/generate-network", headers: { cookie },
+      payload: { venueId: genId },
+    });
+    expect(gen.statusCode, gen.body).toBe(202);
+    await app.queue.idle();
+
+    const res = await app.inject({ method: "GET", url: "/api/venues", headers: { cookie } });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { venues: Array<{ id: number; hasGraph: boolean }> };
+    expect(body.venues.find((v) => v.id === genId)?.hasGraph).toBe(true);
+    expect(body.venues.find((v) => v.id === plainId)?.hasGraph).toBe(false);
   });
 });

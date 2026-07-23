@@ -130,4 +130,64 @@ describe("DatasetCard", () => {
     );
     expect(screen.queryByRole("button", { name: "Edit mapping" })).toBeNull();
   });
+
+  it("shows Generate routing and calls onGenerateRouting when provided", () => {
+    const onGenerateRouting = vi.fn();
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="en"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onGenerateRouting={onGenerateRouting}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Generate routing" }));
+    expect(onGenerateRouting).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Generate routing when onGenerateRouting is omitted", () => {
+    render(<DatasetCard venue={venue} locale="en" onOpen={() => {}} onDelete={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Generate routing" })).toBeNull();
+  });
+
+  it("shows Export network and calls onExportNetwork when provided", () => {
+    const onExportNetwork = vi.fn();
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="en"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onExportNetwork={onExportNetwork}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Export network" }));
+    expect(onExportNetwork).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Export network when onExportNetwork is omitted", () => {
+    render(<DatasetCard venue={venue} locale="en" onOpen={() => {}} onDelete={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Export network" })).toBeNull();
+  });
+
+  it("shows Review network and calls onReviewNetwork when provided", () => {
+    const onReviewNetwork = vi.fn();
+    render(
+      <DatasetCard
+        venue={venue}
+        locale="en"
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onReviewNetwork={onReviewNetwork}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Review network" }));
+    expect(onReviewNetwork).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Review network when onReviewNetwork is omitted", () => {
+    render(<DatasetCard venue={venue} locale="en" onOpen={() => {}} onDelete={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Review network" })).toBeNull();
+  });
 });

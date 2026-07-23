@@ -163,6 +163,95 @@ describe("augmentGdb", () => {
   });
 });
 
+describe("generateNetwork", () => {
+  it("posts venueId and returns the accepted job", async () => {
+    const fetchSpy = vi.fn(
+      (..._args: unknown[]) =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jobId: "j2", versionId: 3, seq: 3 }), { status: 202 }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await api.generateNetwork(9);
+    expect(out).toEqual({ jobId: "j2", versionId: 3, seq: 3 });
+    const call = fetchSpy.mock.calls[0]!;
+    expect(call[0]).toBe("/api/gdb/generate-network");
+    const init = call[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({ venueId: 9 });
+  });
+
+  it("throws the parsed GdbError on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "no_base_version" }), { status: 404 })),
+    );
+    await expect(api.generateNetwork(9)).rejects.toMatchObject({ error: "no_base_version" });
+  });
+});
+
+describe("importNetwork", () => {
+  it("posts the edited graph keyed by slug and returns the accepted job", async () => {
+    const fetchSpy = vi.fn(
+      (..._args: unknown[]) =>
+        Promise.resolve(
+          new Response(JSON.stringify({ jobId: "j3", versionId: 7, seq: 4 }), { status: 202 }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await api.importNetwork("shinjuku", '{"j":1}', '{"p":1}');
+    expect(out).toEqual({ jobId: "j3", versionId: 7, seq: 4 });
+    const call = fetchSpy.mock.calls[0]!;
+    expect(call[0]).toBe("/api/gdb/import-network");
+    const init = call[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({
+      slug: "shinjuku",
+      junctions: '{"j":1}',
+      paths: '{"p":1}',
+    });
+  });
+
+  it("throws the parsed GdbError on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "no_base_version" }), { status: 404 })),
+    );
+    await expect(api.importNetwork("shinjuku", "{}", "{}")).rejects.toMatchObject({
+      error: "no_base_version",
+    });
+  });
+});
+
+describe("exportNetwork", () => {
+  it("posts venueId and returns the blob + filename from content-disposition", async () => {
+    const fetchSpy = vi.fn((..._args: unknown[]) =>
+      Promise.resolve(
+        new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: {
+            "content-type": "application/zip",
+            "content-disposition": 'attachment; filename="tokyo-network.gdb.zip"',
+          },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await api.exportNetwork(7);
+    expect(out.filename).toBe("tokyo-network.gdb.zip");
+    expect(out.blob).toBeInstanceOf(Blob);
+    const call = fetchSpy.mock.calls[0]!;
+    expect(call[0]).toBe("/api/gdb/export-network");
+    expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({ venueId: 7 });
+  });
+
+  it("throws the parsed GdbError on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "no_graph" }), { status: 404 })),
+    );
+    await expect(api.exportNetwork(7)).rejects.toMatchObject({ error: "no_graph" });
+  });
+});
+
 describe("getGdbMapping", () => {
   it("GETs the venue mapping endpoint and returns the parsed body", async () => {
     const body = {
