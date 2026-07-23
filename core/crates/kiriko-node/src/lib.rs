@@ -21,7 +21,8 @@
 extern crate napi_derive;
 
 use kiriko_bundle::{
-    BundleError, BundleMetadata, CompileError, CompiledBundle, compile_imdf_with_network,
+    BundleError, BundleMetadata, CompileError, CompiledBundle, ExportError,
+    compile_imdf_with_network, export_network as export_network_pure,
     inspect_bundle as inspect_bundle_pure,
 };
 use kiriko_model::model::ViewerWarning;
@@ -57,6 +58,7 @@ pub struct CompileTask {
     network_junctions_geojson: Option<String>,
     network_paths_geojson: Option<String>,
     facilities_geojson: Option<String>,
+    synthesize_network: Option<bool>,
 }
 
 #[napi]
@@ -75,6 +77,7 @@ impl Task for CompileTask {
             self.network_junctions_geojson.as_deref(),
             self.network_paths_geojson.as_deref(),
             self.facilities_geojson.as_deref(),
+            self.synthesize_network.unwrap_or(false),
         ) {
             Ok(compiled) => CompileOutcome::Success(compiled),
             Err(err) => CompileOutcome::Failure(err),
@@ -175,6 +178,7 @@ pub fn compile_imdf(
     network_junctions_geojson: Option<String>,
     network_paths_geojson: Option<String>,
     facilities_geojson: Option<String>,
+    synthesize_network: Option<bool>,
 ) -> AsyncTask<CompileTask> {
     AsyncTask::new(CompileTask {
         source: source.to_vec(),
@@ -183,6 +187,7 @@ pub fn compile_imdf(
         network_junctions_geojson,
         network_paths_geojson,
         facilities_geojson,
+        synthesize_network,
     })
 }
 
@@ -262,4 +267,70 @@ pub fn inspect_bundle(bundle: Buffer) -> AsyncTask<InspectTask> {
     AsyncTask::new(InspectTask {
         bundle: bundle.to_vec(),
     })
+}
+
+/// JS-facing discriminated network-export result. Success carries the
+/// `net_junction` / `net_path` GeoJSON `FeatureCollection` text; failure
+/// carries `errorJson` (`{ code, message }`).
+#[napi(object)]
+pub struct NativeExportResponse {
+    pub ok: bool,
+    pub junctions_json: Option<String>,
+    pub paths_json: Option<String>,
+    pub error_json: Option<String>,
+}
+
+pub enum ExportOutcome {
+    Success { junctions: String, paths: String },
+    Failure(String),
+}
+
+pub struct ExportTask {
+    bundle: Vec<u8>,
+}
+
+#[napi]
+impl Task for ExportTask {
+    type Output = ExportOutcome;
+    type JsValue = NativeExportResponse;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(match export_network_pure(&self.bundle) {
+            Ok(net) => ExportOutcome::Success { junctions: net.junctions, paths: net.paths },
+            Err(err) => ExportOutcome::Failure(export_error_json(&err).to_string()),
+        })
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(match output {
+            ExportOutcome::Success { junctions, paths } => NativeExportResponse {
+                ok: true,
+                junctions_json: Some(junctions),
+                paths_json: Some(paths),
+                error_json: None,
+            },
+            ExportOutcome::Failure(error_json) => NativeExportResponse {
+                ok: false,
+                junctions_json: None,
+                paths_json: None,
+                error_json: Some(error_json),
+            },
+        })
+    }
+}
+
+fn export_error_json(err: &ExportError) -> Value {
+    let mut obj = Map::new();
+    obj.insert("code".to_string(), json!(err.code()));
+    obj.insert("message".to_string(), json!(err.message()));
+    Value::Object(obj)
+}
+
+/// Export a compiled `kvb1` bundle's §5 routing graph as `net_junction` /
+/// `net_path` GeoJSON. Runs off the Node.js event loop via `AsyncTask`; the
+/// returned promise always resolves to a [`NativeExportResponse`], never
+/// rejecting for domain (bundle-codec or no-graph) failures.
+#[napi]
+pub fn export_network(bundle: Buffer) -> AsyncTask<ExportTask> {
+    AsyncTask::new(ExportTask { bundle: bundle.to_vec() })
 }

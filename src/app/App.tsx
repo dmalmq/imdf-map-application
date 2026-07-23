@@ -22,6 +22,8 @@ import { WarningsPanel } from "../components/WarningsPanel";
 import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
 import { routeKirikoBundle } from "../bundle/routeKirikoBundle";
 import type { FacilityDto, RouteEndpoint, RouteResultDto } from "../bundle/wasm";
+import { loadNetworkOverlay } from "../bundle/loadNetworkOverlay";
+import type { ParsedNetwork } from "../map/networkFeatures";
 import { ZoomCluster } from "../components/ZoomCluster";
 import { SignInModal } from "../gallery/SignInModal";
 import { VenueLoadError } from "../errors/VenueLoadError";
@@ -72,6 +74,7 @@ const ui = {
   attribution: { ja: "IMDF venue data © Company", en: "IMDF venue data © Company" },
   openInKiriko: { ja: "Kiriko で開く", en: "Open in Kiriko" },
   directions: { ja: "経路案内", en: "Directions" },
+  reviewNetwork: { ja: "ネットワークを確認", en: "Review network" },
   directionsPickOrigin: { ja: "地図をタップして出発地を指定", en: "Tap the map to set the origin" },
   directionsPickDestination: { ja: "地図をタップして目的地を指定", en: "Tap the map to set the destination" },
   directionsSearching: { ja: "経路を計算中", en: "Computing the route" },
@@ -237,6 +240,8 @@ export function App() {
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [bundleProvenance, setBundleProvenance] = useState<BundleProvenance | null>(null);
   const [directions, setDirections] = useState<DirectionsState>(INITIAL_DIRECTIONS);
+  const [reviewActive, setReviewActive] = useState(false);
+  const [reviewNetwork, setReviewNetwork] = useState<ParsedNetwork | null>(null);
   const directionsTokenRef = useRef(0);
   const issueMode: IssueMode = params.embed
     ? { kind: "hidden" as const }
@@ -334,7 +339,38 @@ export function App() {
     directionsTokenRef.current += 1;
     setDirections(INITIAL_DIRECTIONS);
     setSelectedFacility(null);
+    setReviewActive(false);
+    setReviewNetwork(null);
   }, [bundleProvenance]);
+
+  // Network-review overlay: load the generated network on demand the first
+  // time review is switched on for this dataset (main-thread wasm export).
+  useEffect(() => {
+    if (!reviewActive || reviewNetwork !== null) {
+      return;
+    }
+    const dataset = params.dataset;
+    if (dataset === null) {
+      return;
+    }
+    let cancelled = false;
+    void loadNetworkOverlay(datasetBundleUrl(dataset)).then(
+      (parsed) => {
+        if (!cancelled) setReviewNetwork(parsed);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewActive, reviewNetwork, params.dataset]);
+
+  // Deep-link `?review=1` from the gallery opens straight into the overlay.
+  useEffect(() => {
+    if (params.review && !embed && bundleProvenance?.hasGraph === true) {
+      setReviewActive(true);
+    }
+  }, [bundleProvenance, embed]);
 
   const fireRoute = useCallback(
     (origin: RouteEndpoint, destination: RouteEndpoint) => {
@@ -402,6 +438,10 @@ export function App() {
   const toggleDirections = useCallback(() => {
     directionsTokenRef.current += 1;
     setDirections((current) => ({ ...INITIAL_DIRECTIONS, active: !current.active }));
+  }, []);
+
+  const toggleReview = useCallback(() => {
+    setReviewActive((current) => !current);
   }, []);
 
   const routeToFacility = useCallback((facility: FacilityDto) => {
@@ -1003,6 +1043,7 @@ export function App() {
             onControls={onControls}
             facilities={bundleProvenance?.facilities ?? []}
             onSelectFacility={setSelectedFacility}
+            network={reviewActive ? reviewNetwork : null}
           />
         ) : null}
 
@@ -1186,6 +1227,14 @@ export function App() {
                   onClick={toggleDirections}
                 >
                   {ui.directions[locale]}
+                </button>
+                <button
+                  type="button"
+                  className={reviewActive ? "chip chip--selected" : "chip"}
+                  aria-pressed={reviewActive}
+                  onClick={toggleReview}
+                >
+                  {ui.reviewNetwork[locale]}
                 </button>
                 {directions.active ? (
                   <>

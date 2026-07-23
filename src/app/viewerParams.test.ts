@@ -66,4 +66,10 @@ describe("parseViewerParams", () => {
     expect(parseViewerParams("?viewer=1", BASE).forceViewer).toBe(true);
     expect(parseViewerParams("", BASE).forceViewer).toBe(false);
   });
+
+  it("parses the review flag", () => {
+    expect(parseViewerParams("?review", BASE).review).toBe(true);
+    expect(parseViewerParams("?review=1", BASE).review).toBe(true);
+    expect(parseViewerParams("", BASE).review).toBe(false);
+  });
 });

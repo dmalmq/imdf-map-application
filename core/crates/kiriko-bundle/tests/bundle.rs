@@ -65,6 +65,7 @@ fn compile_with_network_embeds_graph_section() {
         Some(NETWORK_JUNCTIONS),
         Some(NETWORK_PATHS),
         None,
+        false,
     )
     .expect("fixture + network compiles");
     let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
@@ -98,10 +99,33 @@ fn compile_with_malformed_network_is_a_route_error() {
         Some("not geojson"),
         Some(NETWORK_PATHS),
         None,
+        false,
     )
     .expect_err("malformed network GeoJSON must fail the compile");
     assert_eq!(err.code_str(), "route_build_failed");
     assert!(matches!(err, CompileError::Route(_)));
+}
+
+#[test]
+fn compile_with_synthesize_network_derives_a_graph_from_venue_geometry() {
+    let source = support::build_minimal_imdf_zip();
+    let compiled = compile_imdf_with_network(&source, metadata(), None, None, None, true)
+        .expect("fixture compiles with synthesis");
+    let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+    let graph = document
+        .graph
+        .expect("synthesis must embed a graph section from the venue's own geometry");
+    assert!(!graph.nodes.is_empty(), "synthesized graph has nodes");
+    assert!(!graph.edges.is_empty(), "synthesized graph has edges");
+}
+
+#[test]
+fn compile_with_synthesis_disabled_and_no_network_has_no_graph() {
+    let source = support::build_minimal_imdf_zip();
+    let compiled = compile_imdf_with_network(&source, metadata(), None, None, None, false)
+        .expect("fixture compiles");
+    let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
+    assert!(document.graph.is_none());
 }
 
 // -- Facilities embedding (point-facility-poi Task 4) ----------------------
@@ -124,6 +148,7 @@ fn compile_with_facilities_embeds_facilities_section() {
         Some(NETWORK_JUNCTIONS),
         Some(NETWORK_PATHS),
         Some(FACILITIES),
+        false,
     )
     .expect("fixture + network + facilities compiles");
     let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
@@ -179,6 +204,7 @@ fn compile_without_facilities_has_no_facilities_section() {
         Some(NETWORK_JUNCTIONS),
         Some(NETWORK_PATHS),
         None,
+        false,
     )
     .expect("fixture + network compiles");
     let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
@@ -195,7 +221,7 @@ fn compile_without_facilities_has_no_facilities_section() {
 #[test]
 fn compile_with_facilities_but_no_network_warns_once_and_leaves_anchors_unset() {
     let source = support::build_minimal_imdf_zip();
-    let compiled = compile_imdf_with_network(&source, metadata(), None, None, Some(FACILITIES))
+    let compiled = compile_imdf_with_network(&source, metadata(), None, None, Some(FACILITIES), false)
         .expect("fixture + facilities compiles without a network");
     let document = decode_bundle(&compiled.bytes).expect("bundle decodes");
 
@@ -223,7 +249,7 @@ fn compile_with_facilities_but_no_network_warns_once_and_leaves_anchors_unset() 
 #[test]
 fn compile_with_malformed_facilities_is_a_facility_error() {
     let source = support::build_minimal_imdf_zip();
-    let err = compile_imdf_with_network(&source, metadata(), None, None, Some("not geojson"))
+    let err = compile_imdf_with_network(&source, metadata(), None, None, Some("not geojson"), false)
         .expect_err("malformed facilities GeoJSON must fail the compile");
     assert_eq!(err.code_str(), "facility_build_failed");
     assert!(matches!(err, CompileError::Facility(_)));

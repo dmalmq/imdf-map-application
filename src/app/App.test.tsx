@@ -175,9 +175,14 @@ vi.mock("../imdf/loadImdfArchive", () => ({
 }));
 
 const loadKirikoBundleMock = vi.fn();
+const loadNetworkOverlayMock = vi.fn();
 
 vi.mock("../bundle/loadKirikoBundle", () => ({
   loadKirikoBundle: (...args: unknown[]) => loadKirikoBundleMock(...args),
+}));
+
+vi.mock("../bundle/loadNetworkOverlay", () => ({
+  loadNetworkOverlay: (...args: unknown[]) => loadNetworkOverlayMock(...args),
 }));
 
 const routeKirikoBundleMock = vi.fn();
@@ -352,6 +357,7 @@ vi.mock("../map/IndoorMap", () => ({
         data-directions-route={
           props.directions?.route != null ? JSON.stringify(props.directions.route.segments) : ""
         }
+        data-network-present={String(props.network != null)}
       >
         <button
           type="button"
@@ -1473,6 +1479,7 @@ describe("App directions mode", () => {
     loadKirikoBundleMock.mockReset();
     fetchImdfFileMock.mockReset();
     routeKirikoBundleMock.mockReset();
+    loadNetworkOverlayMock.mockReset();
     resetIssueMocks();
   });
 
@@ -1531,6 +1538,29 @@ describe("App directions mode", () => {
       expect(JSON.parse(mapStub().getAttribute("data-directions-route")!)).toEqual(ROUTE_SEGMENTS);
     });
     expect(screen.getByText(/120\s*m/)).toBeTruthy();
+  });
+
+  it("hides Review network when the bundle has no graph", async () => {
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), false);
+    expect(screen.queryByRole("button", { name: "Review network" })).toBeNull();
+  });
+
+  it("overlays the generated network per floor when Review network is toggled", async () => {
+    const user = userEvent.setup();
+    loadNetworkOverlayMock.mockResolvedValue({
+      junctions: [{ ordinal: 0, geometry: { type: "Point", coordinates: [139.7, 35.68] } }],
+      paths: [
+        { ordinal: 0, geometry: { type: "LineString", coordinates: [[139.7, 35.68], [139.701, 35.68]] } },
+      ],
+    });
+    await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
+    expect(mapStub().getAttribute("data-network-present")).toBe("false");
+
+    await user.click(screen.getByRole("button", { name: "Review network" }));
+    await waitFor(() => {
+      expect(loadNetworkOverlayMock).toHaveBeenCalledWith("/v/default/tokyo-station/bundle");
+      expect(mapStub().getAttribute("data-network-present")).toBe("true");
+    });
   });
 
   it("shows a no-path message when the worker resolves null", async () => {

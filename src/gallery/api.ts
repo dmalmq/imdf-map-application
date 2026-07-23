@@ -24,6 +24,8 @@ export interface VenueSummary extends VenueRow {
     createdAt: string;
   } | null;
   editableMapping?: boolean;
+  hasNetwork?: boolean;
+  hasGraph?: boolean;
 }
 
 export class ApiError extends Error {
@@ -357,6 +359,41 @@ export const api = {
       throw parsed;
     }
     return (await res.json()) as { jobId: string; versionId: number; seq: number };
+  },
+
+  async generateNetwork(
+    venueId: number,
+  ): Promise<{ jobId: string; versionId: number; seq: number }> {
+    const res = await fetch("/api/gdb/generate-network", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ venueId }),
+    });
+    if (!res.ok) {
+      let parsed: GdbError = { code: "gdb_conversion_failed", message: `${res.status}` };
+      try { parsed = (await res.json()) as GdbError; } catch { /* non-JSON */ }
+      throw parsed;
+    }
+    return (await res.json()) as { jobId: string; versionId: number; seq: number };
+  },
+
+  async exportNetwork(venueId: number): Promise<{ blob: Blob; filename: string }> {
+    const res = await fetch("/api/gdb/export-network", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ venueId }),
+    });
+    if (!res.ok) {
+      let parsed: GdbError = { code: "gdb_export_failed", message: `${res.status}` };
+      try { parsed = (await res.json()) as GdbError; } catch { /* non-JSON */ }
+      throw parsed;
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("content-disposition") ?? "";
+    const match = /filename="([^"]+)"/.exec(disposition);
+    return { blob, filename: match?.[1] ?? "network.gdb.zip" };
   },
 
   async getGdbMapping(

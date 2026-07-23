@@ -16,6 +16,13 @@ thiserror = { workspace = true }
 postcard = { workspace = true }
 zstd = { workspace = true }
 sha2 = { workspace = true }
+# Network-generation geometry (medial-axis skeleton) — server-only, gated so
+# the browser wasm build never pulls in the heavy computational-geometry deps.
+geo = { version = "0.29", optional = true }
+spade = { version = "2", optional = true }
+
+[features]
+netgen = ["dep:geo", "dep:spade"]
 
 [dev-dependencies]
 zip = { workspace = true }

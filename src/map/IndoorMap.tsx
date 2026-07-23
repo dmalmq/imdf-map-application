@@ -22,9 +22,11 @@ import {
   FACILITY_SOURCE_ID,
   LAYER_FACILITY_SYMBOL,
   ROUTE_SOURCE_ID,
+  NETWORK_SOURCE_ID,
 } from "./featureLayers";
 import { LAYER_GROUP_IDS, type LayerVisibility } from "./layerGroups";
 import { buildRouteFeatures } from "./routeFeatures";
+import { buildNetworkFeatures, type ParsedNetwork } from "./networkFeatures";
 import { buildFacilityFeatures } from "./facilityFeatures";
 import { FACILITY_PIN_IMAGE, MARKER_ICON_URLS } from "./facilityIcons";
 import { useFeatureMarkers } from "./useFeatureMarkers";
@@ -101,6 +103,8 @@ export interface IndoorMapProps {
   facilities?: FacilityDto[];
   /** Invoked when a facility symbol is tapped (outside directions picking). */
   onSelectFacility?: (facility: FacilityDto) => void;
+  /** Parsed generated network for floor-by-floor review; null when off. */
+  network?: ParsedNetwork | null;
 }
 
 const FIT_PADDING = 48;
@@ -163,6 +167,28 @@ function setRouteSourceData(
       ordinal ?? 0,
     ),
   );
+}
+
+function getNetworkSource(map: MapLibreMap): GeoJSONSource | null {
+  const source = map.getSource(NETWORK_SOURCE_ID);
+  if (source == null || source.type !== "geojson") {
+    return null;
+  }
+  return source as GeoJSONSource;
+}
+
+function setNetworkSourceData(
+  map: MapLibreMap,
+  venue: LoadedVenue,
+  levelId: string,
+  network: ParsedNetwork | null | undefined,
+): void {
+  const source = getNetworkSource(map);
+  if (source == null) {
+    return;
+  }
+  const ordinal = activeOrdinalFor(venue, levelId);
+  source.setData(buildNetworkFeatures(ordinal === null ? null : network ?? null, ordinal ?? 0));
 }
 
 function getFacilitySource(map: MapLibreMap): GeoJSONSource | null {
@@ -402,6 +428,7 @@ export function IndoorMap({
   onControls,
   facilities = [],
   onSelectFacility,
+  network,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -855,6 +882,16 @@ export function IndoorMap({
     }
     setRouteSourceData(map, venue, levelId, directions);
   }, [directions, venue, levelId]);
+
+  // Network-review overlay: re-filter the generated network to the active
+  // floor whenever it, the floor, or the venue changes; empty when off.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map == null || !map.isStyleLoaded()) {
+      return;
+    }
+    setNetworkSourceData(map, venue, levelId, network);
+  }, [network, venue, levelId]);
 
   // Facility symbols: refresh per active floor (and when the facility set or
   // venue changes). Icons are registered once on load.

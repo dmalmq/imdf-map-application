@@ -11,6 +11,7 @@ import init, {
   decodeBundle as decodeBundleWasm,
   routeBundle as routeBundleWasm,
   facilities as facilitiesWasm,
+  exportNetwork as exportNetworkWasm,
 } from "@kiriko/wasm";
 // Vite emits a hashed, origin-relative asset path (e.g.
 // `/assets/kiriko_wasm_bg-[hash].wasm`) for this `?url` import. Resolving
@@ -215,4 +216,19 @@ export function routeBundle(
  */
 export function facilities(bytes: Uint8Array): FacilityDto[] {
   return facilitiesWasm(bytes) as FacilityDto[];
+}
+
+/** The two network feature classes as GeoJSON `FeatureCollection` text. */
+export interface NetworkGeoJsonDto {
+  junctions: string;
+  paths: string;
+}
+
+/**
+ * Serialize a bundle's §5 routing graph to `net_junction` / `net_path`
+ * GeoJSON for floor-by-floor review rendering. Must only be called after
+ * `initKirikoWasm` has resolved. Throws when the bundle carries no graph.
+ */
+export function exportNetwork(bytes: Uint8Array): NetworkGeoJsonDto {
+  return exportNetworkWasm(bytes) as NetworkGeoJsonDto;
 }

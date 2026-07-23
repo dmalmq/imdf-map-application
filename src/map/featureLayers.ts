@@ -63,6 +63,11 @@ export const LAYER_ROUTE_CONNECTOR = "indoor-route-connector";
 export const FACILITY_SOURCE_ID = "indoor-facilities";
 export const LAYER_FACILITY_SYMBOL = "indoor-facility-symbol";
 
+/** Separate GeoJSON source for the network-review overlay (net_path/net_junction). */
+export const NETWORK_SOURCE_ID = "indoor-network";
+export const LAYER_NETWORK_PATH = "indoor-network-path";
+export const LAYER_NETWORK_JUNCTION = "indoor-network-junction";
+
 /** Layers that participate in click / hover hit-testing. */
 export const CLICKABLE_LAYER_IDS: readonly string[] = [
   LAYER_CONTEXT_FILL,
@@ -640,6 +645,39 @@ export function buildFacilityLayers(): AnyLayer[] {
         "icon-anchor": "bottom",
         "icon-allow-overlap": false,
         "icon-optional": true,
+      },
+    },
+  ];
+}
+
+/**
+ * Network-review overlay layers, sourced from `NETWORK_SOURCE_ID`. Fixed,
+ * theme-independent colors (magenta paths, cyan junctions) keep the generated
+ * routing network visually distinct from the directions route accent.
+ */
+export function buildNetworkLayers(): AnyLayer[] {
+  return [
+    {
+      id: LAYER_NETWORK_PATH,
+      type: "line",
+      source: NETWORK_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "path"],
+      paint: {
+        "line-color": "#d81b8c",
+        "line-width": 1.5,
+        "line-opacity": 0.85,
+      },
+    },
+    {
+      id: LAYER_NETWORK_JUNCTION,
+      type: "circle",
+      source: NETWORK_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "junction"],
+      paint: {
+        "circle-radius": 2.5,
+        "circle-color": "#0aa5ff",
+        "circle-stroke-width": 0.5,
+        "circle-stroke-color": "#ffffff",
       },
     },
   ];

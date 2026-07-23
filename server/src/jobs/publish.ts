@@ -60,12 +60,13 @@ export function makePublishRunner(
   compile: PublishCompileFn = compileVenueBundle,
 ) {
   return async (payloadJson: string): Promise<{ versionId: number }> => {
-    const { versionId, networkJunctionsHash, networkPathsHash, facilitiesGeoJsonHash } =
+    const { versionId, networkJunctionsHash, networkPathsHash, facilitiesGeoJsonHash, synthesizeNetwork } =
       JSON.parse(payloadJson) as {
         versionId: number;
         networkJunctionsHash?: string;
         networkPathsHash?: string;
         facilitiesGeoJsonHash?: string;
+        synthesizeNetwork?: boolean;
       };
     const version = db
       .prepare(
@@ -121,6 +122,11 @@ export function makePublishRunner(
       }
       if (facilitiesGeoJsonHash !== undefined) {
         metadata.facilitiesGeoJson = blobs.read(facilitiesGeoJsonHash).toString("utf8");
+      }
+      // A synthesize job carries no network hashes; instead it asks the
+      // compiler to derive a routing graph from the venue's own geometry.
+      if (synthesizeNetwork === true) {
+        metadata.synthesizeNetwork = true;
       }
       const { bundle, stats } = await compile(source, metadata);
       // Content-addressed: safe to persist even if this row turns out to
