@@ -91,6 +91,7 @@ export function parseNetworkOverlay(dto: NetworkGeoJsonDto): ParsedNetwork {
 export function buildNetworkFeatures(
   network: ParsedNetwork | null,
   activeOrdinal: number,
+  selectedJunctions: ReadonlySet<number> = new Set(),
 ): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   if (network === null) {
@@ -98,12 +99,25 @@ export function buildNetworkFeatures(
   }
   for (const path of network.paths) {
     if (path.ordinal === activeOrdinal) {
-      features.push({ type: "Feature", properties: { kind: "path" }, geometry: path.geometry });
+      features.push({
+        type: "Feature",
+        properties: { kind: "path", FNODEID: path.properties.FNODEID, TNODEID: path.properties.TNODEID },
+        geometry: path.geometry,
+      });
     }
   }
   for (const junction of network.junctions) {
     if (junction.ordinal === activeOrdinal) {
-      features.push({ type: "Feature", properties: { kind: "junction" }, geometry: junction.geometry });
+      const id = junction.properties.NODEID;
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "junction",
+          NODEID: id,
+          selected: typeof id === "number" && selectedJunctions.has(id),
+        },
+        geometry: junction.geometry,
+      });
     }
   }
   return { type: "FeatureCollection", features };

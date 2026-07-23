@@ -21,6 +21,8 @@ import {
   CLICKABLE_LAYER_IDS,
   FACILITY_SOURCE_ID,
   LAYER_FACILITY_SYMBOL,
+  LAYER_NETWORK_JUNCTION,
+  LAYER_NETWORK_PATH,
   ROUTE_SOURCE_ID,
   NETWORK_SOURCE_ID,
 } from "./featureLayers";
@@ -105,6 +107,10 @@ export interface IndoorMapProps {
   onSelectFacility?: (facility: FacilityDto) => void;
   /** Parsed generated network for floor-by-floor review; null when off. */
   network?: ParsedNetwork | null;
+  /** Junction NODEIDs to highlight while editing the review network. */
+  selectedJunctions?: ReadonlySet<number> | undefined;
+  /** Review edit mode: report a picked network junction or edge on map click. */
+  onNetworkPick?: ((pick: { junctionId: number } | { edge: [number, number] }) => void) | undefined;
 }
 
 const FIT_PADDING = 48;
@@ -182,13 +188,16 @@ function setNetworkSourceData(
   venue: LoadedVenue,
   levelId: string,
   network: ParsedNetwork | null | undefined,
+  selectedJunctions: ReadonlySet<number> | undefined,
 ): void {
   const source = getNetworkSource(map);
   if (source == null) {
     return;
   }
   const ordinal = activeOrdinalFor(venue, levelId);
-  source.setData(buildNetworkFeatures(ordinal === null ? null : network ?? null, ordinal ?? 0));
+  source.setData(
+    buildNetworkFeatures(ordinal === null ? null : network ?? null, ordinal ?? 0, selectedJunctions),
+  );
 }
 
 function getFacilitySource(map: MapLibreMap): GeoJSONSource | null {
@@ -429,6 +438,8 @@ export function IndoorMap({
   facilities = [],
   onSelectFacility,
   network,
+  selectedJunctions,
+  onNetworkPick,
 }: IndoorMapProps): ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -448,9 +459,11 @@ export function IndoorMap({
   const onControlsRef = useRef(onControls);
   const issueReviewRef = useRef(issueReview);
   const directionsRef = useRef(directions);
+  const onNetworkPickRef = useRef(onNetworkPick);
   const [mapInstance, setMapInstance] = useState<MapLibreMap | null>(null);
 
   onSelectRef.current = onSelectFeature;
+  onNetworkPickRef.current = onNetworkPick;
   venueRef.current = venue;
   levelIdRef.current = levelId;
   selectedIdRef.current = selectedFeatureId;
@@ -583,6 +596,25 @@ export function IndoorMap({
         // suppresses ordinary feature selection.
         dirs.onPickPoint({ longitude: event.lngLat.lng, latitude: event.lngLat.lat });
         return;
+      }
+
+      const netPick = onNetworkPickRef.current;
+      if (netPick != null) {
+        const hits = map.queryRenderedFeatures(event.point, {
+          layers: [LAYER_NETWORK_JUNCTION, LAYER_NETWORK_PATH],
+        });
+        const props = hits[0]?.properties;
+        const nodeId = props?.["NODEID"];
+        if (typeof nodeId === "number") {
+          netPick({ junctionId: nodeId });
+          return;
+        }
+        const fromId = props?.["FNODEID"];
+        const toId = props?.["TNODEID"];
+        if (typeof fromId === "number" && typeof toId === "number") {
+          netPick({ edge: [fromId, toId] });
+          return;
+        }
       }
       const facilityHit = map.queryRenderedFeatures(event.point, {
         layers: [LAYER_FACILITY_SYMBOL],
@@ -890,8 +922,8 @@ export function IndoorMap({
     if (map == null || !map.isStyleLoaded()) {
       return;
     }
-    setNetworkSourceData(map, venue, levelId, network);
-  }, [network, venue, levelId]);
+    setNetworkSourceData(map, venue, levelId, network, selectedJunctions);
+  }, [network, selectedJunctions, venue, levelId]);
 
   // Facility symbols: refresh per active floor (and when the facility set or
   // venue changes). Icons are registered once on load.

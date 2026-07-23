@@ -23,7 +23,13 @@ import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
 import { routeKirikoBundle } from "../bundle/routeKirikoBundle";
 import type { FacilityDto, RouteEndpoint, RouteResultDto } from "../bundle/wasm";
 import { loadNetworkOverlay } from "../bundle/loadNetworkOverlay";
-import { networkConnectivity, type ParsedNetwork } from "../map/networkFeatures";
+import {
+  addEdge,
+  deleteEdge,
+  networkConnectivity,
+  serializeNetwork,
+  type ParsedNetwork,
+} from "../map/networkFeatures";
 import { ZoomCluster } from "../components/ZoomCluster";
 import { SignInModal } from "../gallery/SignInModal";
 import { VenueLoadError } from "../errors/VenueLoadError";
@@ -78,6 +84,8 @@ const ui = {
   reviewConnected: { ja: "接続率", en: "connected" },
   reviewIslands: { ja: "分割数", en: "islands" },
   reviewFloors: { ja: "接続フロア", en: "floors linked" },
+  editNetwork: { ja: "ネットワークを編集", en: "Edit network" },
+  saveNetwork: { ja: "ネットワークを保存", en: "Save network" },
   directionsPickOrigin: { ja: "地図をタップして出発地を指定", en: "Tap the map to set the origin" },
   directionsPickDestination: { ja: "地図をタップして目的地を指定", en: "Tap the map to set the destination" },
   directionsSearching: { ja: "経路を計算中", en: "Computing the route" },
@@ -248,6 +256,13 @@ export function App() {
   const reviewReport = useMemo(
     () => (reviewNetwork ? networkConnectivity(reviewNetwork) : null),
     [reviewNetwork],
+  );
+  const [editNetwork, setEditNetwork] = useState(false);
+  const [selectedJunction, setSelectedJunction] = useState<number | null>(null);
+  const [savingNetwork, setSavingNetwork] = useState(false);
+  const selectedJunctionSet = useMemo(
+    () => (selectedJunction === null ? undefined : new Set([selectedJunction])),
+    [selectedJunction],
   );
   const directionsTokenRef = useRef(0);
   const issueMode: IssueMode = params.embed
@@ -450,6 +465,39 @@ export function App() {
   const toggleReview = useCallback(() => {
     setReviewActive((current) => !current);
   }, []);
+
+  const onNetworkPick = useCallback(
+    (pick: { junctionId: number } | { edge: [number, number] }) => {
+      if ("edge" in pick) {
+        setSelectedJunction(null);
+        setReviewNetwork((net) => (net === null ? net : deleteEdge(net, pick.edge[0], pick.edge[1])));
+        return;
+      }
+      if (selectedJunction === null) {
+        setSelectedJunction(pick.junctionId);
+        return;
+      }
+      const first = selectedJunction;
+      setSelectedJunction(null);
+      setReviewNetwork((net) => (net === null ? net : addEdge(net, first, pick.junctionId)));
+    },
+    [selectedJunction],
+  );
+
+  const saveNetwork = useCallback(async () => {
+    const dataset = params.dataset;
+    if (reviewNetwork === null || dataset === null || savingNetwork) {
+      return;
+    }
+    setSavingNetwork(true);
+    try {
+      const { junctions, paths } = serializeNetwork(reviewNetwork);
+      await api.importNetwork(dataset, junctions, paths);
+      window.location.assign(`/?dataset=${encodeURIComponent(dataset)}&review=1`);
+    } catch {
+      setSavingNetwork(false);
+    }
+  }, [params.dataset, reviewNetwork, savingNetwork]);
 
   const routeToFacility = useCallback((facility: FacilityDto) => {
     setSelectedFacility(null);
@@ -1051,6 +1099,8 @@ export function App() {
             facilities={bundleProvenance?.facilities ?? []}
             onSelectFacility={setSelectedFacility}
             network={reviewActive ? reviewNetwork : null}
+            selectedJunctions={selectedJunctionSet}
+            onNetworkPick={reviewActive && editNetwork ? onNetworkPick : undefined}
           />
         ) : null}
 
@@ -1249,6 +1299,31 @@ export function App() {
                     {reviewReport.components} {ui.reviewIslands[locale]} ·{" "}
                     {reviewReport.floorsInLargest} {ui.reviewFloors[locale]}
                   </span>
+                ) : null}
+                {reviewActive ? (
+                  <button
+                    type="button"
+                    className={editNetwork ? "chip chip--selected" : "chip"}
+                    aria-pressed={editNetwork}
+                    onClick={() => {
+                      setEditNetwork((v) => !v);
+                      setSelectedJunction(null);
+                    }}
+                  >
+                    {ui.editNetwork[locale]}
+                  </button>
+                ) : null}
+                {reviewActive && editNetwork ? (
+                  <button
+                    type="button"
+                    className="chip"
+                    disabled={savingNetwork}
+                    onClick={() => {
+                      void saveNetwork();
+                    }}
+                  >
+                    {ui.saveNetwork[locale]}
+                  </button>
                 ) : null}
                 {directions.active ? (
                   <>

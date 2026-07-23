@@ -680,6 +680,18 @@ export function buildNetworkLayers(): AnyLayer[] {
         "circle-stroke-color": "#ffffff",
       },
     },
+    {
+      id: "indoor-network-selected",
+      type: "circle",
+      source: NETWORK_SOURCE_ID,
+      filter: ["==", ["get", "selected"], true],
+      paint: {
+        "circle-radius": 5,
+        "circle-color": "#ffd400",
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "#000000",
+      },
+    },
   ];
 }
 
