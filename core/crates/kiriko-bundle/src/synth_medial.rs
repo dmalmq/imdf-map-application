@@ -262,6 +262,11 @@ const MAX_CDT_VERTS: usize = 24_000;
 const SNAP_MAX_M: f64 = 12.0;
 /// Max centroid distance (m) matching a transit unit to the floor above.
 const VERTICAL_MATCH_M: f64 = 5.0;
+/// Max skeleton-node gap (m) to fuse two distinct walkable blobs on the same
+/// floor that abut without a doorway. The medial axis insets from each
+/// polygon edge (~half the corridor width), so this measures spine-to-spine,
+/// not polygon-to-polygon; kept short so only near-touching areas merge.
+const ADJACENCY_BRIDGE_M: f64 = 2.0;
 
 fn is_walkway(category: &str) -> bool {
     matches!(category, "walkway" | "corridor" | "sidewalk" | "ramp")
@@ -464,6 +469,61 @@ pub fn synthesize_network_medial(document: &BundleDocument) -> RouteGraphBuild {
                     interior: Vec::new(),
                 });
             }
+        }
+
+        // Near-blob bridging: fuse distinct blobs that abut without a doorway.
+        // Bucket skeleton nodes on an ~ADJACENCY_BRIDGE_M grid, then keep the
+        // single closest cross-blob node pair per (root_a, root_b).
+        let cell_deg = ADJACENCY_BRIDGE_M / 111_320.0;
+        let cell = |p: [f64; 2]| ((p[0] / cell_deg).floor() as i64, (p[1] / cell_deg).floor() as i64);
+        let mut buckets: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+        for (local, n) in skeleton.nodes.iter().enumerate() {
+            buckets.entry(cell(*n)).or_default().push(local);
+        }
+        let mut bridges: HashMap<(usize, usize), (usize, usize, f64)> = HashMap::new();
+        for (local, n) in skeleton.nodes.iter().enumerate() {
+            let (cx, cy) = cell(*n);
+            let root_i = uf_find(&mut blob, local);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let Some(cands) = buckets.get(&(cx + dx, cy + dy)) else { continue };
+                    for &other in cands {
+                        if other <= local {
+                            continue;
+                        }
+                        let root_j = uf_find(&mut blob, other);
+                        if root_i == root_j {
+                            continue;
+                        }
+                        let d = haversine_m(*n, skeleton.nodes[other]);
+                        if d > ADJACENCY_BRIDGE_M {
+                            continue;
+                        }
+                        let key = (root_i.min(root_j), root_i.max(root_j));
+                        let entry = bridges.entry(key).or_insert((local, other, d));
+                        if d < entry.2 {
+                            *entry = (local, other, d);
+                        }
+                    }
+                }
+            }
+        }
+        let mut keys: Vec<(usize, usize)> = bridges.keys().copied().collect();
+        keys.sort_unstable();
+        for key in keys {
+            let (li, lj, d) = bridges[&key];
+            if uf_find(&mut blob, li) == uf_find(&mut blob, lj) {
+                continue;
+            }
+            let (ra, rb) = (uf_find(&mut blob, li), uf_find(&mut blob, lj));
+            blob[ra] = rb;
+            edges.push(RouteEdge {
+                from: (base + li) as u32,
+                to: (base + lj) as u32,
+                weight: d as f32,
+                ordinal: ord,
+                interior: Vec::new(),
+            });
         }
 
         // Transit units: snap onto the centerline and record for vertical links.
@@ -734,5 +794,50 @@ mod tests {
             build.graph.nodes[e.from as usize].ordinal != build.graph.nodes[e.to as usize].ordinal
         });
         assert!(vertical, "overlapping stair footprints link the floors");
+    }
+
+    /// Number of connected components of a RouteGraph (undirected).
+    fn component_count(graph: &kiriko_route::RouteGraph) -> usize {
+        let n = graph.nodes.len();
+        let mut parent: Vec<usize> = (0..n).collect();
+        fn find(p: &mut [usize], mut x: usize) -> usize {
+            while p[x] != x {
+                p[x] = p[p[x]];
+                x = p[x];
+            }
+            x
+        }
+        for e in &graph.edges {
+            let (a, b) = (find(&mut parent, e.from as usize), find(&mut parent, e.to as usize));
+            if a != b {
+                parent[a] = b;
+            }
+        }
+        (0..n).filter(|&i| find(&mut parent, i) == i).count()
+    }
+
+    #[test]
+    fn near_blobs_bridge_into_one_component() {
+        // Two thin walkway rectangles with parallel spines ~1.5 m apart and NO
+        // opening between them: they must fuse into a single component.
+        let features = vec![
+            feature(
+                "wa",
+                FeatureType::Unit,
+                "l0",
+                Some("walkway"),
+                rect(139.70000, 35.600000, 0.00040, 0.00001),
+            ),
+            feature(
+                "wb",
+                FeatureType::Unit,
+                "l0",
+                Some("walkway"),
+                rect(139.70000, 35.600014, 0.00040, 0.00001),
+            ),
+        ];
+        let doc = document(&[("l0", 0.0)], features);
+        let build = synthesize_network_medial(&doc);
+        assert_eq!(component_count(&build.graph), 1, "near blobs fuse into one component");
     }
 }
