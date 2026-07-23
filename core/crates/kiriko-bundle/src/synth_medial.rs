@@ -1,25 +1,15 @@
 //! Medial-axis routing-network synthesis (server-only, `netgen` feature).
 //!
-//! ArcGIS-Indoors-style pipeline that replaces the crude centroid-hub graph
-//! with real corridor centerlines:
-//!   1. per floor, union walkable units into a navigable area and subtract
-//!      obstacles  ← this file, implemented + tested;
+//! ArcGIS-Indoors-style pipeline producing real corridor centerlines:
+//!   1. per floor, union walkable units into a navigable area (obstacle
+//!      subtraction is available via `navigable_area` but currently unused);
 //!   2. constrained-Delaunay-triangulate the navigable polygon and extract its
-//!      medial axis (Chin–Snoeyink–Wang) as centerlines  ← next stage;
+//!      medial axis (Chin–Snoeyink–Wang) as centerlines;
 //!   3. build a graph from the centerlines, snap doorway `opening`s and transit
-//!      units as junctions, stitch floors vertically, attach costs.
+//!      units as junctions, bridge near-touching blobs, and stitch floors
+//!      vertically (footprint overlap or centroid proximity), attaching costs.
 //!
 //! Gated behind `netgen` so the browser wasm build never pulls in `geo`/`spade`.
-//!
-//! spade CDT surface (for stage 2): `ConstrainedDelaunayTriangulation::<Point2<f64>>::new()`,
-//! `add_constraint_edges(points, closed)`, `inner_faces()` → `FixedFaceHandle<InnerTag>`,
-//! face `.adjacent_edges()` → 3 `DirectedEdgeHandle` with `.is_constraint_edge()`,
-//! `.from()/.to()` vertices (`.position()`), `.rev().face()` for the neighbour,
-//! and `.fix()` for stable graph keys.
-
-// Stage 1 of the medial-axis pipeline; helpers are consumed by the CDT stage
-// (and tests) as it lands. Silence dead-code until the synthesizer is wired.
-#![allow(dead_code)]
 
 use geo::algorithm::bool_ops::BooleanOps;
 use geo::algorithm::orient::{Direction, Orient};
