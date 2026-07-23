@@ -840,4 +840,49 @@ mod tests {
         let build = synthesize_network_medial(&doc);
         assert_eq!(component_count(&build.graph), 1, "near blobs fuse into one component");
     }
+
+    /// Canonical two-vertex `LineString` geometry (for openings).
+    fn line(x1: f64, y1: f64, x2: f64, y2: f64) -> Value {
+        let coords = Value::Array(vec![
+            Value::Array(vec![Value::Number(x1), Value::Number(y1)]),
+            Value::Array(vec![Value::Number(x2), Value::Number(y2)]),
+        ]);
+        Value::Object(BTreeMap::from([
+            ("type".to_string(), Value::String("LineString".to_string())),
+            ("coordinates".to_string(), coords),
+        ]))
+    }
+
+    #[test]
+    fn synthesized_graph_is_connected_and_bounded() {
+        // Floor 0: two thin walkways joined by a doorway; a stairs unit on the
+        // first walkway stacks onto floor 1's walkway. The whole graph is ONE
+        // component, spans both floors, and every edge is a short indoor hop.
+        let features = vec![
+            feature("wa", FeatureType::Unit, "l0", Some("walkway"),
+                rect(139.70000, 35.60000, 0.00040, 0.00002)),
+            feature("wb", FeatureType::Unit, "l0", Some("walkway"),
+                rect(139.70050, 35.60000, 0.00040, 0.00002)),
+            feature("door", FeatureType::Opening, "l0", None,
+                line(139.70025, 35.60000, 139.70025, 35.60002)),
+            feature("s0", FeatureType::Unit, "l0", Some("stairs"),
+                rect(139.70000, 35.60000, 0.00006, 0.00001)),
+            feature("w1", FeatureType::Unit, "l1", Some("walkway"),
+                rect(139.70000, 35.60000, 0.00040, 0.00002)),
+            feature("s1", FeatureType::Unit, "l1", Some("stairs"),
+                rect(139.70000, 35.60000, 0.00006, 0.00001)),
+        ];
+        let doc = document(&[("l0", 0.0), ("l1", 1.0)], features);
+        let build = synthesize_network_medial(&doc);
+        assert_eq!(component_count(&build.graph), 1, "one connected component");
+        let ordinals: std::collections::BTreeSet<i64> =
+            build.graph.nodes.iter().map(|n| n.ordinal as i64).collect();
+        assert_eq!(ordinals.len(), 2, "both floors present");
+        let max_edge = build.graph.edges.iter().fold(0.0_f32, |m, e| m.max(e.weight));
+        assert!(max_edge <= 30.0, "no teleport edges: max {max_edge} m");
+
+        // Determinism: identical input → identical graph.
+        let again = synthesize_network_medial(&doc);
+        assert_eq!(build.graph, again.graph, "synthesis is deterministic");
+    }
 }

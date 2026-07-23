@@ -114,12 +114,18 @@ pub(crate) fn ring_centroid(ring: &[[f64; 2]]) -> [f64; 2] {
     if n == 0 {
         return [0.0, 0.0];
     }
+    // Work relative to the first vertex: absolute WGS84 coordinates (lon ~140)
+    // otherwise lose precision in the shoelace products for the tiny (few-m²)
+    // unit polygons this runs on — throwing the centroid kilometres off.
+    let [ox, oy] = ring[0];
     let mut area2 = 0.0;
     let mut cx = 0.0;
     let mut cy = 0.0;
     for i in 0..n {
         let [x0, y0] = ring[i];
         let [x1, y1] = ring[(i + 1) % n];
+        let (x0, y0) = (x0 - ox, y0 - oy);
+        let (x1, y1) = (x1 - ox, y1 - oy);
         let cross = x0 * y1 - x1 * y0;
         area2 += cross;
         cx += (x0 + x1) * cross;
@@ -134,7 +140,7 @@ pub(crate) fn ring_centroid(ring: &[[f64; 2]]) -> [f64; 2] {
         }
         return [sx / n as f64, sy / n as f64];
     }
-    [cx / (3.0 * area2), cy / (3.0 * area2)]
+    [ox + cx / (3.0 * area2), oy + cy / (3.0 * area2)]
 }
 
 /// Centroid of a `Polygon` (exterior ring) or `MultiPolygon` (largest-area
