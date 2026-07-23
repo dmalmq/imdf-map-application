@@ -396,6 +396,25 @@ export const api = {
     return { blob, filename: match?.[1] ?? "network.gdb.zip" };
   },
 
+  async importNetwork(
+    slug: string,
+    junctions: string,
+    paths: string,
+  ): Promise<{ jobId: string; versionId: number; seq: number }> {
+    const res = await fetch("/api/gdb/import-network", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ slug, junctions, paths }),
+    });
+    if (!res.ok) {
+      let parsed: GdbError = { code: "gdb_conversion_failed", message: `${res.status}` };
+      try { parsed = (await res.json()) as GdbError; } catch { /* non-JSON */ }
+      throw parsed;
+    }
+    return (await res.json()) as { jobId: string; versionId: number; seq: number };
+  },
+
   async getGdbMapping(
     venueId: number,
   ): Promise<{ blobHash: string; inspection: GdbInspection; plan: GdbMappingPlan }> {
