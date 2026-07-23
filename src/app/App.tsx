@@ -23,7 +23,7 @@ import { loadKirikoBundle } from "../bundle/loadKirikoBundle";
 import { routeKirikoBundle } from "../bundle/routeKirikoBundle";
 import type { FacilityDto, RouteEndpoint, RouteResultDto } from "../bundle/wasm";
 import { loadNetworkOverlay } from "../bundle/loadNetworkOverlay";
-import type { ParsedNetwork } from "../map/networkFeatures";
+import { networkConnectivity, type ParsedNetwork } from "../map/networkFeatures";
 import { ZoomCluster } from "../components/ZoomCluster";
 import { SignInModal } from "../gallery/SignInModal";
 import { VenueLoadError } from "../errors/VenueLoadError";
@@ -75,6 +75,9 @@ const ui = {
   openInKiriko: { ja: "Kiriko で開く", en: "Open in Kiriko" },
   directions: { ja: "経路案内", en: "Directions" },
   reviewNetwork: { ja: "ネットワークを確認", en: "Review network" },
+  reviewConnected: { ja: "接続率", en: "connected" },
+  reviewIslands: { ja: "分割数", en: "islands" },
+  reviewFloors: { ja: "接続フロア", en: "floors linked" },
   directionsPickOrigin: { ja: "地図をタップして出発地を指定", en: "Tap the map to set the origin" },
   directionsPickDestination: { ja: "地図をタップして目的地を指定", en: "Tap the map to set the destination" },
   directionsSearching: { ja: "経路を計算中", en: "Computing the route" },
@@ -242,6 +245,10 @@ export function App() {
   const [directions, setDirections] = useState<DirectionsState>(INITIAL_DIRECTIONS);
   const [reviewActive, setReviewActive] = useState(false);
   const [reviewNetwork, setReviewNetwork] = useState<ParsedNetwork | null>(null);
+  const reviewReport = useMemo(
+    () => (reviewNetwork ? networkConnectivity(reviewNetwork) : null),
+    [reviewNetwork],
+  );
   const directionsTokenRef = useRef(0);
   const issueMode: IssueMode = params.embed
     ? { kind: "hidden" as const }
@@ -1236,6 +1243,13 @@ export function App() {
                 >
                   {ui.reviewNetwork[locale]}
                 </button>
+                {reviewActive && reviewReport ? (
+                  <span className="review-report" role="status">
+                    {ui.reviewConnected[locale]} {Math.round(reviewReport.largestFraction * 100)}% ·{" "}
+                    {reviewReport.components} {ui.reviewIslands[locale]} ·{" "}
+                    {reviewReport.floorsInLargest} {ui.reviewFloors[locale]}
+                  </span>
+                ) : null}
                 {directions.active ? (
                   <>
                     <span className="directions-bar__status">

@@ -1548,9 +1548,15 @@ describe("App directions mode", () => {
   it("overlays the generated network per floor when Review network is toggled", async () => {
     const user = userEvent.setup();
     loadNetworkOverlayMock.mockResolvedValue({
-      junctions: [{ ordinal: 0, geometry: { type: "Point", coordinates: [139.7, 35.68] } }],
+      junctions: [
+        { ordinal: 0, geometry: { type: "Point", coordinates: [139.7, 35.68] }, properties: { NODEID: 0, FLOOR: "F1" } },
+      ],
       paths: [
-        { ordinal: 0, geometry: { type: "LineString", coordinates: [[139.7, 35.68], [139.701, 35.68]] } },
+        {
+          ordinal: 0,
+          geometry: { type: "LineString", coordinates: [[139.7, 35.68], [139.701, 35.68]] },
+          properties: { FNODEID: 0, TNODEID: 0, FLOOR: "F1" },
+        },
       ],
     });
     await renderDataset(PUBLIC_VERSION_ID, buildMinimalVenue(), true);
